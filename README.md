@@ -1,6 +1,6 @@
 # pi stuff
 
-amikai's [pi coding agent](https://buildwithpi.ai/) package. The layout follows [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff): the `pi` manifest in [`package.json`](package.json) exports every `.ts` file under [`extensions`](extensions).
+amikai's [pi coding agent](https://buildwithpi.ai/) package. The layout follows [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff): the `pi` manifest in [`package.json`](package.json) exports every extension under [`extensions`](extensions), either a single `.ts` file or a folder with an `index.ts` and its own `README.md`.
 
 ## Install
 
@@ -12,7 +12,7 @@ Pi clones the repo to `~/.pi/agent/git/github.com/amikai/pi-stuff` and loads it 
 
 ## Extensions
 
-- [`you-should-know.ts`](extensions/you-should-know.ts) - Port of Claude Code's `cc-plugin-you-should-know`: every 6 steps a side agent reads the session and, when there is something you should know but might miss, flags it above the prompt. Also retells the last turn in plain words (`/plain`) or the whole session when you lost track (`/lost`), after [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat), in an overlay the main agent never sees. Rules, settings, how to trigger it, and testing are in [`docs/you-should-know.md`](docs/you-should-know.md).
+- [`you-should-know`](extensions/you-should-know) - Port of Claude Code's `cc-plugin-you-should-know`: every 6 steps a side agent reads the session and, when there is something you should know but might miss, flags it above the prompt. Also retells the last turn in plain words (`/plain`) or the whole session when you lost track (`/lost`), after [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat), in an overlay the main agent never sees. Rules, settings, how to trigger it, and testing are in its [README](extensions/you-should-know/README.md).
 
 ## Tests
 

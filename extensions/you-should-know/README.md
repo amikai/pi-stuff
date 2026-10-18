@@ -4,9 +4,53 @@ A pi port of Claude Code's built-in plugin `cc-plugin-you-should-know`. While th
 
 Source version: Claude Code 2.1.302. The plugin has no version of its own; it is bundled in the Claude Code binary, so the Claude Code version identifies it.
 
-It also carries a retell feature taken from [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat) 0.8.2: **Plain words** retells the last turn plainly and **Lost track** retells the whole session (see [Retell](#retell)).
+It also carries a retell feature taken from [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat) 0.8.2: **Plain words** retells the last turn plainly and **Lost track** retells the whole session (see [Retell](#retell), and [What comes from cc-mod-waitwhat](#what-comes-from-cc-mod-waitwhat) for everything borrowed from it).
 
-The code is in [`extensions/you-should-know.ts`](../extensions/you-should-know.ts). The rules below were read from that code. Items marked "verified" were exercised in a real pi TUI against the faux provider (see [Testing](#testing)).
+The code is in [`index.ts`](index.ts). The rules below were read from that code. Items marked "verified" were exercised in a real pi TUI against the faux provider (see [Testing](#testing)).
+
+## Setup
+
+Install the package; nothing else is required:
+
+```sh
+pi install git:github.com/amikai/pi-stuff
+```
+
+With no settings file it runs with the defaults below: checks on, the session's model, the retell buttons shown.
+
+### Settings
+
+Settings live in `~/.pi/agent/you-should-know.json` (pi's agent dir, so `PI_CODING_AGENT_DIR` moves it). The file appears the first time the extension saves state; create it yourself to change a setting before that. Every field is optional:
+
+```json
+{
+  "enabled": true,
+  "model": "",
+  "yskModel": "",
+  "reasoning": "low",
+  "buttons": true
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Run the background checks. Only an explicit `false` turns them off. Retell is not affected. `4 Disable` on the card writes `false`. |
+| `model` | `""` | `provider/modelId` for checks and retell, for example `"moxa/gpt-5-4"`. Empty uses the session's current model, and follows it when you switch models. |
+| `yskModel` | `""` | `provider/modelId` for checks only. Empty falls back to `model`. |
+| `reasoning` | `"low"` | `minimal`, `low`, `medium` or `high`, for checks. Retell leaves it to the model. |
+| `buttons` | `true` | Show the `[Plain words]` `[Lost track]` row below the card. `/plain` and `/lost` work either way. |
+
+The same file also holds state the extension writes itself: `seen`, `known`, `typedPastInARow` and `looksToSkip`. Leave those alone, or empty `seen` and `known` to let old topics come back.
+
+Settings are read when a session starts. The extension also rewrites the file whenever its state changes, so an edit made while pi runs can be overwritten: close pi first, or run `/new` right after saving. A broken JSON file counts as missing, and the next save replaces it. A model name that cannot be found falls back to the session's model without a warning; the log's `model` field shows which one answered.
+
+### Replacing the retell prompts
+
+Put your own system prompt in `~/.pi/agent/you-should-know-prompts/plain.md` or `lost.md`. A file that exists and is not empty replaces that retell's built-in prompt; delete it to go back. It lives outside the package, so `pi update` leaves it alone. The check prompt cannot be replaced.
+
+### Showing the checks
+
+`PI_YOU_SHOULD_KNOW_DEBUG=1` lists the last 3 checks above the prompt, with their step, outcome and time. Logging does not depend on it.
 
 ## The card
 
@@ -55,7 +99,7 @@ Answer with the number keys while the editor is empty. In fullscreen mode you ca
 - Only the session messages. It never sees the system prompt, so it knows nothing from CLAUDE.md or AGENTS.md.
 - Each tool result keeps its first 600 and last 600 characters, so an error at the end of a long output stays visible. Tool arguments are cut to their first 400. (verified)
 - At most 150k characters in total. Beyond that it keeps the first prompt (first 4k characters) plus the most recent part.
-- The exact input of every check is saved, so you can read what it saw (see [Settings and files](#settings-and-files)). (verified)
+- The exact input of every check is saved, so you can read what it saw (see [Files](#files)). (verified)
 
 ### After a card appears
 
@@ -93,6 +137,48 @@ What goes to the model:
 
 Repeats are cached: the key is the mode plus what you and the agent said, without tool output or model, so an unchanged conversation gets the stored answer without a model call. (verified)
 
+## What comes from cc-mod-waitwhat
+
+[cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat) 0.8.2 is a Claude Code mod with three buttons above the prompt: 白話 (plain words), 跟丟了 (lost track) and 該知道 (should know), plus an automatic recap. This extension borrows its retell and part of its record keeping, and keeps the Claude Code original's check.
+
+Borrowed:
+
+| Here | In cc-mod-waitwhat |
+|---|---|
+| `Plain words` retell of the last turn | 白話 |
+| `Lost track` retell of the whole session | 跟丟了 |
+| The button row | The button row above the prompt |
+| The overlay with the result | The pane |
+| The header: characters sent, model, seconds, or `cache hit` | The same header |
+| A second press while a retell runs only reopens it | The same |
+| The retell cache: same key, 200 entries | `~/.cache/cc-sidecar-waitwhat.json` |
+| Prompt override files | `~/.config/cc-sidecar-waitwhat/*.md` |
+| Every check logged (last 2,000 lines) and its input saved | `cc-ysk-log.jsonl` and `cc-ysk-payloads/` |
+| `yskModel` for checks only | `YSK_MODEL` |
+| Tool results cut to both ends | Its check input, which keeps both ends |
+
+Different on purpose:
+
+| | cc-mod-waitwhat | Here | Why |
+|---|---|---|---|
+| Language | Prompts and labels in Chinese | English; both retell prompts add "Chinese means Traditional Chinese" | The repo is in English |
+| Starting a retell | Click, or `ctrl+x tab` into the row and pick with the keyboard; no slash commands on purpose | Click only, plus `/plain` and `/lost` | The number keys belong to the card; pi commands never reach the transcript |
+| The row | Three buttons and a recap line | Two retell buttons below the card | The check keeps the original's card; no recap |
+| Where the result shows | Claude Code places its pane | Right side at 45% from 120 columns, otherwise full width above the editor | pi has overlays, not panes |
+| Keyboard while it is open | Not checked | The overlay holds the keyboard until `Esc` | A pi overlay needs focus to scroll |
+| Which model | `cmd`, then `http` (default `gemini-3.8-flash-high`), then `haiku`, falling through on failure and saying why | One model: `model`, else the session's; an error is shown, nothing else is tried | pi can already reach any configured model |
+| Reply length | No limit over `http`, 1,500 tokens for `haiku` | 8,000 tokens | |
+| `yskModel` | `YSK_MODEL` only changes the `http` step | Replaces the check's model | No fallback chain here |
+| Files | `~/.cache`, `~/.config`; the lost-track prompt is `wait-what.md` | pi's agent dir; the prompt is `lost.md` | pi convention, and tests swap the agent dir |
+| Cache | Shared with its sidecar tool | This extension only | No sidecar |
+| Check log | `checked` and `answered` | Checks, skips, explanations, key presses and cleared cards | Keeps the events this port already logged |
+| Tool output cut for checks | 300 at each end, arguments too | 600 at each end; arguments keep their first 400 | Keeps this port's sizes |
+
+Not borrowed:
+
+- **The automatic recap** (goal, now, next after every turn).
+- **Its own check, 該知道.** It runs once after the main agent stops and waits, sends the session trimmed to about 60,000 tokens, asks for JSON with a short title, and lights its button with a `●` instead of showing a card; you open it when ready and answer 有幫助 (helpful) or 不相關 (not relevant). It never touches Claude Code's built-in plugin, so in Claude Code the two can run side by side. This extension keeps the original's check: every 6 steps while the agent works, with a card. The trade-off is timing: a card can arrive while there is still time to stop the agent, but it can also go stale a moment later.
+
 ## Making it trigger more often
 
 The side agent flags:
@@ -120,32 +206,16 @@ How to run them:
 
 Known limitation: checks run while the main agent is still working, so a note can go stale seconds after it appears. For example, it points out that the tests never ran, the agent fixes that in its next step, and the card stays on screen.
 
-## Settings and files
+## Files
 
-All files live in pi's agent dir, `~/.pi/agent` unless `PI_CODING_AGENT_DIR` says otherwise.
-
-`you-should-know.json` holds the state and these settings. A missing file, or a missing field, means the default.
-
-| Field | Default | Meaning |
-|---|---|---|
-| `enabled` | `true` | Run the background checks. Only an explicit `false` turns them off; retell is not affected. |
-| `model` | `""` | `provider/modelId` for checks and retell. Empty uses the session's current model. |
-| `yskModel` | `""` | `provider/modelId` for checks only. Empty falls back to `model`. |
-| `reasoning` | `"low"` | Reasoning level for checks. Retell leaves it to the model. |
-| `buttons` | `true` | Show the retell buttons below the card. |
-
-It also keeps `seen`, `known`, `typedPastInARow` and `looksToSkip`. A model name that cannot be found falls back to the session's model without a warning; the log's `model` field shows which one answered.
-
-Other files:
+Besides the settings file, the extension writes these to pi's agent dir, `~/.pi/agent` unless `PI_CODING_AGENT_DIR` says otherwise:
 
 | File | Contents |
 |---|---|
 | `you-should-know.log` | One JSON line per check, skip, explanation, key press and cleared card, with the side agent's raw reply. Always written; keeps the last 2,000 lines. (verified) |
 | `you-should-know-payloads/<session id>-<message count>.txt` | The exact input of each check: the system prompt, `---`, then the transcript and lists it was given. The log line names the file. Always written and never cleaned up, so it holds whatever the session contained, secrets included. (verified) |
 | `you-should-know-cache.json` | Retell answers, keyed as described in [Retell](#retell). Keeps the last 200. (verified) |
-| `you-should-know-prompts/plain.md`, `lost.md` | When present and not empty, replaces that retell's built-in prompt. Lives outside the package, so `pi update` leaves it alone. (verified) |
-
-`PI_YOU_SHOULD_KNOW_DEBUG=1` lists the last 3 checks above the prompt. Logging no longer depends on it.
+| `you-should-know-prompts/plain.md`, `lost.md` | Yours, not written by the extension: see [Replacing the retell prompts](#replacing-the-retell-prompts). (verified) |
 
 ## Differences from the Claude Code original
 
@@ -166,7 +236,7 @@ Compared against the original code in the Claude Code 2.1.302 binary:
 test/you-should-know.sh
 ```
 
-This runs the repo's extension in a real pi TUI, with the model replaced by [`test/faux-provider.ts`](../test/faux-provider.ts):
+This runs the repo's extension in a real pi TUI, with the model replaced by [`test/faux-provider.ts`](../../test/faux-provider.ts):
 
 - Main agent: a prompt containing `steps N` makes it call bash N times, then answer `done`. Adding the word `long` makes every call print 3,000 lines.
 - Side agent: every check reads `ctrl/side.txt` as its reply, with `{n}` replaced by a call counter. You can edit the file while pi runs.

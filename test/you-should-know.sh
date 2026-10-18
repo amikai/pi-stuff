@@ -21,7 +21,7 @@ echo "log:              $dir/you-should-know.log"
 cd "$dir/work"
 PI_CODING_AGENT_DIR="$dir" PI_YOU_SHOULD_KNOW_DEBUG=1 YSK_CTRL="$dir/ctrl" \
 	exec pi -ne \
-	-e "$repo/extensions/you-should-know.ts" \
+	-e "$repo/extensions/you-should-know/index.ts" \
 	-e "$repo/test/faux-provider.ts" \
 	--model faux/faux-1 \
 	--session-dir "$dir/sessions"
