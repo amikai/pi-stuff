@@ -3,7 +3,10 @@
  * something comes up that you should know but might miss, it flags it above
  * the prompt.
  *
- * Port of Claude Code's built-in `cc-plugin-you-should-know`:
+ * Port of Claude Code's built-in `cc-plugin-you-should-know` as shipped in
+ * Claude Code 2.1.302. The plugin has no version of its own; it is bundled in
+ * the Claude Code binary, so the Claude Code version identifies it. Like the
+ * original:
  * - on every 6th step of an agent run, a side model reads the session and
  *   answers `learn: none` or one short note with an explanation;
  * - the note pops up above the editor; answer it with the number keys while

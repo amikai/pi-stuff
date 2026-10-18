@@ -2,6 +2,8 @@
 
 A pi port of Claude Code's built-in plugin `cc-plugin-you-should-know`. While the main agent works, a side agent reads the session. When it finds something you should know but might miss, it flags it above the prompt.
 
+Source version: Claude Code 2.1.302. The plugin has no version of its own; it is bundled in the Claude Code binary, so the Claude Code version identifies it.
+
 The code is in [`extensions/you-should-know.ts`](../extensions/you-should-know.ts). The rules below were read from that code. Items marked "verified" were exercised in a real pi TUI against the faux provider (see [Testing](#testing)).
 
 ## The card
