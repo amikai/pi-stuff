@@ -17,12 +17,22 @@
  * - notes already offered, and topics you said you knew, are never offered again;
  * - a note you type past twice is cleared, and repeated ignoring backs checks off.
  *
- * State lives in <agentDir>/you-should-know.json. Set PI_YOU_SHOULD_KNOW_DEBUG=1
- * to list the last checks above the prompt and to append every check, skip,
- * explanation and key press, with the side model's raw reply, as JSON lines to
- * <agentDir>/you-should-know.log.
+ * Retell, after cc-mod-waitwhat 0.8.2 (github.com/GGGODLIN/cc-mod-waitwhat):
+ * "Plain words" retells the last turn plainly and "Lost track" retells the
+ * whole session. Start them from the buttons below the card or with /plain and
+ * /lost. The answer opens in an overlay and never enters the session or the
+ * model's context. Retell works whether or not the checks are turned on.
+ *
+ * Files under <agentDir>:
+ *   you-should-know.json        state and settings
+ *   you-should-know.log         every check, skip, explanation and key press, as JSON lines (last 2,000)
+ *   you-should-know-payloads/   the exact input of every check; never cleaned up
+ *   you-should-know-cache.json  retell answers (last 200)
+ *   you-should-know-prompts/    plain.md and lost.md replace the retell prompts when present
+ * Set PI_YOU_SHOULD_KNOW_DEBUG=1 to list the last checks above the prompt.
  */
-import { appendFileSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { buildSessionContext, convertToLlm, getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
@@ -33,6 +43,8 @@ import {
 	isKeyRelease,
 	isKeyRepeat,
 	Markdown,
+	matchesKey,
+	type OverlayOptions,
 	parseKey,
 	Text,
 	type TUI,
@@ -58,10 +70,19 @@ const LOOKS_TO_SKIP_MAX = 16;
 const TRANSCRIPT_CHARS = 150_000;
 const FIRST_PROMPT_CHARS = 4_000;
 const TOOL_ARGS_CHARS = 400;
-const TOOL_RESULT_CHARS = 1_200;
+/** Each tool result keeps this much of its start and of its end; errors tend to sit at the end. */
+const TOOL_RESULT_EDGE = 600;
 
-const LOG_MAX_BYTES = 5_000_000;
+const LOG_LINES = 2_000;
 const LOG_REPLY_CHARS = 4_000;
+
+const RETELL_TOOL_CHARS = 200;
+const RETELL_MAX_TOKENS = 8_000;
+const CACHE_MAX = 200;
+/** Terminals at least this wide get the retell pane on the right; narrower ones get it full width. */
+const PANE_WIDE_FROM = 120;
+/** Rows kept free under a full-width pane so the editor stays visible. */
+const PANE_EDITOR_ROWS = 6;
 
 type Tag = "You should know" | "Heads up";
 const DEFAULT_TAG: Tag = "You should know";
@@ -71,9 +92,14 @@ const DEFAULT_TAG: Tag = "You should know";
 
 type Store = {
 	enabled: boolean;
-	/** "provider/modelId" for the side agent; empty uses the session's model. */
+	/** "provider/modelId" for checks and retell; empty uses the session's model. */
 	model: string;
+	/** "provider/modelId" for checks only; empty falls back to `model`. */
+	yskModel: string;
+	/** Reasoning level for checks; retell leaves it to the model. */
 	reasoning: "minimal" | "low" | "medium" | "high";
+	/** Show the retell buttons below the card. */
+	buttons: boolean;
 	seen: string[];
 	known: string[];
 	typedPastInARow: number;
@@ -83,7 +109,9 @@ type Store = {
 const DEFAULTS: Store = {
 	enabled: true,
 	model: "",
+	yskModel: "",
 	reasoning: "low",
+	buttons: true,
 	seen: [],
 	known: [],
 	typedPastInARow: 0,
@@ -91,6 +119,10 @@ const DEFAULTS: Store = {
 };
 
 const storePath = () => join(getAgentDir(), "you-should-know.json");
+const logPath = () => join(getAgentDir(), "you-should-know.log");
+const payloadDir = () => join(getAgentDir(), "you-should-know-payloads");
+const cachePath = () => join(getAgentDir(), "you-should-know-cache.json");
+const promptPath = (mode: RetellMode) => join(getAgentDir(), "you-should-know-prompts", `${mode}.md`);
 
 const count = (v: unknown) => (Number.isSafeInteger(v) && (v as number) >= 0 ? (v as number) : 0);
 const strings = (v: unknown) => (Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []);
@@ -102,7 +134,9 @@ function loadStore(): Store {
 			...DEFAULTS,
 			enabled: raw.enabled !== false,
 			model: typeof raw.model === "string" ? raw.model : "",
+			yskModel: typeof raw.yskModel === "string" ? raw.yskModel : "",
 			reasoning: ["minimal", "low", "medium", "high"].includes(raw.reasoning) ? raw.reasoning : DEFAULTS.reasoning,
+			buttons: raw.buttons !== false,
 			seen: strings(raw.seen),
 			known: strings(raw.known),
 			typedPastInARow: count(raw.typedPastInARow),
@@ -199,12 +233,52 @@ At most 100 words; fewer when the thing needs no introduction.
 Write the title and the explanation in the language the session's language instruction names; if there is none, in the language the person has been writing in.
 Output only the explanation.`;
 
+// The two retell prompts are cc-mod-waitwhat's, translated.
+const PLAIN = `The person just read a technical explanation and says they do not understand it. Your job is to retell it.
+
+Retelling is not translating. Swapping in synonyms does nothing; they still will not understand.
+
+Rules:
+
+1. Cut hard. Aim for 40-60% of the original length. Drop minor options, repeated arguments and the full analysis of every alternative.
+2. The first time an internal name appears (a setting, variable, project code name or abbreviation), say in one sentence what it is and what it does.
+3. Turn abstract rules into concrete statements: rather than "X forbids Y", say what it actually means in practice.
+4. When the original asks for a decision, give one recommendation. Do not relist every option and its consequences.
+5. End with one sentence the original does not have that sums up the whole thing.
+6. Answer in the same language as the original; Chinese means Traditional Chinese, never Simplified. One idea per sentence. Conclusion first, then details.
+7. No preamble and no "here is": output the retelling directly.`;
+
+const LOST = `The person has lost track. You are reading a conversation transcript and retelling it so they can catch up.
+
+You did not take part in the conversation; you are a third party reading the record. Say only what is in the record and never pretend to know what it does not say.
+
+A retelling is not a compressed version of the last message. What lost them is usually more than the last message.
+
+Rules:
+
+1. Give the conclusion in one sentence first, then fill in the premises and background they are missing.
+2. Tell it from the start: first what this session is doing, then the main point.
+3. The first time an internal name appears (an experiment name, variable, ticket number or abbreviation), explain what it is. If the record never defines it, say so.
+4. When the topic has a shape, lead with the shape and use prose only for the "why": call relationships as a tree, file responsibilities as a file tree, logic or state flow as pseudocode, and what changed as a +/- list of before and after. Use plain prose only when none of these fit.
+5. The goal is shorter and clearer. Cutting words without adding the premises is not a retelling.
+6. Use the person's own words; do not swap in your synonyms.
+7. Answer in the same language as the record; Chinese means Traditional Chinese, never Simplified. One idea per sentence.
+8. No preamble: start the retelling directly.`;
+
+const RETELL_HEAD =
+	"Below is the transcript of a pi coding agent session. USER is the person and ASSISTANT is the agent. Retell only what is in the transcript and do not comment on the transcript itself.";
+
 const bullets = (items: string[]) => (items.length > 0 ? items.map((s) => `- ${s}`).join("\n") : "(nothing yet)");
 
 // ---------------------------------------------------------------------------
 // Transcript
 
 const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max)} …[${text.length - max} chars cut]`);
+
+const edges = (text: string, edge: number) =>
+	text.length <= edge * 2 ? text : `${text.slice(0, edge)} …[${text.length - edge * 2} chars cut]… ${text.slice(-edge)}`;
+
+const flat = (text: string) => text.replace(/\s+/g, " ").trim();
 
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -217,6 +291,17 @@ function textOf(content: unknown): string {
 		})
 		.filter((s) => s !== "")
 		.join("\n");
+}
+
+/** The words a message says: the text of a user prompt, or an assistant reply without its tool calls. */
+function wordsOf(message: any): string {
+	if (message.role === "user") return textOf(message.content).trim();
+	if (message.role !== "assistant" || !Array.isArray(message.content)) return "";
+	return message.content
+		.filter((part: any) => part?.type === "text" && typeof part.text === "string")
+		.map((part: any) => part.text)
+		.join("\n")
+		.trim();
 }
 
 function renderMessage(message: any): string {
@@ -232,23 +317,49 @@ function renderMessage(message: any): string {
 			return lines.join("\n");
 		}
 		case "toolResult":
-			return `Tool result${message.toolName ? ` (${message.toolName})` : ""}${message.isError ? " [error]" : ""}: ${clip(textOf(message.content), TOOL_RESULT_CHARS)}`;
+			return `Tool result${message.toolName ? ` (${message.toolName})` : ""}${message.isError ? " [error]" : ""}: ${edges(textOf(message.content), TOOL_RESULT_EDGE)}`;
 		default:
 			return "";
 	}
 }
 
-function buildTranscript(ctx: ExtensionContext): string {
+function sessionMessages(ctx: ExtensionContext): any[] {
 	const sm = ctx.sessionManager;
 	const { messages } = buildSessionContext(sm.getEntries(), sm.getLeafId());
-	const parts = convertToLlm(messages)
-		.map(renderMessage)
-		.filter((s) => s !== "");
+	return convertToLlm(messages);
+}
+
+function buildTranscript(messages: any[]): string {
+	const parts = messages.map(renderMessage).filter((s) => s !== "");
 	const full = parts.join("\n\n");
 	if (full.length <= TRANSCRIPT_CHARS) return full;
 	// Keep the task the person started with, then as much of the recent tail as fits.
 	const first = clip(parts.find((p) => p.startsWith("User: ")) ?? "", FIRST_PROMPT_CHARS);
 	return `${first}\n\n…[earlier part of the session omitted]…\n\n${full.slice(-(TRANSCRIPT_CHARS - first.length))}`;
+}
+
+/** cc-mod-waitwhat's layout: every message's words in full, tool results as short lines under them. */
+function retellTranscript(messages: any[]): string {
+	const blocks: string[] = [];
+	for (const message of messages) {
+		if (message.role === "toolResult") {
+			const line = `  [${message.toolName ?? "tool"}] ${clip(flat(textOf(message.content)), RETELL_TOOL_CHARS)}`;
+			if (blocks.length > 0) blocks[blocks.length - 1] += `\n${line}`;
+			else blocks.push(line);
+			continue;
+		}
+		const words = wordsOf(message);
+		if (words !== "") blocks.push(`${message.role === "user" ? "USER" : "ASSISTANT"}: ${words}`);
+	}
+	return blocks.join("\n\n");
+}
+
+/** Everything from the person's last prompt on. */
+function lastTurn(messages: any[]): any[] {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "user" && wordsOf(messages[i]) !== "") return messages.slice(i);
+	}
+	return messages;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +410,56 @@ function parseReply(reply: string): Parsed {
 const keyOf = (line: string) => line.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
 // ---------------------------------------------------------------------------
+// Retell cache and prompts
+
+type RetellMode = "plain" | "lost";
+type CacheEntry = { answer: string; label: string; source: string; at: number };
+
+const RETELL: Record<RetellMode, { title: string; label: string; prompt: string }> = {
+	plain: { title: "Plain words", label: "Plain words · last turn", prompt: PLAIN },
+	lost: { title: "Lost track", label: "Lost track · whole session", prompt: LOST },
+};
+
+/** Same key as cc-mod-waitwhat: the mode plus what the person and the agent said, without tool output or model. */
+function cacheKey(mode: RetellMode, messages: any[]): string {
+	const said = messages
+		.filter((m) => m.role === "user" || m.role === "assistant")
+		.map((m) => [m.role, wordsOf(m).replace(/\r\n?/g, "\n")] as const)
+		.filter(([, text]) => text !== "");
+	return createHash("sha256").update(JSON.stringify([mode, said])).digest("hex");
+}
+
+function readCache(): Record<string, CacheEntry> {
+	try {
+		const parsed = JSON.parse(readFileSync(cachePath(), "utf8"));
+		return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+	} catch {
+		return {};
+	}
+}
+
+function writeCache(key: string, entry: CacheEntry) {
+	try {
+		const kept = Object.entries({ ...readCache(), [key]: entry })
+			.sort(([, a], [, b]) => (a.at ?? 0) - (b.at ?? 0))
+			.slice(-CACHE_MAX);
+		writeFileSync(cachePath(), JSON.stringify(Object.fromEntries(kept)));
+	} catch {
+		// A lost cache only costs a repeat call.
+	}
+}
+
+function retellPrompt(mode: RetellMode): string {
+	try {
+		const text = readFileSync(promptPath(mode), "utf8").trim();
+		if (text !== "") return text;
+	} catch {
+		// No override.
+	}
+	return RETELL[mode].prompt;
+}
+
+// ---------------------------------------------------------------------------
 // Card
 
 type View =
@@ -325,8 +486,8 @@ const ROW_INDENT = 2;
 
 /**
  * A row of choices, each answerable by its number key or, in fullscreen mode,
- * by clicking it. Remembers where each choice was drawn so a click can be
- * mapped back to it.
+ * by clicking it. A choice without a key is mouse-only. Remembers where each
+ * choice was drawn so a click can be mapped back to it.
  */
 class ChoiceRow implements Component {
 	private hits: { row: number; from: number; to: number; choice: Choice }[] = [];
@@ -344,7 +505,7 @@ class ChoiceRow implements Component {
 		let line = this.prefix;
 		let col = visibleWidth(this.prefix);
 		for (const [i, choice] of this.choices.entries()) {
-			const w = visibleWidth(`${choice.key} ${choice.label}`);
+			const w = visibleWidth(choice.key ? `${choice.key} ${choice.label}` : choice.label);
 			if (i > 0 && col + CHOICE_GAP + w > width) {
 				lines.push(line);
 				line = " ".repeat(ROW_INDENT);
@@ -354,7 +515,7 @@ class ChoiceRow implements Component {
 				col += CHOICE_GAP;
 			}
 			this.hits.push({ row: lines.length, from: col, to: col + w, choice });
-			const text = `${this.theme.bold(choice.key)} ${choice.label}`;
+			const text = choice.key ? `${this.theme.bold(choice.key)} ${choice.label}` : choice.label;
 			line += choice.dim ? this.theme.fg("dim", text) : text;
 			col += w;
 		}
@@ -384,6 +545,115 @@ function chatText(note: Note, text: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Retell pane
+
+type RetellState =
+	| { status: "idle" }
+	| { status: "busy"; mode: RetellMode }
+	| { status: "done"; mode: RetellMode; text: string; source: string; chars: number; seconds: string; cached: boolean }
+	| { status: "error"; mode: RetellMode; text: string };
+
+const isWide = (tui: TUI | undefined) => (tui?.terminal.columns ?? process.stdout.columns ?? 80) >= PANE_WIDE_FROM;
+
+const paneOptions = (tui: () => TUI | undefined) => (): OverlayOptions =>
+	isWide(tui())
+		? { anchor: "top-right", width: "45%", maxHeight: "80%", margin: 1 }
+		: { anchor: "bottom-center", width: "100%", maxHeight: "60%", margin: { bottom: PANE_EDITOR_ROWS } };
+
+/** A bordered, scrollable box showing the current retell. Esc closes it. */
+class RetellPane implements Component {
+	private offset = 0;
+	private shown: RetellState | undefined;
+
+	constructor(
+		private readonly tui: TUI,
+		private readonly theme: Theme,
+		private readonly state: () => RetellState,
+		private readonly close: () => void,
+	) {}
+
+	/** Rows of content that fit inside the pane's height and borders. */
+	private rows() {
+		const share = isWide(this.tui) ? 0.8 : 0.6;
+		const margin = isWide(this.tui) ? 2 : PANE_EDITOR_ROWS;
+		return Math.max(3, Math.floor(this.tui.terminal.rows * share) - margin - 2);
+	}
+
+	private content(inner: number): { title: string; lines: string[] } {
+		const s = this.state();
+		const t = this.theme;
+		const wrap = (text: string) => new Text(text, 0, 0).render(inner);
+		switch (s.status) {
+			case "idle":
+				return { title: "Retell", lines: wrap(t.fg("dim", "Press Plain words or Lost track to start a retell.")) };
+			case "busy":
+				return { title: RETELL[s.mode].title, lines: wrap(t.fg("dim", `${RETELL[s.mode].label} ${DOT} retelling…`)) };
+			case "error":
+				return { title: RETELL[s.mode].title, lines: wrap(t.fg("error", `${RETELL[s.mode].label} ${DOT} failed: ${s.text}`)) };
+			case "done": {
+				const info = s.cached
+					? `${RETELL[s.mode].label}  (cache hit ${DOT} source ${s.source})`
+					: `${RETELL[s.mode].label}  (sent ${s.chars.toLocaleString("en-US")} chars → ${s.source} ${DOT} ${s.seconds}s)`;
+				const body = new Markdown(s.text, 0, 0, getMarkdownTheme()).render(inner);
+				return { title: RETELL[s.mode].title, lines: [...wrap(t.fg("dim", info)), "", ...body] };
+			}
+		}
+	}
+
+	render(width: number): string[] {
+		const t = this.theme;
+		const inner = Math.max(1, width - 4);
+		const state = this.state();
+		if (state !== this.shown) {
+			// A new retell starts at the top.
+			this.shown = state;
+			this.offset = 0;
+		}
+		const { title, lines } = this.content(inner);
+		const rows = this.rows();
+		this.offset = Math.max(0, Math.min(this.offset, lines.length - rows));
+		const visible = lines.slice(this.offset, this.offset + rows);
+		const edge = (left: string, label: string, right: string) => {
+			const text = label === "" ? "" : ` ${label} `;
+			const fill = Math.max(0, width - 2 - visibleWidth(text) - 1);
+			return t.fg("border", `${left}─${text}${"─".repeat(fill)}${right}`);
+		};
+		const more = lines.length > rows ? `${this.offset + 1}-${this.offset + visible.length}/${lines.length} ${DOT} ` : "";
+		return [
+			edge("╭", t.bold(title), "╮"),
+			...visible.map((l) => {
+				const cut = truncateToWidth(l, inner);
+				return `${t.fg("border", "│")} ${cut}${" ".repeat(Math.max(0, inner - visibleWidth(cut)))} ${t.fg("border", "│")}`;
+			}),
+			edge("╰", t.fg("dim", `${more}↑↓ PgUp PgDn scroll ${DOT} Esc close`), "╯"),
+		].map((l) => truncateToWidth(l, width));
+	}
+
+	private scroll(by: number) {
+		this.offset = Math.max(0, this.offset + by);
+		this.tui.requestRender();
+	}
+
+	handleInput(data: string) {
+		if (matchesKey(data, "escape")) this.close();
+		else if (matchesKey(data, "up")) this.scroll(-1);
+		else if (matchesKey(data, "down")) this.scroll(1);
+		else if (matchesKey(data, "pageUp")) this.scroll(-this.rows());
+		else if (matchesKey(data, "pageDown")) this.scroll(this.rows());
+		else if (matchesKey(data, "home")) this.scroll(-Number.MAX_SAFE_INTEGER);
+		else if (matchesKey(data, "end")) this.scroll(Number.MAX_SAFE_INTEGER);
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
+		this.scroll(event.wheelDelta);
+		return { handled: true };
+	}
+
+	invalidate() {}
+}
+
+// ---------------------------------------------------------------------------
 // Extension
 
 export default function youShouldKnow(pi: ExtensionAPI) {
@@ -400,23 +670,40 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 	let tui: TUI | undefined;
 	let uiCtx: ExtensionContext | undefined;
 	let unsubscribeInput: (() => void) | undefined;
+	let retell: RetellState = { status: "idle" };
+	let retelling: AbortController | null = null;
+	let pane: { refresh: () => void; close: () => void } | null = null;
 	const isOn = (value: string | undefined) => ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
 	const debug = isOn(process.env.PI_YOU_SHOULD_KNOW_DEBUG);
 
-	/** In debug mode, appends one JSON line per event to <agentDir>/you-should-know.log. */
+	/** Appends one JSON line per event to <agentDir>/you-should-know.log, keeping the last LOG_LINES. */
 	function log(event: string, data: Record<string, unknown> = {}) {
-		if (!debug) return;
 		try {
-			const path = join(getAgentDir(), "you-should-know.log");
+			let lines: string[] = [];
 			try {
-				if (statSync(path).size > LOG_MAX_BYTES) renameSync(path, `${path}.1`);
+				lines = readFileSync(logPath(), "utf8").split("\n").filter((l) => l !== "");
 			} catch {
 				// No log yet.
 			}
 			const session = uiCtx?.sessionManager.getSessionId();
-			appendFileSync(path, `${JSON.stringify({ at: new Date().toISOString(), session, event, ...data })}\n`);
+			lines.push(JSON.stringify({ at: new Date().toISOString(), session, event, ...data }));
+			writeFileSync(logPath(), `${lines.slice(-LOG_LINES).join("\n")}\n`);
 		} catch {
 			// Logging must never break the session.
+		}
+	}
+
+	/** Keeps the exact input of a check so a later review can judge what the side agent missed. */
+	function savePayload(ctx: ExtensionContext, messageCount: number, text: string): string | undefined {
+		const session = ctx.sessionManager.getSessionId();
+		if (!/^[A-Za-z0-9-]+$/.test(session)) return undefined;
+		try {
+			mkdirSync(payloadDir(), { recursive: true });
+			const path = join(payloadDir(), `${session}-${messageCount}.txt`);
+			writeFileSync(path, text);
+			return path;
+		} catch {
+			return undefined;
 		}
 	}
 
@@ -548,6 +835,18 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		return box;
 	}
 
+	function buttons(theme: Theme): ChoiceRow {
+		const button = (mode: RetellMode): Choice => ({
+			key: "",
+			label: `[${RETELL[mode].title}]`,
+			dim: true,
+			run: () => {
+				if (uiCtx) void retellNow(mode, uiCtx);
+			},
+		});
+		return new ChoiceRow(theme, [button("plain"), button("lost")], (c) => void Promise.resolve(c.run()).catch(() => undefined));
+	}
+
 	function checkLine(theme: Theme, c: Check) {
 		const time = new Date(c.at).toTimeString().slice(0, 8);
 		return `${theme.fg("accent", STAR)} ${theme.fg("dim", `${time}  check #${c.number} ${DOT} step ${c.step} ${DOT} ${c.outcome} ${DOT} ${(c.latencyMs / 1000).toFixed(1)}s`)}`;
@@ -557,7 +856,8 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		const ctx = uiCtx;
 		if (!ctx || ctx.mode !== "tui") return;
 		const rows = debug ? checks : [];
-		if (!view && rows.length === 0) {
+		const hasButtons = store.buttons;
+		if (!view && rows.length === 0 && !hasButtons) {
 			ctx.ui.setWidget(WIDGET, undefined);
 			return;
 		}
@@ -568,6 +868,7 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 			box.addChild(new Text("", 0, 0));
 			for (const c of rows) box.addChild(new Text(checkLine(theme, c), 0, 0));
 			if (current) box.addChild(card(theme, current));
+			if (hasButtons) box.addChild(buttons(theme));
 			return box;
 		});
 	}
@@ -590,10 +891,12 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 
 	// --- side model ---------------------------------------------------------
 
-	function resolveModel(ctx: ExtensionContext) {
-		if (store.model) {
-			const at = store.model.indexOf("/");
-			const model = at > 0 ? ctx.modelRegistry.find(store.model.slice(0, at), store.model.slice(at + 1)) : undefined;
+	/** Checks use `yskModel`, then `model`; retell uses `model`. Either falls back to the session's model. */
+	function resolveModel(ctx: ExtensionContext, purpose: "check" | "retell") {
+		const spec = purpose === "check" ? store.yskModel || store.model : store.model;
+		if (spec) {
+			const at = spec.indexOf("/");
+			const model = at > 0 ? ctx.modelRegistry.find(spec.slice(0, at), spec.slice(at + 1)) : undefined;
 			if (model) return model;
 		}
 		return ctx.model;
@@ -603,8 +906,15 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		| { ok: true; text: string; model: string; stopReason: string; usage: unknown }
 		| { ok: false; error: string; model?: string };
 
-	async function ask(ctx: ExtensionContext, systemPrompt: string, prompt: string, signal: AbortSignal, maxTokens: number): Promise<Reply> {
-		const model = resolveModel(ctx);
+	async function ask(
+		ctx: ExtensionContext,
+		purpose: "check" | "retell",
+		systemPrompt: string,
+		prompt: string,
+		signal: AbortSignal,
+		maxTokens: number,
+	): Promise<Reply> {
+		const model = resolveModel(ctx, purpose);
 		if (!model) return { ok: false, error: "no model selected" };
 		const name = `${model.provider}/${model.id}`;
 		if (!ctx.modelRegistry.hasConfiguredAuth(model)) return { ok: false, error: "no credentials", model: name };
@@ -612,7 +922,7 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 			.streamSimple(
 				model,
 				{ systemPrompt, messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }] },
-				{ signal, reasoning: store.reasoning, maxTokens, cacheRetention: "none" },
+				{ signal, maxTokens, cacheRetention: "none", ...(purpose === "check" ? { reasoning: store.reasoning } : {}) },
 			)
 			.result();
 		if (reply.stopReason === "error" || reply.stopReason === "aborted") {
@@ -635,7 +945,8 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		let outcome: Outcome = "error";
 		let detail: Record<string, unknown> = {};
 		try {
-			const transcript = buildTranscript(ctx);
+			const messages = sessionMessages(ctx);
+			const transcript = buildTranscript(messages);
 			detail.transcriptChars = transcript.length;
 			const prompt = [
 				"<transcript>",
@@ -650,7 +961,8 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 				"",
 				"Reply now, in the required format.",
 			].join("\n");
-			const reply = await ask(ctx, PROPOSE, prompt, controller.signal, 2_000);
+			detail.payload = savePayload(ctx, messages.length, `${PROPOSE}\n\n---\n\n${prompt}`);
+			const reply = await ask(ctx, "check", PROPOSE, prompt, controller.signal, 2_000);
 			if (!reply.ok) {
 				outcome = "api_error";
 				detail = { ...detail, model: reply.model, error: reply.error };
@@ -705,13 +1017,13 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		setView({ kind: "explaining", note: v.note });
 		const prompt = [
 			"<transcript>",
-			buildTranscript(ctx),
+			buildTranscript(sessionMessages(ctx)),
 			"</transcript>",
 			"",
 			`The person watching you work said yes to: "${v.note.line}"`,
 		].join("\n");
 		const startedAt = Date.now();
-		const reply: Reply = await ask(ctx, EXPLAIN, prompt, controller.signal, 1_500).catch((error) => ({ ok: false, error: String(error) }));
+		const reply: Reply = await ask(ctx, "check", EXPLAIN, prompt, controller.signal, 1_500).catch((error) => ({ ok: false, error: String(error) }));
 		const text = reply.ok ? reply.text : "";
 		log("explain", {
 			line: v.note.line,
@@ -744,6 +1056,83 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		setView(null);
 		uiCtx?.ui.notify(`You should know is off. To turn it back on, set "enabled": true in ${storePath()}.`, "info");
 	}
+
+	// --- retell -------------------------------------------------------------
+
+	function openPane(ctx: ExtensionContext) {
+		if (pane) {
+			pane.refresh();
+			return;
+		}
+		let paneTui: TUI | undefined;
+		void ctx.ui
+			.custom<void>(
+				(t, theme, _keybindings, done) => {
+					paneTui = t;
+					pane = { refresh: () => t.requestRender(), close: () => done() };
+					return new RetellPane(t, theme, () => retell, () => done());
+				},
+				{ overlay: true, overlayOptions: paneOptions(() => paneTui ?? tui) },
+			)
+			.catch(() => undefined)
+			.finally(() => {
+				pane = null;
+			});
+	}
+
+	/** Opens the pane and, unless a retell is already running, starts one; like cc-mod-waitwhat, a second press only reopens. */
+	async function retellNow(mode: RetellMode, ctx: ExtensionContext) {
+		uiCtx = ctx;
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("Retell needs the interactive terminal.", "warning");
+			return;
+		}
+		openPane(ctx);
+		if (retell.status === "busy") return;
+		const gen = generation;
+		retell = { status: "busy", mode };
+		pane?.refresh();
+		const startedAt = Date.now();
+		const controller = new AbortController();
+		retelling = controller;
+		try {
+			const messages = sessionMessages(ctx);
+			const picked = mode === "lost" ? messages : lastTurn(messages);
+			const transcript = retellTranscript(picked);
+			const key = cacheKey(mode, picked);
+			const hit = readCache()[key];
+			if (typeof hit?.answer === "string" && hit.answer !== "") {
+				retell = { status: "done", mode, text: hit.answer, source: hit.source, chars: transcript.length, seconds: "0.0", cached: true };
+				return;
+			}
+			const reply = await ask(ctx, "retell", retellPrompt(mode), `${RETELL_HEAD}\n\n${transcript}`, controller.signal, RETELL_MAX_TOKENS);
+			if (gen !== generation) return;
+			if (!reply.ok) throw new Error(reply.model ? `${reply.model}: ${reply.error}` : reply.error);
+			if (reply.text === "") throw new Error(`${reply.model} returned no text`);
+			const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+			retell = { status: "done", mode, text: reply.text, source: reply.model, chars: transcript.length, seconds, cached: false };
+			writeCache(key, { answer: reply.text, label: RETELL[mode].title, source: reply.model, at: Date.now() / 1000 });
+		} catch (error) {
+			if (gen === generation) retell = { status: "error", mode, text: error instanceof Error ? error.message : String(error) };
+		} finally {
+			if (retelling === controller) retelling = null;
+			if (gen === generation) pane?.refresh();
+		}
+	}
+
+	pi.registerCommand("plain", {
+		description: "Retell the last turn in plain words",
+		handler: async (_args, ctx) => {
+			void retellNow("plain", ctx);
+		},
+	});
+
+	pi.registerCommand("lost", {
+		description: "Retell the whole session so you can catch up",
+		handler: async (_args, ctx) => {
+			void retellNow("lost", ctx);
+		},
+	});
 
 	// --- keys ---------------------------------------------------------------
 
@@ -780,8 +1169,12 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		generation++;
 		inFlight?.abort();
 		explaining?.abort();
+		retelling?.abort();
 		inFlight = null;
 		explaining = null;
+		retelling = null;
+		retell = { status: "idle" };
+		pane?.close();
 		clearTimeout(askedTimer);
 		askedTimer = undefined;
 		view = null;
@@ -796,11 +1189,12 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		reset();
 		store = loadStore();
 		uiCtx = ctx;
-		const model = resolveModel(ctx);
+		const model = resolveModel(ctx, "check");
 		log("session_start", { mode: ctx.mode, enabled: store.enabled, model: model && `${model.provider}/${model.id}`, reasoning: store.reasoning });
 		if (ctx.mode !== "tui") return;
 		ctx.ui.setWidget(WIDGET, undefined);
 		unsubscribeInput = ctx.ui.onTerminalInput(onKey);
+		render();
 	});
 
 	pi.on("session_shutdown", () => {

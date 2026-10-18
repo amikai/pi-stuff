@@ -4,6 +4,8 @@ A pi port of Claude Code's built-in plugin `cc-plugin-you-should-know`. While th
 
 Source version: Claude Code 2.1.302. The plugin has no version of its own; it is bundled in the Claude Code binary, so the Claude Code version identifies it.
 
+It also carries a retell feature taken from [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat) 0.8.2: **Plain words** retells the last turn plainly and **Lost track** retells the whole session (see [Retell](#retell)).
+
 The code is in [`extensions/you-should-know.ts`](../extensions/you-should-know.ts). The rules below were read from that code. Items marked "verified" were exercised in a real pi TUI against the faux provider (see [Testing](#testing)).
 
 ## The card
@@ -51,14 +53,45 @@ Answer with the number keys while the editor is empty. In fullscreen mode you ca
 ### What the side agent sees
 
 - Only the session messages. It never sees the system prompt, so it knows nothing from CLAUDE.md or AGENTS.md.
-- Each tool result is cut to its first 1,200 characters and tool arguments to 400. An error near the end of a long output is invisible to it.
+- Each tool result keeps its first 600 and last 600 characters, so an error at the end of a long output stays visible. Tool arguments are cut to their first 400. (verified)
 - At most 150k characters in total. Beyond that it keeps the first prompt (first 4k characters) plus the most recent part.
+- The exact input of every check is saved, so you can read what it saw (see [Settings and files](#settings-and-files)). (verified)
 
 ### After a card appears
 
 - An offer survives one prompt. The second prompt clears it, which counts as typing past it. Input sent by an extension does not count. (verified)
 - After 3 or more offers typed past in a row, it skips 1, then 2, then 4 checks, up to 16. Pressing any choice resets the streak. (verified)
 - The follow-up question clears itself after 20 seconds without an answer, or when you send a new prompt. (verified)
+
+## Retell
+
+Two retells, both taken from cc-mod-waitwhat with their prompts translated:
+
+| | Plain words | Lost track |
+|---|---|---|
+| Use it when | You read the last answer and did not understand it | You lost track of how the session got here |
+| What it sends | Your last prompt and everything after it | The whole session |
+| What it asks for | Cut to 40-60% of the length, explain internal names on first use, give one recommendation where a decision is needed | Conclusion first, then the story from the start; lead with trees, pseudocode or +/- lists where the topic has a shape |
+
+Starting one:
+
+- Click `[Plain words]` or `[Lost track]` in the row below the card (fullscreen mode), or run `/plain` or `/lost`. (verified)
+- Set `"buttons": false` to hide the row; the commands keep working. (verified)
+- Retell works whether or not the checks are turned on. (verified)
+
+What you see:
+
+- An overlay: on the right at 45% width when the terminal is at least 120 columns wide, otherwise full width above the editor. (verified)
+- Its header names the mode, how many characters were sent, the model that answered and how long it took, or `cache hit` with the model that answered then. (verified)
+- `↑` `↓` `PgUp` `PgDn` `Home` `End` and the mouse wheel scroll it; `Esc` closes it. (verified)
+- Pressing again while a retell is running only reopens the overlay; it does not start a second one. (verified)
+
+What goes to the model:
+
+- Each message's words in full, with each tool result as one line cut to 200 characters. Tool arguments are left out. There is no size limit, as in cc-mod-waitwhat; a session larger than the model's context fails and the overlay shows the error.
+- Nothing is written to the session, and the main agent never sees the retell.
+
+Repeats are cached: the key is the mode plus what you and the agent said, without tool output or model, so an unchanged conversation gets the stored answer without a model call. (verified)
 
 ## Making it trigger more often
 
@@ -82,15 +115,37 @@ How to run them:
 
 - Give the whole task in one prompt and let the agent run past 12 steps. Do not ask about the decision along the way.
 - Set `PI_YOU_SHOULD_KNOW_DEBUG=1` to see each check's result above the prompt.
-- The side agent uses the session's model with reasoning `low` by default. Set `"model": "provider/modelId"` and `"reasoning": "medium"` in `~/.pi/agent/you-should-know.json` to pin a stronger one. Flash-class models at `low` rarely flag anything.
+- Checks use the session's model with reasoning `low` by default. Set `"yskModel": "provider/modelId"` and `"reasoning": "medium"` in `~/.pi/agent/you-should-know.json` to pin a stronger one. Flash-class models at `low` rarely flag anything.
+- When a check ends as `none` and you think it should not have, read its payload file to see exactly what the side agent was given.
 
 Known limitation: checks run while the main agent is still working, so a note can go stale seconds after it appears. For example, it points out that the tests never ran, the agent fixes that in its next step, and the card stays on screen.
 
 ## Settings and files
 
-- Store: `~/.pi/agent/you-should-know.json`, with `enabled`, `model`, `reasoning`, `seen`, `known`, `typedPastInARow` and `looksToSkip`.
-- To turn it back on, set `enabled` to `true`.
-- `PI_YOU_SHOULD_KNOW_DEBUG=1` lists the last 3 checks above the prompt and appends every check, skip, explanation and key press to `~/.pi/agent/you-should-know.log`, which rotates to `.log.1` past 5 MB.
+All files live in pi's agent dir, `~/.pi/agent` unless `PI_CODING_AGENT_DIR` says otherwise.
+
+`you-should-know.json` holds the state and these settings. A missing file, or a missing field, means the default.
+
+| Field | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Run the background checks. Only an explicit `false` turns them off; retell is not affected. |
+| `model` | `""` | `provider/modelId` for checks and retell. Empty uses the session's current model. |
+| `yskModel` | `""` | `provider/modelId` for checks only. Empty falls back to `model`. |
+| `reasoning` | `"low"` | Reasoning level for checks. Retell leaves it to the model. |
+| `buttons` | `true` | Show the retell buttons below the card. |
+
+It also keeps `seen`, `known`, `typedPastInARow` and `looksToSkip`. A model name that cannot be found falls back to the session's model without a warning; the log's `model` field shows which one answered.
+
+Other files:
+
+| File | Contents |
+|---|---|
+| `you-should-know.log` | One JSON line per check, skip, explanation, key press and cleared card, with the side agent's raw reply. Always written; keeps the last 2,000 lines. (verified) |
+| `you-should-know-payloads/<session id>-<message count>.txt` | The exact input of each check: the system prompt, `---`, then the transcript and lists it was given. The log line names the file. Always written and never cleaned up, so it holds whatever the session contained, secrets included. (verified) |
+| `you-should-know-cache.json` | Retell answers, keyed as described in [Retell](#retell). Keeps the last 200. (verified) |
+| `you-should-know-prompts/plain.md`, `lost.md` | When present and not empty, replaces that retell's built-in prompt. Lives outside the package, so `pi update` leaves it alone. (verified) |
+
+`PI_YOU_SHOULD_KNOW_DEBUG=1` lists the last 3 checks above the prompt. Logging no longer depends on it.
 
 ## Differences from the Claude Code original
 
@@ -99,7 +154,10 @@ Compared against the original code in the Claude Code 2.1.302 binary:
 - Same: a check every 6 steps, one card per prompt, an offer survives one prompt, the 20-second clear, 50 `seen` entries, the back-off formula, and every choice on the card.
 - Disable: the original only fills `/plugin disable cc-plugin-you-should-know@builtin` into the prompt, which takes effect once you send it. This port writes `enabled: false` directly.
 - Cost: the original uses `model.fork` to reuse the main conversation. This port rebuilds the transcript for every check and sends it with `cacheRetention: "none"`, so nothing is cached.
-- Side model: the original always uses the main conversation's model. This port can pin another one with `model`.
+- Transcript: the original sends the conversation whole. This port caps it at 150k characters and cuts tool results to their two ends.
+- Side model: the original always uses the main conversation's model. This port can pin another one with `yskModel` or `model`.
+- Records: the original reports to telemetry. This port keeps a local log and the input of every check.
+- Retell, its buttons and its commands come from cc-mod-waitwhat; the original has nothing like them.
 - The original contains code for "make it a learning page (artifact)" and for "explain it again differently", but 2.1.302 has no way to reach either. Neither is ported.
 
 ## Testing
@@ -110,9 +168,11 @@ test/you-should-know.sh
 
 This runs the repo's extension in a real pi TUI, with the model replaced by [`test/faux-provider.ts`](../test/faux-provider.ts):
 
-- Main agent: a prompt containing `steps N` makes it call bash N times, then answer `done`.
+- Main agent: a prompt containing `steps N` makes it call bash N times, then answer `done`. Adding the word `long` makes every call print 3,000 lines.
 - Side agent: every check reads `ctrl/side.txt` as its reply, with `{n}` replaced by a call counter. You can edit the file while pi runs.
-- `-ne` loads only these two extensions, and the agent dir is a fresh temp directory, so `~/.pi/agent` is never touched.
+- Retell: answers with its mode and a counter plus 40 lines to scroll. A prompt override containing `OVERRIDE-MARKER` is marked `(override)` in the title. Creating `ctrl/slow` makes it take 5 seconds.
+- Two models, `faux/faux-1` and `faux/faux-2`, so `model` and `yskModel` can be told apart.
+- `-ne` loads only these two extensions, and the agent dir is a fresh temp directory, so `~/.pi/agent` is never touched. `/new` starts a new session and rereads the settings.
 
 Acceptance checklist:
 
@@ -123,3 +183,9 @@ Acceptance checklist:
 5. Press `0` on the explanation: after 20 seconds the log records `cleared` by `timeout`.
 6. Let three offers in a row be cleared by two prompts each: `looksToSkip` becomes 1 and the next check logs `backing off`.
 7. Press `4` twice: `enabled` becomes `false` and later checks log `disabled`.
+8. `long steps 6`: the payload file shows tool results as start `…[N chars cut]…` end, and the log line names the file.
+9. `/plain`, scroll, `Esc`, `/plain` again: the second header says `cache hit`. Click `[Lost track]`: the overlay switches to the whole session.
+10. Write `OVERRIDE-MARKER` into `you-should-know-prompts/lost.md`, send a prompt, run `/lost`: the title says `(override)`.
+11. Settings `{"model": "faux/faux-2", "yskModel": "faux/faux-1", "buttons": false}` then `/new`: the row is gone, checks log `faux/faux-1`, retell says `faux/faux-2`.
+12. With `ctrl/slow`, run `/lost`, press `Esc`, run `/plain`: the overlay still shows `Lost track · whole session · retelling…` and only one retell call is made.
+13. At 100 columns the overlay is full width with the editor visible below it.

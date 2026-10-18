@@ -12,7 +12,7 @@ Pi clones the repo to `~/.pi/agent/git/github.com/amikai/pi-stuff` and loads it 
 
 ## Extensions
 
-- [`you-should-know.ts`](extensions/you-should-know.ts) - Port of Claude Code's `cc-plugin-you-should-know`: every 6 steps a side agent reads the session and, when there is something you should know but might miss, flags it above the prompt. Rules, how to trigger it, and testing are in [`docs/you-should-know.md`](docs/you-should-know.md).
+- [`you-should-know.ts`](extensions/you-should-know.ts) - Port of Claude Code's `cc-plugin-you-should-know`: every 6 steps a side agent reads the session and, when there is something you should know but might miss, flags it above the prompt. Also retells the last turn in plain words (`/plain`) or the whole session when you lost track (`/lost`), after [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat), in an overlay the main agent never sees. Rules, settings, how to trigger it, and testing are in [`docs/you-should-know.md`](docs/you-should-know.md).
 
 ## Tests
 
