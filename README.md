@@ -5,10 +5,10 @@ amikai's [pi coding agent](https://buildwithpi.ai/) package. The layout follows 
 ## Install
 
 ```sh
-pi install ~/Workspace/pi-stuff
+pi install git:github.com/amikai/pi-stuff
 ```
 
-A local-path package is loaded straight from this directory, not copied, so edits take effect on the next pi start (or `/reload`).
+Pi clones the repo to `~/.pi/agent/git/github.com/amikai/pi-stuff` and loads it from there. To pick up pushed changes, run `pi update --extensions`.
 
 ## Extensions
 
