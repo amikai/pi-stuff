@@ -35,8 +35,8 @@ Settings live in `~/.pi/agent/you-should-know.json` (pi's agent dir, so `PI_CODI
 | Field | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Run the background checks. Only an explicit `false` turns them off. Retell is not affected. `4 Disable` on the card writes `false`. |
-| `model` | `""` | `provider/modelId` for checks and retell, for example `"moxa/gpt-5-4"`. Empty uses the session's current model, and follows it when you switch models. |
-| `yskModel` | `""` | `provider/modelId` for checks only. Empty falls back to `model`. |
+| `model` | `""` | `provider/modelId` for retell (Plain words and Lost track), for example `"antigravity/gemini-3.8-flash"`. Empty uses the session's current model, and follows it when you switch models. |
+| `yskModel` | `""` | `provider/modelId` for checks and Learn more. Empty uses the session's current model; it never falls back to `model`, so the two can be set independently. |
 | `reasoning` | `"low"` | `minimal`, `low`, `medium` or `high`, for checks. Retell leaves it to the model. |
 | `buttons` | `true` | Show the `[Plain words]` `[Lost track]` row below the card. `/plain` and `/lost` work either way. |
 
@@ -154,7 +154,7 @@ Borrowed:
 | The retell cache: same key, 200 entries | `~/.cache/cc-sidecar-waitwhat.json` |
 | Prompt override files | `~/.config/cc-sidecar-waitwhat/*.md` |
 | Every check logged (last 2,000 lines) and its input saved | `cc-ysk-log.jsonl` and `cc-ysk-payloads/` |
-| `yskModel` for checks only | `YSK_MODEL` |
+| `yskModel` for checks | `YSK_MODEL` |
 | Tool results cut to both ends | Its check input, which keeps both ends |
 
 Different on purpose:
@@ -166,9 +166,9 @@ Different on purpose:
 | The row | Three buttons and a recap line | Two retell buttons below the card | The check keeps the original's card; no recap |
 | Where the result shows | Claude Code places its pane | Right side at 45% from 120 columns, otherwise full width above the editor | pi has overlays, not panes |
 | Keyboard while it is open | Not checked | The overlay holds the keyboard until `Esc` | A pi overlay needs focus to scroll |
-| Which model | `cmd`, then `http` (default `gemini-3.8-flash-high`), then `haiku`, falling through on failure and saying why | One model: `model`, else the session's; an error is shown, nothing else is tried | pi can already reach any configured model |
+| Which model | `cmd`, then `http` (default `gemini-3.8-flash-high`), then `haiku`, falling through on failure and saying why | One model per feature: `yskModel` for checks, `model` for retell, else the session's; an error is shown, nothing else is tried | pi can already reach any configured model |
 | Reply length | No limit over `http`, 1,500 tokens for `haiku` | 8,000 tokens | |
-| `yskModel` | `YSK_MODEL` only changes the `http` step | Replaces the check's model | No fallback chain here |
+| `yskModel` | `YSK_MODEL` only changes the `http` step, and falls back to the shared `SIDECAR_MODEL` | Replaces the check's model; when empty, checks use the session's model, not `model` | No fallback chain here; checks can follow the session while retell uses a fixed model |
 | Files | `~/.cache`, `~/.config`; the lost-track prompt is `wait-what.md` | pi's agent dir; the prompt is `lost.md` | pi convention, and tests swap the agent dir |
 | Cache | Shared with its sidecar tool | This extension only | No sidecar |
 | Check log | `checked` and `answered` | Checks, skips, explanations, key presses and cleared cards | Keeps the events this port already logged |
@@ -225,7 +225,7 @@ Compared against the original code in the Claude Code 2.1.302 binary:
 - Disable: the original only fills `/plugin disable cc-plugin-you-should-know@builtin` into the prompt, which takes effect once you send it. This port writes `enabled: false` directly.
 - Cost: the original uses `model.fork` to reuse the main conversation. This port rebuilds the transcript for every check and sends it with `cacheRetention: "none"`, so nothing is cached.
 - Transcript: the original sends the conversation whole. This port caps it at 150k characters and cuts tool results to their two ends.
-- Side model: the original always uses the main conversation's model. This port can pin another one with `yskModel` or `model`.
+- Side model: the original always uses the main conversation's model. This port can pin another one with `yskModel`.
 - Records: the original reports to telemetry. This port keeps a local log and the input of every check.
 - Retell, its buttons and its commands come from cc-mod-waitwhat; the original has nothing like them.
 - The original contains code for "make it a learning page (artifact)" and for "explain it again differently", but 2.1.302 has no way to reach either. Neither is ported.
@@ -256,6 +256,6 @@ Acceptance checklist:
 8. `long steps 6`: the payload file shows tool results as start `…[N chars cut]…` end, and the log line names the file.
 9. `/plain`, scroll, `Esc`, `/plain` again: the second header says `cache hit`. Click `[Lost track]`: the overlay switches to the whole session.
 10. Write `OVERRIDE-MARKER` into `you-should-know-prompts/lost.md`, send a prompt, run `/lost`: the title says `(override)`.
-11. Settings `{"model": "faux/faux-2", "yskModel": "faux/faux-1", "buttons": false}` then `/new`: the row is gone, checks log `faux/faux-1`, retell says `faux/faux-2`.
+11. Settings `{"model": "faux/faux-2", "buttons": false}` then `/new`: the row is gone, checks still log the session's `faux/faux-1`, retell says `faux/faux-2`. With `{"yskModel": "faux/faux-2"}` instead, checks log `faux/faux-2` and retell says `faux/faux-1`.
 12. With `ctrl/slow`, run `/lost`, press `Esc`, run `/plain`: the overlay still shows `Lost track · whole session · retelling…` and only one retell call is made.
 13. At 100 columns the overlay is full width with the editor visible below it.

@@ -92,9 +92,9 @@ const DEFAULT_TAG: Tag = "You should know";
 
 type Store = {
 	enabled: boolean;
-	/** "provider/modelId" for checks and retell; empty uses the session's model. */
+	/** "provider/modelId" for retell; empty uses the session's model. */
 	model: string;
-	/** "provider/modelId" for checks only; empty falls back to `model`. */
+	/** "provider/modelId" for checks and Learn more; empty uses the session's model, never `model`. */
 	yskModel: string;
 	/** Reasoning level for checks; retell leaves it to the model. */
 	reasoning: "minimal" | "low" | "medium" | "high";
@@ -891,9 +891,9 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 
 	// --- side model ---------------------------------------------------------
 
-	/** Checks use `yskModel`, then `model`; retell uses `model`. Either falls back to the session's model. */
+	/** Checks use `yskModel` and retell uses `model`; an empty one uses the session's model. */
 	function resolveModel(ctx: ExtensionContext, purpose: "check" | "retell") {
-		const spec = purpose === "check" ? store.yskModel || store.model : store.model;
+		const spec = purpose === "check" ? store.yskModel : store.model;
 		if (spec) {
 			const at = spec.indexOf("/");
 			const model = at > 0 ? ctx.modelRegistry.find(spec.slice(0, at), spec.slice(at + 1)) : undefined;
