@@ -194,6 +194,7 @@ function createHarness(options?: {
 		clickChoice,
 		getOverlayOptions: () => overlayOptionsFn?.(),
 		getOverlay: () => overlayComponent,
+		getWidget: () => widgetComponent,
 		pressKey: (key: string) => inputListener?.(key),
 		setEditorText: (t: string) => {
 			editorText = t;
@@ -517,4 +518,40 @@ test("9-13. retell: empty session, caching, prompt override invalidation, live s
 	await new Promise((r) => setTimeout(r, 100));
 	assert.equal(retellCount, 5);
 	assert.match(h.renderOverlay(), /Faux plain retell 5/);
+});
+
+test("Hovering a widget button highlights it, and only one component is highlighted at a time", async () => {
+	const { EL, h: el } = await import("../extensions/prismantis/core/jsx.ts");
+	const { PrismantisComponent } = await import("../extensions/prismantis/renderer.ts");
+	const { clearHover } = await import("../extensions/lib/pointer-hover.ts");
+	const INVERSE = "\x1b[7m";
+	const h = createHarness();
+	await h.emit("session_start");
+	const row = h.getWidget().children.find((c: any) => typeof c.handleMouse === "function");
+	const rendered = row.render(120) as string[];
+	const x = rendered[0].indexOf("[Plain words]");
+	assert.ok(x >= 0, "the widget shows the Plain words button");
+	assert.ok(!rendered.join("").includes(INVERSE), "no highlight before any pointer move");
+
+	const move = (x: number, y: number) => ({ button: "none", type: "move", x, y });
+	assert.deepEqual(row.handleMouse(move(x + 2, 0)), { handled: true, render: true });
+	const lit = row.render(120)[0] as string;
+	assert.ok(lit.includes(`${INVERSE}[Plain words]`), "the hovered button is inverse");
+	assert.ok(!lit.includes(`${INVERSE}[Lost track]`), "the other button is not");
+	assert.equal(row.handleMouse(move(x + 3, 0)), undefined, "moving within the same button changes nothing");
+
+	assert.deepEqual(row.handleMouse(move(119, 0)), { handled: true, render: true });
+	assert.ok(!row.render(120).join("").includes(INVERSE), "moving to empty space clears the highlight");
+
+	const tree = el(EL.Box, { flexDirection: "column" }, el(EL.Button, { variant: "secondary", label: "⧉ source", onPress: () => {} }));
+	const prism = new PrismantisComponent(() => tree);
+	prism.render(40);
+	row.handleMouse(move(x + 2, 0));
+	assert.deepEqual(prism.handleMouse(move(3, 0)), { handled: true, render: true });
+	assert.ok(!row.render(120).join("").includes(INVERSE), "entering a prismantis button clears the widget button");
+	assert.ok(prism.render(40).join("").includes(INVERSE), "the prismantis button is highlighted");
+	row.handleMouse(move(x + 2, 0));
+	assert.ok(!prism.render(40).join("").includes(INVERSE), "entering a widget button clears the prismantis button");
+	assert.ok(row.render(120).join("").includes(`${INVERSE}[Plain words]`));
+	clearHover();
 });

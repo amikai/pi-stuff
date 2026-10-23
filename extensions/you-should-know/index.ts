@@ -53,6 +53,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { hoveredKey, pointerMoved, watchPointerLeave } from "../lib/pointer-hover.ts";
 
 const WIDGET = "you-should-know";
 const STAR = "✦";
@@ -482,6 +483,8 @@ function lead(theme: Theme, tag?: Tag) {
 	return `${theme.fg("accent", STAR)} ${tag ? theme.fg("dim", `${tag} ${DOT} `) : ""}`;
 }
 
+const INVERSE = "\x1b[7m";
+const INVERSE_OFF = "\x1b[27m";
 const CHOICE_GAP = 3;
 const ROW_INDENT = 2;
 
@@ -511,6 +514,7 @@ class ChoiceRow implements Component {
 
 	render(width: number): string[] {
 		this.hits = [];
+		const lit = hoveredKey(this);
 		const lines: string[] = [];
 		let line = this.prefix;
 		let col = visibleWidth(this.prefix);
@@ -526,7 +530,8 @@ class ChoiceRow implements Component {
 			}
 			this.hits.push({ row: lines.length, from: col, to: col + w, choice });
 			const text = choice.key ? `${this.theme.bold(choice.key)} ${choice.label}` : choice.label;
-			line += choice.dim ? this.theme.fg("dim", text) : text;
+			const styled = choice.dim ? this.theme.fg("dim", text) : text;
+			line += choice === lit ? `${INVERSE}${styled}${INVERSE_OFF}` : styled;
 			col += w;
 		}
 		lines.push(line);
@@ -534,13 +539,16 @@ class ChoiceRow implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
-		if (event.button !== "left") return undefined;
 		const hit = this.hits.find((h) => h.row === event.y && event.x >= h.from && event.x < h.to);
+		if (event.type === "move") return pointerMoved(this, hit?.choice);
+		if (event.button !== "left") return undefined;
 		if (!hit) return undefined;
 		// Claiming the press makes pi send the matching click here.
 		if (event.type === "click") this.onPress(hit.choice);
 		return event.type === "press" || event.type === "click" ? { handled: true } : undefined;
 	}
+
+	repaintHover() {}
 
 	invalidate() {}
 }
@@ -905,6 +913,7 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		const current = view;
 		ctx.ui.setWidget(WIDGET, (t, theme) => {
 			tui = t;
+			watchPointerLeave(t);
 			const box = new Container();
 			box.addChild(new Text("", 0, 0));
 			for (const c of rows) box.addChild(new Text(checkLine(theme, c), 0, 0));
