@@ -13,10 +13,14 @@
     "extensions": [
       "./extensions/*.ts",
       "./extensions/*/index.ts"
+    ],
+    "themes": [
+      "./themes/*.json"
     ]
   },
   "scripts": {
-    "test": "node --test test/you-should-know.test.ts"
+    "test": "node --test test/you-should-know.test.ts test/prismantis.test.ts",
+    "sync:prismantis": "node scripts/sync-prismantis.mjs"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

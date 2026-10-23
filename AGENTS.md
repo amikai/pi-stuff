@@ -6,6 +6,8 @@ Pi extensions live in `./extensions`: a single `.ts` file, or a folder with an `
 
 Test-only code lives in `./test` and is never listed in the `pi` manifest. `test/faux-provider.ts` registers a scripted model provider; loading it outside a test session would replace real model output.
 
-## Testing you-should-know
+## Testing
 
-Run `npm test` for the automated test suite (`test/you-should-know.test.ts`), or `test/you-should-know.sh` to drive the extension in a real pi TUI against the faux provider. Both use their own temp agent dir, so the personal store, log and sessions under `~/.pi/agent` are never touched. See `extensions/you-should-know/README.md` for what to check.
+Run `npm test` for the automated test suites (`test/you-should-know.test.ts` and `test/prismantis.test.ts`). Use `test/you-should-know.sh` or `test/prismantis.sh` to drive each extension in a real pi TUI against the faux provider. Both use their own temp agent dir, so the personal store, log and sessions under `~/.pi/agent` are never touched. See `extensions/you-should-know/README.md` and `extensions/prismantis/README.md` for what to check.
+
+To refresh the upstream prismantis core modules and generated pi themes from a local `../prismantis` checkout, run `npm run sync:prismantis`.
