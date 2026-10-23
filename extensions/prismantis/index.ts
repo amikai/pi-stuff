@@ -745,6 +745,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	let uiCtx: ExtensionContext | undefined;
 	let tuiInstance: TUI | undefined;
 	let hoverTui: TUI | undefined;
+	let screenTui: TUI | undefined;
 	let promptsCount = 0;
 	let turnStartedAt = Date.now();
 
@@ -798,6 +799,13 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 
 	function notify(text: string, level: "info" | "warning" | "error" = "info"): void {
 		uiCtx?.ui.notify(text, level);
+	}
+
+	// A transcript notice would push the pressed button out from under the pointer, so copy results float as a flash.
+	function toast(text: string, level: "info" | "warning" | "error" = "info"): void {
+		const flash = (screenTui as unknown as { flash?: (message: string, durationMs?: number) => void } | undefined)?.flash;
+		if (typeof flash === "function") flash.call(screenTui, text, level === "info" ? undefined : 4000);
+		else notify(text, level);
 	}
 
 	function requestRender(): void {
@@ -866,22 +874,22 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 					if (html && style.htmlCopy) {
 						const failure = copyHtmlTableSync(style.htmlCopy, html(), content);
 						if (failure === null) {
-							notify("Copied formatted table", "info");
+							toast("Copied formatted table", "info");
 							return;
 						}
 						try {
 							copyToClipboard(content);
-							notify(`Copied as plain text (${failure})`, "warning");
+							toast(`Copied as plain text (${failure})`, "warning");
 						} catch {
-							notify("Copy failed", "error");
+							toast("Copy failed", "error");
 						}
 						return;
 					}
 					try {
 						copyToClipboard(content);
-						notify("Copied", "info");
+						toast("Copied", "info");
 					} catch {
-						notify("Copy failed", "error");
+						toast("Copy failed", "error");
 					}
 				},
 			});
@@ -1318,6 +1326,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		syncPiUiTheme(ctx);
 		if (ctx.mode === "tui") {
 			ctx.ui.setWidget("prismantis-hover", (t) => {
+				screenTui = t;
 				watchPointerLeave(t);
 				return { render: () => [], invalidate: () => {} };
 			});
@@ -1330,6 +1339,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", () => {
 		uiCtx = undefined;
 		tuiInstance = undefined;
+		screenTui = undefined;
 		clearHover();
 	});
 
@@ -1498,9 +1508,9 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 				const targetText = codeBlock?.kind === "code" ? codeBlock.lines.join("\n") : reply;
 				try {
 					copyToClipboard(targetText);
-					notify(`Copied the last ${codeBlock ? "code block" : "reply"}.`, "info");
+					toast(`Copied the last ${codeBlock ? "code block" : "reply"}.`, "info");
 				} catch {
-					notify("Copy failed.", "error");
+					toast("Copy failed.", "error");
 				}
 				return;
 			}
