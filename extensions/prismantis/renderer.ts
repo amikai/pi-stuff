@@ -8,6 +8,7 @@ export type MouseHit = {
 	from: number;
 	to: number;
 	onPress: () => void;
+	key: unknown;
 };
 
 export type RenderedBox = {
@@ -28,6 +29,8 @@ type TextStyle = {
 	inverse?: boolean;
 	href?: string;
 	onPress?: () => void;
+	pressKey?: unknown;
+	hover?: Record<string, unknown>;
 };
 
 type InlineSpan = {
@@ -131,10 +134,12 @@ function stylePrefix(style: TextStyle): string {
 
 function formatSpan(span: InlineSpan): string {
 	if (span.text === "") return "";
-	const prefix = stylePrefix(span.style);
+	const { style } = span;
+	const lit = style.pressKey !== undefined && style.pressKey === litKey;
+	const prefix = stylePrefix(lit ? mergeStyle(style, style.hover ?? DEFAULT_HOVER) : style);
 	const styled = prefix ? `${prefix}${span.text}\x1b[0m` : span.text;
-	if (span.style.href) {
-		return hyperlink(styled, span.style.href);
+	if (style.href) {
+		return hyperlink(styled, style.href);
 	}
 	return styled;
 }
@@ -143,7 +148,20 @@ function isRenderElement(node: RenderNode): node is RenderElement {
 	return typeof node === "object" && node !== null && !Array.isArray(node) && "type" in node;
 }
 
+const DEFAULT_HOVER = { inverse: true };
+
+// The press key of the element under the pointer while a component renders, read by formatSpan.
+let litKey: unknown;
+// One hover for the whole screen, so moving onto another element clears the previous one.
+let hovered: { owner: PrismantisComponent; key: unknown } | null = null;
+let moveClaimed = false;
+
+function hoverProps(props: Record<string, unknown>): Record<string, unknown> | undefined {
+	return typeof props.hover === "object" && props.hover !== null ? (props.hover as Record<string, unknown>) : undefined;
+}
+
 function mergeStyle(base: TextStyle, props: Record<string, unknown>): TextStyle {
+	const pressable = typeof props.onPress === "function";
 	return {
 		color: typeof props.color === "string" ? props.color : base.color,
 		backgroundColor: typeof props.backgroundColor === "string" ? props.backgroundColor : base.backgroundColor,
@@ -159,7 +177,9 @@ function mergeStyle(base: TextStyle, props: Record<string, unknown>): TextStyle 
 					: base.dimColor,
 		inverse: props.inverse === true ? true : props.inverse === false ? false : base.inverse,
 		href: typeof props.href === "string" ? props.href : base.href,
-		onPress: typeof props.onPress === "function" ? () => (props.onPress as (e: { surface: "terminal" }) => void)({ surface: "terminal" }) : base.onPress,
+		onPress: pressable ? () => (props.onPress as (e: { surface: "terminal" }) => void)({ surface: "terminal" }) : base.onPress,
+		pressKey: pressable ? props.onPress : base.pressKey,
+		hover: hoverProps(props) ?? (pressable ? undefined : base.hover),
 	};
 }
 
@@ -194,8 +214,14 @@ function collectInlineSpans(node: RenderNode, style: TextStyle, out: InlineSpan[
 			typeof node.props.onPress === "function"
 				? () => (node.props.onPress as (e: { surface: "terminal" }) => void)({ surface: "terminal" })
 				: style.onPress;
+		const pressable = typeof node.props.onPress === "function";
+		const press = {
+			onPress,
+			pressKey: pressable ? node.props.onPress : style.pressKey,
+			hover: hoverProps(node.props) ?? (pressable ? undefined : style.hover),
+		};
 		if (node.props.plain === true && node.children.length > 0) {
-			collectInlineSpans(node.children, { ...style, onPress }, out);
+			collectInlineSpans(node.children, { ...style, ...press }, out);
 			return out;
 		}
 		const label = typeof node.props.label === "string" ? node.props.label : "";
@@ -204,7 +230,7 @@ function collectInlineSpans(node: RenderNode, style: TextStyle, out: InlineSpan[
 			...style,
 			bold: isPrimary ? true : style.bold,
 			dimColor: !isPrimary ? true : style.dimColor,
-			onPress,
+			...press,
 		};
 		out.push({ text: `[ ${label} ]`, style: btnStyle });
 		return out;
@@ -335,7 +361,7 @@ function renderSpanRows(rows: InlineSpan[][]): RenderedBox {
 				if (prev && prev.row === r && prev.to === col && prev.onPress === span.style.onPress) {
 					prev.to = col + w;
 				} else {
-					hits.push({ row: r, from: col, to: col + w, onPress: span.style.onPress });
+					hits.push({ row: r, from: col, to: col + w, onPress: span.style.onPress, key: span.style.pressKey });
 				}
 			}
 			line += formatSpan(span);
@@ -372,7 +398,7 @@ function renderButtonElement(node: RenderElement, maxWidth: number): RenderedBox
 			if (onPress) {
 				for (let r = 0; r < inner.lines.length; r++) {
 					const w = Math.max(inner.width, visibleWidth(inner.lines[r]!));
-					hits.push({ row: r, from: 0, to: w, onPress });
+					hits.push({ row: r, from: 0, to: w, onPress, key: node.props.onPress });
 				}
 			}
 			return { ...inner, hits };
@@ -481,6 +507,7 @@ function joinHorizontalRun(
 				from: hit.from + col,
 				to: hit.to + col,
 				onPress: hit.onPress,
+				key: hit.key,
 			});
 		}
 		for (let r = 0; r < rowHeight; r++) {
@@ -786,6 +813,7 @@ function renderColumnBox(node: RenderElement, innerMaxWidth: number, fixedInnerW
 				from: hit.from + offsetX,
 				to: hit.to + offsetX,
 				onPress: hit.onPress,
+				key: hit.key,
 			});
 		}
 		for (const line of box.lines) {
@@ -858,6 +886,7 @@ function renderBoxElement(node: RenderElement, maxWidth: number, forcedOuterWidt
 		from: hit.from + padLeft + (borderStyle ? 1 : 0),
 		to: hit.to + padLeft + (borderStyle ? 1 : 0),
 		onPress: hit.onPress,
+		key: hit.key,
 	}));
 
 	if (!borderStyle) {
@@ -931,6 +960,7 @@ export class PrismantisComponent implements Component {
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 	private cachedHits: MouseHit[] = [];
+	private tree?: { width: number; node: RenderNode };
 
 	constructor(buildTree: (width: number) => RenderNode, paddingX = 0) {
 		this.buildTree = buildTree;
@@ -941,6 +971,11 @@ export class PrismantisComponent implements Component {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
 		this.cachedHits = [];
+		this.tree = undefined;
+	}
+
+	repaintHover(): void {
+		this.cachedLines = undefined;
 	}
 
 	render(width: number): string[] {
@@ -948,8 +983,16 @@ export class PrismantisComponent implements Component {
 			return this.cachedLines;
 		}
 		const contentWidth = Math.max(20, width - this.paddingX * 2);
-		const tree = this.buildTree(contentWidth);
-		const rendered = renderNode(tree, contentWidth);
+		if (this.tree?.width !== contentWidth) {
+			this.tree = { width: contentWidth, node: this.buildTree(contentWidth) };
+		}
+		litKey = hovered?.owner === this ? hovered.key : undefined;
+		let rendered: RenderedBox;
+		try {
+			rendered = renderNode(this.tree.node, contentWidth);
+		} finally {
+			litKey = undefined;
+		}
 		const pad = this.paddingX > 0 ? " ".repeat(this.paddingX) : "";
 		this.cachedWidth = width;
 		this.cachedHits = rendered.hits.map((h) => ({
@@ -964,12 +1007,46 @@ export class PrismantisComponent implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (event.type === "move") {
+			moveClaimed = true;
+			const hit = this.hitAt(event);
+			return setHovered(hit ? { owner: this, key: hit.key } : null) ? { render: true } : undefined;
+		}
 		if (event.button !== "left") return undefined;
-		const hit = this.cachedHits.find((h) => h.row === event.y && event.x >= h.from && event.x < h.to);
+		const hit = this.hitAt(event);
 		if (!hit) return undefined;
 		if (event.type === "click") {
 			hit.onPress();
 		}
 		return event.type === "press" || event.type === "click" ? { handled: true } : undefined;
 	}
+
+	private hitAt(event: TuiMouseEvent): MouseHit | undefined {
+		return this.cachedHits.find((h) => h.row === event.y && event.x >= h.from && event.x < h.to);
+	}
+}
+
+function setHovered(next: { owner: PrismantisComponent; key: unknown } | null): boolean {
+	if (hovered?.owner === next?.owner && hovered?.key === next?.key) return false;
+	hovered?.owner.repaintHover();
+	next?.owner.repaintHover();
+	hovered = next;
+	return true;
+}
+
+/** Clears the hover and reports whether a repaint is due. */
+export function clearHover(): boolean {
+	return setHovered(null);
+}
+
+/**
+ * Call once the TUI has dispatched a pointer move. Moves that reached no
+ * PrismantisComponent mean the pointer left them, which pi never reports.
+ */
+export function settlePointerMove(): boolean {
+	if (moveClaimed) {
+		moveClaimed = false;
+		return false;
+	}
+	return clearHover();
 }

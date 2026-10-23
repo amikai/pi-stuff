@@ -99,7 +99,7 @@ import {
 } from "./core/render.ts";
 import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./core/rtl.ts";
 import { pickTheme, RANDOM_THEMES, resolveStyle, type Style } from "./core/theme.ts";
-import { PrismantisComponent, renderNode } from "./renderer.ts";
+import { clearHover, PrismantisComponent, renderNode, settlePointerMove } from "./renderer.ts";
 
 const CUSTOM_MESSAGE_TYPE = "prismantis-output";
 const TURN_ENTRY_TYPE = "prismantis-turn";
@@ -744,6 +744,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	let style = resolveStyle({ ...options, theme: pickedTheme });
 	let uiCtx: ExtensionContext | undefined;
 	let tuiInstance: TUI | undefined;
+	let hoverTui: TUI | undefined;
 	let promptsCount = 0;
 	let turnStartedAt = Date.now();
 
@@ -801,6 +802,20 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 
 	function requestRender(): void {
 		tuiInstance?.requestRender();
+	}
+
+	// pi sends no event when the pointer leaves a component, and TuiAltScreen's own input listener consumes
+	// mouse reports before extension listeners run, so onTerminalInput never sees them. Wrap the dispatcher instead.
+	function watchPointerLeave(tui: TUI): void {
+		if (hoverTui === tui) return;
+		const target = tui as unknown as { handleMouseEvent?: (raw: { button: number }) => void };
+		const dispatch = target.handleMouseEvent;
+		if (typeof dispatch !== "function") return;
+		hoverTui = tui;
+		target.handleMouseEvent = function (this: unknown, raw) {
+			dispatch.call(this, raw);
+			if ((raw.button & 32) !== 0 && settlePointerMove()) tui.requestRender();
+		};
 	}
 
 	function makeFolder(onInvalidate?: () => void, faces = false): Fold {
@@ -1302,6 +1317,10 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		refreshFromDisk(ctx.cwd);
 		syncPiUiTheme(ctx);
 		if (ctx.mode === "tui") {
+			ctx.ui.setWidget("prismantis-hover", (t) => {
+				watchPointerLeave(t);
+				return { render: () => [], invalidate: () => {} };
+			});
 			ctx.ui.setWorkingIndicator({
 				frames: [`\x1b[38;2;203;166;247m●\x1b[0m`],
 			});
@@ -1311,6 +1330,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	pi.on("session_shutdown", () => {
 		uiCtx = undefined;
 		tuiInstance = undefined;
+		clearHover();
 	});
 
 	pi.on("input", (event, ctx) => {

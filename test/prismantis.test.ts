@@ -32,7 +32,8 @@ const { matchesKey, visibleWidth } = await import("@earendil-works/pi-tui");
 initTheme();
 
 const { default: prismantisExtension } = await import("../extensions/prismantis/index.ts");
-const { EL } = await import("../extensions/prismantis/core/jsx.ts");
+const { EL, h } = await import("../extensions/prismantis/core/jsx.ts");
+const { clearHover, PrismantisComponent, settlePointerMove } = await import("../extensions/prismantis/renderer.ts");
 const { parse } = await import("../extensions/prismantis/core/markdown.ts");
 const { drawDiagrams } = await import("../extensions/prismantis/core/mermaid.ts");
 const { renderBlocks } = await import("../extensions/prismantis/core/render.ts");
@@ -99,6 +100,7 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 				return { success: true };
 			},
 			setWorkingIndicator: () => {},
+			setWidget: () => {},
 			custom: async (factory: any) => {
 				return new Promise<void>((resolveDone) => {
 					overlayComponent = factory(fakeTui, mockPiTheme, { matches: matchesKey }, () => {
@@ -450,4 +452,56 @@ test("5. /prismantis commands, interactive setup pane, system prompt hints, and 
 		availableWidth: 80,
 	});
 	assert.ok(transformed.includes("✓ healthy") && !transformed.includes("```figure"), "transforms figure blocks in standard Markdown");
+});
+
+const INVERSE = "\x1b[7m";
+const move = (x: number, y: number) => ({ type: "move", button: "none", x, y, width: 40, height: 4 }) as any;
+
+function hoverFixture() {
+	const tree = h(
+		EL.Box,
+		{ flexDirection: "column" },
+		h(EL.Button, { variant: "secondary", label: "⧉ source", onPress: () => {} }),
+		h(EL.Text, { hover: { color: "#ff0000" }, onPress: () => {} }, "styled link"),
+		h(EL.Text, {}, "plain text"),
+	);
+	const comp = new PrismantisComponent(() => tree);
+	comp.render(40);
+	return comp;
+}
+
+test("6. Hovering a button highlights it and moving off clears it", () => {
+	const comp = hoverFixture();
+	assert.ok(!comp.render(40).join("").includes(INVERSE), "no highlight before any pointer move");
+
+	assert.deepEqual(comp.handleMouse(move(3, 0)), { render: true });
+	const lit = comp.render(40);
+	assert.ok(lit[0]!.includes(`${INVERSE}`) && stripAnsi(lit[0]!).includes("[ ⧉ source ]"), "button is inverse on hover");
+	assert.equal(comp.handleMouse(move(4, 0)), undefined, "moving within the same button changes nothing");
+
+	assert.deepEqual(comp.handleMouse(move(3, 2)), { render: true });
+	assert.ok(!comp.render(40).join("").includes(INVERSE), "moving to plain text clears the highlight");
+});
+
+test("7. A hover prop replaces the default inverse highlight", () => {
+	const comp = hoverFixture();
+	comp.handleMouse(move(2, 1));
+	const lines = comp.render(40);
+	assert.ok(lines[1]!.includes("38;2;255;0;0"), "uses the hover color");
+	assert.ok(!lines[1]!.includes(INVERSE), "does not fall back to inverse");
+});
+
+test("8. Only one element is highlighted across components, and leaving them all clears it", () => {
+	const a = hoverFixture();
+	const b = hoverFixture();
+	a.handleMouse(move(3, 0));
+	b.handleMouse(move(3, 0));
+	assert.ok(!a.render(40).join("").includes(INVERSE), "first component is cleared when the pointer enters another");
+	assert.ok(b.render(40).join("").includes(INVERSE), "second component is highlighted");
+
+	assert.equal(settlePointerMove(), false, "a move claimed by a component keeps its highlight");
+	assert.ok(b.render(40).join("").includes(INVERSE));
+	assert.equal(settlePointerMove(), true, "a move no component claimed clears the highlight");
+	assert.ok(!b.render(40).join("").includes(INVERSE), "pointer left every component");
+	assert.equal(clearHover(), false, "nothing left to clear");
 });
