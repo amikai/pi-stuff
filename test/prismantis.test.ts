@@ -474,12 +474,12 @@ test("6. Hovering a button highlights it and moving off clears it", () => {
 	const comp = hoverFixture();
 	assert.ok(!comp.render(40).join("").includes(INVERSE), "no highlight before any pointer move");
 
-	assert.deepEqual(comp.handleMouse(move(3, 0)), { render: true });
+	assert.deepEqual(comp.handleMouse(move(3, 0)), { handled: true, render: true }, "pi only repaints a move reported as handled");
 	const lit = comp.render(40);
 	assert.ok(lit[0]!.includes(`${INVERSE}`) && stripAnsi(lit[0]!).includes("[ ⧉ source ]"), "button is inverse on hover");
 	assert.equal(comp.handleMouse(move(4, 0)), undefined, "moving within the same button changes nothing");
 
-	assert.deepEqual(comp.handleMouse(move(3, 2)), { render: true });
+	assert.deepEqual(comp.handleMouse(move(3, 2)), { handled: true, render: true });
 	assert.ok(!comp.render(40).join("").includes(INVERSE), "moving to plain text clears the highlight");
 });
 

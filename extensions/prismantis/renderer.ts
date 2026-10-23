@@ -1010,7 +1010,8 @@ export class PrismantisComponent implements Component {
 		if (event.type === "move") {
 			moveClaimed = true;
 			const hit = this.hitAt(event);
-			return setHovered(hit ? { owner: this, key: hit.key } : null) ? { render: true } : undefined;
+			// pi-tui's dispatchMouseEvent drops a result that is not handled, render flag included.
+			return setHovered(hit ? { owner: this, key: hit.key } : null) ? { handled: true, render: true } : undefined;
 		}
 		if (event.button !== "left") return undefined;
 		const hit = this.hitAt(event);
