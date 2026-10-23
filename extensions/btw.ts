@@ -1,3 +1,11 @@
+/**
+ * `/btw` side-chat popover for quick tangential questions, with thread
+ * restore/reset and summary handoff into the main chat.
+ *
+ * Adapted from mitsuhiko/agent-stuff (`extensions/btw.ts`, commit
+ * a3f8ab1108a48fec9e175f6cd5d9aaa4694ce29d).
+ */
+
 import {
 	buildSessionContext,
 	createAgentSession,
