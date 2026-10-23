@@ -33,7 +33,8 @@ initTheme();
 
 const { default: prismantisExtension } = await import("../extensions/prismantis/index.ts");
 const { EL, h } = await import("../extensions/prismantis/core/jsx.ts");
-const { clearHover, PrismantisComponent, settlePointerMove } = await import("../extensions/prismantis/renderer.ts");
+const { PrismantisComponent } = await import("../extensions/prismantis/renderer.ts");
+const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
 const { parse } = await import("../extensions/prismantis/core/markdown.ts");
 const { drawDiagrams } = await import("../extensions/prismantis/core/mermaid.ts");
 const { renderBlocks } = await import("../extensions/prismantis/core/render.ts");

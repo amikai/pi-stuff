@@ -1,5 +1,6 @@
 import { getCapabilities, hyperlink, renderImage, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { hoveredKey, pointerMoved } from "../lib/pointer-hover.ts";
 import type { RenderElement, RenderNode } from "./core/jsx.ts";
 import { graphemes, width as measureTextWidth } from "./core/render.ts";
 
@@ -152,9 +153,6 @@ const DEFAULT_HOVER = { inverse: true };
 
 // The press key of the element under the pointer while a component renders, read by formatSpan.
 let litKey: unknown;
-// One hover for the whole screen, so moving onto another element clears the previous one.
-let hovered: { owner: PrismantisComponent; key: unknown } | null = null;
-let moveClaimed = false;
 
 function hoverProps(props: Record<string, unknown>): Record<string, unknown> | undefined {
 	return typeof props.hover === "object" && props.hover !== null ? (props.hover as Record<string, unknown>) : undefined;
@@ -986,7 +984,7 @@ export class PrismantisComponent implements Component {
 		if (this.tree?.width !== contentWidth) {
 			this.tree = { width: contentWidth, node: this.buildTree(contentWidth) };
 		}
-		litKey = hovered?.owner === this ? hovered.key : undefined;
+		litKey = hoveredKey(this);
 		let rendered: RenderedBox;
 		try {
 			rendered = renderNode(this.tree.node, contentWidth);
@@ -1008,10 +1006,7 @@ export class PrismantisComponent implements Component {
 
 	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 		if (event.type === "move") {
-			moveClaimed = true;
-			const hit = this.hitAt(event);
-			// pi-tui's dispatchMouseEvent drops a result that is not handled, render flag included.
-			return setHovered(hit ? { owner: this, key: hit.key } : null) ? { handled: true, render: true } : undefined;
+			return pointerMoved(this, this.hitAt(event)?.key);
 		}
 		if (event.button !== "left") return undefined;
 		const hit = this.hitAt(event);
@@ -1025,29 +1020,4 @@ export class PrismantisComponent implements Component {
 	private hitAt(event: TuiMouseEvent): MouseHit | undefined {
 		return this.cachedHits.find((h) => h.row === event.y && event.x >= h.from && event.x < h.to);
 	}
-}
-
-function setHovered(next: { owner: PrismantisComponent; key: unknown } | null): boolean {
-	if (hovered?.owner === next?.owner && hovered?.key === next?.key) return false;
-	hovered?.owner.repaintHover();
-	next?.owner.repaintHover();
-	hovered = next;
-	return true;
-}
-
-/** Clears the hover and reports whether a repaint is due. */
-export function clearHover(): boolean {
-	return setHovered(null);
-}
-
-/**
- * Call once the TUI has dispatched a pointer move. Moves that reached no
- * PrismantisComponent mean the pointer left them, which pi never reports.
- */
-export function settlePointerMove(): boolean {
-	if (moveClaimed) {
-		moveClaimed = false;
-		return false;
-	}
-	return clearHover();
 }
