@@ -26,13 +26,13 @@
  * Files under <agentDir>:
  *   you-should-know.json        state and settings
  *   you-should-know.log         every check, skip, explanation and key press, as JSON lines (last 2,000)
- *   you-should-know-payloads/   the exact input of every check; never cleaned up
+ *   you-should-know-payloads/   the exact input of every check (last 100)
  *   you-should-know-cache.json  retell answers (last 200)
  *   you-should-know-prompts/    plain.md and lost.md replace the retell prompts when present
  * Set PI_YOU_SHOULD_KNOW_DEBUG=1 to list the last checks above the prompt.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { buildSessionContext, convertToLlm, getAgentDir, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
@@ -75,6 +75,7 @@ const TOOL_RESULT_EDGE = 600;
 
 const LOG_LINES = 2_000;
 const LOG_REPLY_CHARS = 4_000;
+const PAYLOAD_MAX = 100;
 
 const RETELL_TOOL_CHARS = 200;
 const RETELL_MAX_TOKENS = 8_000;
@@ -420,13 +421,13 @@ const RETELL: Record<RetellMode, { title: string; label: string; prompt: string 
 	lost: { title: "Lost track", label: "Lost track · whole session", prompt: LOST },
 };
 
-/** Same key as cc-mod-waitwhat: the mode plus what the person and the agent said, without tool output or model. */
-function cacheKey(mode: RetellMode, messages: any[]): string {
+/** Keyed by mode, active prompt and what the person and the agent said, without tool output or model. */
+function cacheKey(mode: RetellMode, prompt: string, messages: any[]): string {
 	const said = messages
 		.filter((m) => m.role === "user" || m.role === "assistant")
 		.map((m) => [m.role, wordsOf(m).replace(/\r\n?/g, "\n")] as const)
 		.filter(([, text]) => text !== "");
-	return createHash("sha256").update(JSON.stringify([mode, said])).digest("hex");
+	return createHash("sha256").update(JSON.stringify([mode, prompt, said])).digest("hex");
 }
 
 function readCache(): Record<string, CacheEntry> {
@@ -491,13 +492,22 @@ const ROW_INDENT = 2;
  */
 class ChoiceRow implements Component {
 	private hits: { row: number; from: number; to: number; choice: Choice }[] = [];
+	private readonly theme: Theme;
+	private readonly choices: Choice[];
+	private readonly onPress: (choice: Choice) => void;
+	private readonly prefix: string;
 
 	constructor(
-		private readonly theme: Theme,
-		private readonly choices: Choice[],
-		private readonly onPress: (choice: Choice) => void,
-		private readonly prefix = " ".repeat(ROW_INDENT),
-	) {}
+		theme: Theme,
+		choices: Choice[],
+		onPress: (choice: Choice) => void,
+		prefix = " ".repeat(ROW_INDENT),
+	) {
+		this.theme = theme;
+		this.choices = choices;
+		this.onPress = onPress;
+		this.prefix = prefix;
+	}
 
 	render(width: number): string[] {
 		this.hits = [];
@@ -564,13 +574,22 @@ const paneOptions = (tui: () => TUI | undefined) => (): OverlayOptions =>
 class RetellPane implements Component {
 	private offset = 0;
 	private shown: RetellState | undefined;
+	private readonly tui: TUI;
+	private readonly theme: Theme;
+	private readonly state: () => RetellState;
+	private readonly close: () => void;
 
 	constructor(
-		private readonly tui: TUI,
-		private readonly theme: Theme,
-		private readonly state: () => RetellState,
-		private readonly close: () => void,
-	) {}
+		tui: TUI,
+		theme: Theme,
+		state: () => RetellState,
+		close: () => void,
+	) {
+		this.tui = tui;
+		this.theme = theme;
+		this.state = state;
+		this.close = close;
+	}
 
 	/** Rows of content that fit inside the pane's height and borders. */
 	private rows() {
@@ -665,6 +684,8 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 	let explaining: AbortController | null = null;
 	let askedTimer: ReturnType<typeof setTimeout> | undefined;
 	let run = 0;
+	let step = 0;
+	let inPrompt = false;
 	let offeredRun = -1;
 	let generation = 0;
 	let tui: TUI | undefined;
@@ -673,6 +694,7 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 	let retell: RetellState = { status: "idle" };
 	let retelling: AbortController | null = null;
 	let pane: { refresh: () => void; close: () => void } | null = null;
+	const warnedModels = new Set<string>();
 	const isOn = (value: string | undefined) => ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
 	const debug = isOn(process.env.PI_YOU_SHOULD_KNOW_DEBUG);
 
@@ -698,26 +720,45 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		const session = ctx.sessionManager.getSessionId();
 		if (!/^[A-Za-z0-9-]+$/.test(session)) return undefined;
 		try {
-			mkdirSync(payloadDir(), { recursive: true });
-			const path = join(payloadDir(), `${session}-${messageCount}.txt`);
+			const dir = payloadDir();
+			mkdirSync(dir, { recursive: true });
+			const path = join(dir, `${session}-${messageCount}.txt`);
 			writeFileSync(path, text);
+			const files = readdirSync(dir)
+				.filter((f) => f.endsWith(".txt"))
+				.map((f) => {
+					const p = join(dir, f);
+					return { path: p, mtimeMs: statSync(p).mtimeMs };
+				})
+				.sort((a, b) => a.mtimeMs - b.mtimeMs || a.path.localeCompare(b.path));
+			for (const old of files.slice(0, Math.max(0, files.length - PAYLOAD_MAX))) unlinkSync(old.path);
 			return path;
 		} catch {
 			return undefined;
 		}
 	}
 
+	function refreshStore() {
+		const prevButtons = store.buttons;
+		store = loadStore();
+		if (store.buttons !== prevButtons) render();
+	}
+
 	const update = (patch: Partial<Store>) => {
-		store = { ...store, ...patch };
+		const prevButtons = store.buttons;
+		store = { ...loadStore(), ...patch };
 		saveStore(store);
+		if (store.buttons !== prevButtons) render();
 	};
 
 	/** Any real answer ends the "typed past it" streak. */
 	const answered = () => {
+		refreshStore();
 		if (store.typedPastInARow > 0 || store.looksToSkip > 0) update({ typedPastInARow: 0, looksToSkip: 0 });
 	};
 
 	const addKnown = (line: string) => {
+		refreshStore();
 		if (!store.known.some((k) => keyOf(k) === keyOf(line))) update({ known: [...store.known, line].slice(-SEEN_MAX) });
 	};
 
@@ -898,6 +939,10 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 			const at = spec.indexOf("/");
 			const model = at > 0 ? ctx.modelRegistry.find(spec.slice(0, at), spec.slice(at + 1)) : undefined;
 			if (model) return model;
+			if (!warnedModels.has(spec)) {
+				warnedModels.add(spec);
+				ctx.ui.notify(`you-should-know: model "${spec}" not found; using the session's model.`, "warning");
+			}
 		}
 		return ctx.model;
 	}
@@ -975,13 +1020,14 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 				return;
 			}
 			detail = { ...detail, line: parsed.note.line, tag: parsed.note.tag };
+			refreshStore();
 			const key = keyOf(parsed.note.line);
 			if ([...store.seen, ...store.known].some((s) => keyOf(s) === key)) {
 				outcome = "deduped";
 				return;
 			}
-			// The session moved on (new session, or the person turned it off) while we were asking.
-			if (gen !== generation || !store.enabled || view !== null) {
+			// The session moved on (new prompt or session, or the person turned it off) while we were asking.
+			if (gen !== generation || askedRun !== run || !store.enabled || view !== null) {
 				outcome = "stale";
 				return;
 			}
@@ -1080,15 +1126,28 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 			});
 	}
 
-	/** Opens the pane and, unless a retell is already running, starts one; like cc-mod-waitwhat, a second press only reopens. */
+	/** Opens the pane and starts a retell; pressing the same mode while busy only reopens, while the other mode switches. */
 	async function retellNow(mode: RetellMode, ctx: ExtensionContext) {
 		uiCtx = ctx;
+		refreshStore();
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("Retell needs the interactive terminal.", "warning");
 			return;
 		}
 		openPane(ctx);
-		if (retell.status === "busy") return;
+		if (retell.status === "busy") {
+			if (retell.mode === mode) return;
+			retelling?.abort();
+			retelling = null;
+		}
+		const messages = sessionMessages(ctx);
+		const picked = mode === "lost" ? messages : lastTurn(messages);
+		const transcript = retellTranscript(picked);
+		if (transcript === "") {
+			retell = { status: "error", mode, text: "Nothing in the session to retell yet." };
+			pane?.refresh();
+			return;
+		}
 		const gen = generation;
 		retell = { status: "busy", mode };
 		pane?.refresh();
@@ -1096,27 +1155,29 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		const controller = new AbortController();
 		retelling = controller;
 		try {
-			const messages = sessionMessages(ctx);
-			const picked = mode === "lost" ? messages : lastTurn(messages);
-			const transcript = retellTranscript(picked);
-			const key = cacheKey(mode, picked);
+			const prompt = retellPrompt(mode);
+			const key = cacheKey(mode, prompt, picked);
 			const hit = readCache()[key];
 			if (typeof hit?.answer === "string" && hit.answer !== "") {
 				retell = { status: "done", mode, text: hit.answer, source: hit.source, chars: transcript.length, seconds: "0.0", cached: true };
 				return;
 			}
-			const reply = await ask(ctx, "retell", retellPrompt(mode), `${RETELL_HEAD}\n\n${transcript}`, controller.signal, RETELL_MAX_TOKENS);
-			if (gen !== generation) return;
+			const reply = await ask(ctx, "retell", prompt, `${RETELL_HEAD}\n\n${transcript}`, controller.signal, RETELL_MAX_TOKENS);
+			if (gen !== generation || retelling !== controller) return;
 			if (!reply.ok) throw new Error(reply.model ? `${reply.model}: ${reply.error}` : reply.error);
 			if (reply.text === "") throw new Error(`${reply.model} returned no text`);
 			const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
 			retell = { status: "done", mode, text: reply.text, source: reply.model, chars: transcript.length, seconds, cached: false };
 			writeCache(key, { answer: reply.text, label: RETELL[mode].title, source: reply.model, at: Date.now() / 1000 });
 		} catch (error) {
-			if (gen === generation) retell = { status: "error", mode, text: error instanceof Error ? error.message : String(error) };
+			if (gen === generation && retelling === controller) {
+				retell = { status: "error", mode, text: error instanceof Error ? error.message : String(error) };
+			}
 		} finally {
-			if (retelling === controller) retelling = null;
-			if (gen === generation) pane?.refresh();
+			if (retelling === controller) {
+				retelling = null;
+				if (gen === generation) pane?.refresh();
+			}
 		}
 	}
 
@@ -1180,9 +1241,19 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		view = null;
 		checks = [];
 		checked = 0;
+		step = 0;
+		inPrompt = false;
 		offeredRun = -1;
+		warnedModels.clear();
 		unsubscribeInput?.();
 		unsubscribeInput = undefined;
+	}
+
+	function startPrompt() {
+		if (inPrompt) return;
+		inPrompt = true;
+		run++;
+		step = 0;
 	}
 
 	pi.on("session_start", (_event, ctx) => {
@@ -1203,15 +1274,26 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		tui = undefined;
 	});
 
+	pi.on("before_agent_start", () => {
+		startPrompt();
+	});
+
 	pi.on("agent_start", () => {
-		run++;
+		startPrompt();
+	});
+
+	pi.on("agent_settled", () => {
+		inPrompt = false;
 	});
 
 	// A new prompt closes the follow-up question. An offer survives one prompt;
 	// typing past it twice clears it, and repeated ignoring backs checks off.
 	pi.on("input", (event, ctx) => {
 		uiCtx = ctx;
-		if (event.source === "extension" || !view) return;
+		if (event.source === "extension") return;
+		inPrompt = false;
+		refreshStore();
+		if (!view) return;
 		if (view.kind === "asked") {
 			log("cleared", { by: "prompt", view: "asked" });
 			setView(null);
@@ -1229,10 +1311,11 @@ export default function youShouldKnow(pi: ExtensionAPI) {
 		log("cleared", { by: "typed_past", view: "offer", typedPastInARow, looksToSkip: store.looksToSkip });
 	});
 
-	pi.on("turn_end", (event, ctx) => {
+	pi.on("turn_end", (_event, ctx) => {
 		uiCtx = ctx;
-		const step = event.turnIndex;
-		if (!(step > 0 && step % CHECK_EVERY === 0)) return;
+		refreshStore();
+		step++;
+		if (step % CHECK_EVERY !== 0) return;
 		const skip = !store.enabled
 			? "disabled"
 			: ctx.mode !== "tui"

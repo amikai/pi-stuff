@@ -12,8 +12,9 @@ Pi clones the repo to `~/.pi/agent/git/github.com/amikai/pi-stuff` and loads it 
 
 ## Extensions
 
+- [`btw.ts`](extensions/btw.ts) - `/btw` side-chat popover for quick tangential questions, with thread restore/reset and summary handoff into the main chat.
 - [`you-should-know`](extensions/you-should-know) - Port of Claude Code's `cc-plugin-you-should-know`: every 6 steps a side agent reads the session and, when there is something you should know but might miss, flags it above the prompt. Also retells the last turn in plain words (`/plain`) or the whole session when you lost track (`/lost`), after [cc-mod-waitwhat](https://github.com/GGGODLIN/cc-mod-waitwhat), in an overlay the main agent never sees. Rules, settings, how to trigger it, and testing are in its [README](extensions/you-should-know/README.md).
 
 ## Tests
 
-[`test`](test) holds a faux model provider and a launcher script for testing. They are not in the `pi` manifest, so installing the package never loads them.
+[`test`](test) holds an automated test suite (`npm test`), a faux model provider and a launcher script (`test/you-should-know.sh`) for interactive TUI testing. They are not in the `pi` manifest, so installing the package never loads them.

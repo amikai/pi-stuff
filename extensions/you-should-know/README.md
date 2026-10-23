@@ -42,7 +42,7 @@ Settings live in `~/.pi/agent/you-should-know.json` (pi's agent dir, so `PI_CODI
 
 The same file also holds state the extension writes itself: `seen`, `known`, `typedPastInARow` and `looksToSkip`. Leave those alone, or empty `seen` and `known` to let old topics come back.
 
-Settings are read when a session starts. The extension also rewrites the file whenever its state changes, so an edit made while pi runs can be overwritten: close pi first, or run `/new` right after saving. A broken JSON file counts as missing, and the next save replaces it. A model name that cannot be found falls back to the session's model without a warning; the log's `model` field shows which one answered.
+Settings are re-read from disk before each check, retell and state save, so edits made while pi runs take effect right away and are never overwritten. A broken JSON file counts as missing, and the next save replaces it. A model name that cannot be found warns once and falls back to the session's model; the log's `model` field shows which one answered.
 
 ### Replacing the retell prompts
 
@@ -70,7 +70,7 @@ Answer with the number keys while the editor is empty. In fullscreen mode you ca
 
 ### When it checks
 
-- Steps are counted per prompt, starting at 0. A check runs at steps 6, 12, 18 and so on. Steps never carry over to the next prompt. (verified)
+- Steps are counted per prompt, starting at 1 on the first turn. A check runs at steps 6, 12, 18 and so on. Steps never carry over to the next prompt, and retries or compactions within the same prompt keep counting from where they were. (verified)
 - A check only asks the side agent. It does not guarantee a card. The side agent defaults to `learn: none` and the bar is deliberately high, so most checks end as `none`.
 
 ### Before a check: any of these skips it (logged as `skip`)
@@ -91,7 +91,7 @@ Answer with the number keys while the editor is empty. In fullscreen mode you ca
 | `none` | The side agent found nothing worth interrupting for |
 | `deduped` | Same as one of the last 50 offers or a `known` topic; the match ignores case and punctuation (verified) |
 | `parse_failed` | The reply had no `learn:` line, or that line was over 240 characters |
-| `stale` | While waiting, a new session started, the feature was turned off, or another card appeared |
+| `stale` | While waiting, a new prompt or session started, the feature was turned off, or another card appeared |
 | `api_error` | No model, no credentials, or an API error |
 
 ### What the side agent sees
@@ -128,14 +128,14 @@ What you see:
 - An overlay: on the right at 45% width when the terminal is at least 120 columns wide, otherwise full width above the editor. (verified)
 - Its header names the mode, how many characters were sent, the model that answered and how long it took, or `cache hit` with the model that answered then. (verified)
 - `↑` `↓` `PgUp` `PgDn` `Home` `End` and the mouse wheel scroll it; `Esc` closes it. (verified)
-- Pressing again while a retell is running only reopens the overlay; it does not start a second one. (verified)
+- Pressing the same mode again while a retell is running only reopens the overlay; pressing the other mode cancels it and switches. (verified)
 
 What goes to the model:
 
-- Each message's words in full, with each tool result as one line cut to 200 characters. Tool arguments are left out. There is no size limit, as in cc-mod-waitwhat; a session larger than the model's context fails and the overlay shows the error.
+- Each message's words in full, with each tool result as one line cut to 200 characters. Tool arguments are left out. If the session has nothing to retell yet, the overlay says so without calling a model. There is no upper size limit, as in cc-mod-waitwhat; a session larger than the model's context fails and the overlay shows the error.
 - Nothing is written to the session, and the main agent never sees the retell.
 
-Repeats are cached: the key is the mode plus what you and the agent said, without tool output or model, so an unchanged conversation gets the stored answer without a model call. (verified)
+Repeats are cached: the key is the mode, the active prompt and what you and the agent said, without tool output or model, so an unchanged conversation gets the stored answer without a model call, while editing a prompt override takes effect right away. (verified)
 
 ## What comes from cc-mod-waitwhat
 
@@ -213,7 +213,7 @@ Besides the settings file, the extension writes these to pi's agent dir, `~/.pi/
 | File | Contents |
 |---|---|
 | `you-should-know.log` | One JSON line per check, skip, explanation, key press and cleared card, with the side agent's raw reply. Always written; keeps the last 2,000 lines. (verified) |
-| `you-should-know-payloads/<session id>-<message count>.txt` | The exact input of each check: the system prompt, `---`, then the transcript and lists it was given. The log line names the file. Always written and never cleaned up, so it holds whatever the session contained, secrets included. (verified) |
+| `you-should-know-payloads/<session id>-<message count>.txt` | The exact input of each check: the system prompt, `---`, then the transcript and lists it was given. The log line names the file. Always written; keeps the last 100 files. Holds whatever the session contained, secrets included. (verified) |
 | `you-should-know-cache.json` | Retell answers, keyed as described in [Retell](#retell). Keeps the last 200. (verified) |
 | `you-should-know-prompts/plain.md`, `lost.md` | Yours, not written by the extension: see [Replacing the retell prompts](#replacing-the-retell-prompts). (verified) |
 
@@ -233,10 +233,11 @@ Compared against the original code in the Claude Code 2.1.302 binary:
 ## Testing
 
 ```sh
+npm test
 test/you-should-know.sh
 ```
 
-This runs the repo's extension in a real pi TUI, with the model replaced by [`test/faux-provider.ts`](../../test/faux-provider.ts):
+`npm test` runs the automated suite in [`test/you-should-know.test.ts`](../../test/you-should-know.test.ts). `test/you-should-know.sh` runs the extension in a real pi TUI, with the model replaced by [`test/faux-provider.ts`](../../test/faux-provider.ts):
 
 - Main agent: a prompt containing `steps N` makes it call bash N times, then answer `done`. Adding the word `long` makes every call print 3,000 lines.
 - Side agent: every check reads `ctrl/side.txt` as its reply, with `{n}` replaced by a call counter. You can edit the file while pi runs.
@@ -255,7 +256,7 @@ Acceptance checklist:
 7. Press `4` twice: `enabled` becomes `false` and later checks log `disabled`.
 8. `long steps 6`: the payload file shows tool results as start `…[N chars cut]…` end, and the log line names the file.
 9. `/plain`, scroll, `Esc`, `/plain` again: the second header says `cache hit`. Click `[Lost track]`: the overlay switches to the whole session.
-10. Write `OVERRIDE-MARKER` into `you-should-know-prompts/lost.md`, send a prompt, run `/lost`: the title says `(override)`.
-11. Settings `{"model": "faux/faux-2", "buttons": false}` then `/new`: the row is gone, checks still log the session's `faux/faux-1`, retell says `faux/faux-2`. With `{"yskModel": "faux/faux-2"}` instead, checks log `faux/faux-2` and retell says `faux/faux-1`.
-12. With `ctrl/slow`, run `/lost`, press `Esc`, run `/plain`: the overlay still shows `Lost track · whole session · retelling…` and only one retell call is made.
+10. Write `OVERRIDE-MARKER` into `you-should-know-prompts/lost.md`, run `/lost`: the title says `(override)`.
+11. Settings `{"model": "faux/faux-2", "buttons": false}`: the row is gone, checks still log the session's `faux/faux-1`, retell says `faux/faux-2`. With `{"yskModel": "faux/faux-2"}` instead, checks log `faux/faux-2` and retell says `faux/faux-1`.
+12. With `ctrl/slow`, run `/lost`, press `Esc`, run `/lost` again: the overlay still shows `Lost track · whole session · retelling…` and only one retell call is made. Run `/plain` while `/lost` runs: it cancels `/lost` and switches to `Plain words`.
 13. At 100 columns the overlay is full width with the editor visible below it.
