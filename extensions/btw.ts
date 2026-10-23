@@ -258,9 +258,10 @@ class BtwOverlay extends Container implements Focusable {
 	}
 
 	private frameLine(content: string, innerWidth: number): string {
-		const truncated = truncateToWidth(content, innerWidth, "");
-		const padding = Math.max(0, innerWidth - visibleWidth(truncated));
-		return `${this.theme.fg("borderMuted", "│")}${truncated}${" ".repeat(padding)}${this.theme.fg("borderMuted", "│")}`;
+		const contentWidth = Math.max(1, innerWidth - 2);
+		const truncated = truncateToWidth(content, contentWidth, "");
+		const padding = Math.max(0, contentWidth - visibleWidth(truncated));
+		return `${this.theme.fg("borderMuted", "│")} ${truncated}${" ".repeat(padding)} ${this.theme.fg("borderMuted", "│")}`;
 	}
 
 	private borderLine(innerWidth: number, edge: "top" | "bottom"): string {
@@ -270,28 +271,26 @@ class BtwOverlay extends Container implements Focusable {
 	}
 
 	override render(width: number): string[] {
-		const dialogWidth = Math.max(56, Math.min(width, Math.floor(width * 0.9)));
-		const innerWidth = Math.max(40, dialogWidth - 2);
-		const terminalRows = process.stdout.rows ?? 30;
-		const dialogHeight = Math.max(16, Math.min(30, Math.floor(terminalRows * 0.75)));
-		const chromeHeight = 7;
-		const transcriptHeight = Math.max(6, dialogHeight - chromeHeight);
+		const dialogWidth = Math.max(4, width);
+		const innerWidth = dialogWidth - 2;
+		const contentWidth = Math.max(1, innerWidth - 2);
+		const terminalRows = this.tui.terminal.rows || process.stdout.rows || 30;
+		const maxOverlayHeight = Math.max(10, Math.min(Math.floor(terminalRows * 0.78), terminalRows - 1));
+		const dialogHeight = Math.min(maxOverlayHeight, Math.max(15, Math.min(30, Math.floor(terminalRows * 0.75))));
+		const chromeHeight = 9;
+		const transcriptHeight = Math.max(1, dialogHeight - chromeHeight);
 
-		// Markdown renders to innerWidth already — no manual wrapping needed
-		const transcript = this.getTranscript(innerWidth, this.theme);
+		// Markdown renders to contentWidth already — no manual wrapping needed
+		const transcript = this.getTranscript(contentWidth, this.theme);
 		const visibleTranscript = transcript.slice(-transcriptHeight);
 		const transcriptPadding = Math.max(0, transcriptHeight - visibleTranscript.length);
 
 		const status = this.getStatus();
-
-		const previousFocused = this.input.focused;
-		this.input.focused = false;
-		const inputLine = this.input.render(innerWidth)[0] ?? "";
-		this.input.focused = previousFocused;
+		const inputLine = this.input.render(contentWidth)[0] ?? "";
 
 		const lines = [
 			this.borderLine(innerWidth, "top"),
-			this.frameLine(this.theme.fg("accent", this.theme.bold(" BTW side chat ")), innerWidth),
+			this.frameLine(this.theme.fg("accent", this.theme.bold("BTW side chat")), innerWidth),
 			this.frameLine(this.theme.fg("dim", "Separate side conversation. Esc closes."), innerWidth),
 			this.theme.fg("borderMuted", `├${"─".repeat(innerWidth)}┤`),
 		];
@@ -306,7 +305,7 @@ class BtwOverlay extends Container implements Focusable {
 		lines.push(this.theme.fg("borderMuted", `├${"─".repeat(innerWidth)}┤`));
 		lines.push(this.frameLine(this.theme.fg("warning", status), innerWidth));
 		lines.push(
-			`${this.theme.fg("borderMuted", "│")}${inputLine}${this.theme.fg("borderMuted", "│")}`,
+			`${this.theme.fg("borderMuted", "│")} ${inputLine} ${this.theme.fg("borderMuted", "│")}`,
 		);
 		lines.push(this.frameLine(this.theme.fg("dim", "Enter submit · Esc close"), innerWidth));
 		lines.push(this.borderLine(innerWidth, "bottom"));
