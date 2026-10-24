@@ -3,17 +3,20 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionContext, Theme as PiTheme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme as PiTheme, ToolRenderContext, ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
 	copyToClipboard,
 	getAgentDir,
+	getMarkdownTheme,
+	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
 	getCapabilities,
 	Markdown,
 	matchesKey,
+	MouseRegion,
 	Spacer,
 	Text,
 	type Component,
@@ -26,23 +29,27 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { clipboardCommand, type ClipboardBackend } from "./core/clipboard.ts";
+import { clockText, endedAt, promptKey, sentAt, withRecord, type Sent, type TurnEnd } from "./core/clock.ts";
 import { FIGURE_HINT } from "./core/figure.ts";
 import {
+	findSetup,
 	helpText,
 	HINT,
+	ISSUE_HINT,
 	languageShowcase,
 	rtlShowcaseText,
 	SETUP_DONE,
 	SETUP_PANE_KEYS,
 	SETUP_PANE_OPENED,
+	setupParts,
 	setupSteps,
 	setupText,
 	showcaseText,
 	THEME_PREVIEW,
-	type SetupParts,
 	type SetupStep,
 } from "./core/help.ts";
-import { EL, h, type RenderElement } from "./core/jsx.ts";
+import { tableHtml, tableText } from "./core/html.ts";
+import { EL, h, type RenderElement, type RenderNode } from "./core/jsx.ts";
 import {
 	fitImage,
 	fitsImage,
@@ -68,16 +75,28 @@ import {
 	drawsHyperlinks,
 	fileRoot,
 	instanceKey,
+	isReadOnlyCall,
 	MARK,
 	markerRoom,
 	mirrored,
 	noteTip,
+	pasteLang,
 	pathsToProbe,
 	remember,
+	rememberCall,
 	renderBlocks,
+	renderDiffCard,
+	renderExpandedShell,
+	renderFailure,
+	renderShellResult,
+	renderToolRow,
+	renderTurnDuration,
+	renderUserPrompt,
 	type CopyButton,
+	type DrawPaste,
 	type Fold,
 	type TerminalEnv,
+	type ToolRow,
 } from "./core/render.ts";
 import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./core/rtl.ts";
 import { pickTheme, RANDOM_THEMES, resolveStyle, type Style } from "./core/theme.ts";
@@ -85,6 +104,7 @@ import { clearHover, watchPointerLeave } from "../lib/pointer-hover.ts";
 import { PrismantisComponent, renderNode } from "./renderer.ts";
 
 const CUSTOM_MESSAGE_TYPE = "prismantis-output";
+const TURN_ENTRY_TYPE = "prismantis-turn";
 const THEME_ARGS = [...PRESET_NAMES, "random"];
 const LATEX_HINT =
 	"This terminal typesets LaTeX math: a formula in $$…$$ on lines of its own, or in a ```math block, renders as an image (KaTeX syntax). Inline $…$ does not render, so write inline math as plain text or Unicode.";
@@ -92,6 +112,7 @@ const LATEX_HINT =
 export type PrismantisOptions = Record<string, unknown> & {
 	enabled?: boolean;
 	theme?: string;
+	toolRows?: boolean;
 	syncPiTheme?: boolean;
 };
 
@@ -100,7 +121,12 @@ const DEFAULT_OPTIONS: PrismantisOptions = {
 	theme: "catppuccin-mocha",
 	headingStyle: "banner",
 	tableStyle: "box",
+	promptStyle: "bubble",
+	clock: "off",
+	toolStyle: "chat",
+	toolOutput: "full",
 	taskStyle: "checks",
+	diffStyle: "card",
 	pieStyle: "round",
 	rtl: "auto",
 	highlightNumbers: true,
@@ -109,7 +135,9 @@ const DEFAULT_OPTIONS: PrismantisOptions = {
 	mermaidAscii: false,
 	copyButtons: true,
 	copyButtonStyle: "inline",
+	toolRows: true,
 	diagramHints: true,
+	issueHint: true,
 	latex: false,
 	syncPiTheme: true,
 };
@@ -223,6 +251,89 @@ function copyHtmlTableSync(backend: ClipboardBackend, html: string, text: string
 	}
 }
 
+export function parseUnifiedPatchToHunks(
+	patchText: string,
+): { oldStart: number; newStart: number; lines: string[] }[] {
+	const hunks: { oldStart: number; newStart: number; lines: string[] }[] = [];
+	const rawLines = patchText.replace(/\r\n?/g, "\n").split("\n");
+	let current: { oldStart: number; newStart: number; lines: string[] } | undefined;
+
+	for (const line of rawLines) {
+		const header = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(line);
+		if (header) {
+			current = {
+				oldStart: Number(header[1]),
+				newStart: Number(header[2]),
+				lines: [],
+			};
+			hunks.push(current);
+			continue;
+		}
+		if (!current) continue;
+		if (line.startsWith("+") || line.startsWith("-") || line.startsWith(" ") || line.startsWith("\\")) {
+			current.lines.push(line);
+		}
+	}
+	return hunks;
+}
+
+function syntheticHunksFromEdits(
+	edits: unknown,
+): { oldStart: number; newStart: number; lines: string[] }[] {
+	if (!Array.isArray(edits)) return [];
+	const hunks: { oldStart: number; newStart: number; lines: string[] }[] = [];
+	let lineNo = 1;
+	for (const edit of edits) {
+		if (!edit || typeof edit !== "object") continue;
+		const oldText = typeof (edit as { oldText?: unknown }).oldText === "string" ? (edit as { oldText: string }).oldText : "";
+		const newText = typeof (edit as { newText?: unknown }).newText === "string" ? (edit as { newText: string }).newText : "";
+		const oldLines = oldText ? oldText.replace(/\r\n?/g, "\n").split("\n").map((l) => `-${l}`) : [];
+		const newLines = newText ? newText.replace(/\r\n?/g, "\n").split("\n").map((l) => `+${l}`) : [];
+		if (oldLines.length || newLines.length) {
+			hunks.push({ oldStart: lineNo, newStart: lineNo, lines: [...oldLines, ...newLines] });
+			lineNo += Math.max(oldLines.length, newLines.length) + 2;
+		}
+	}
+	return hunks;
+}
+
+export function normalizeToolForPrismantis(
+	toolName: string,
+	args: unknown,
+): { tool: string; input: Record<string, unknown> } {
+	const raw = args && typeof args === "object" && !Array.isArray(args) ? (args as Record<string, unknown>) : {};
+	const filePath = typeof raw.path === "string" ? raw.path : typeof raw.file_path === "string" ? raw.file_path : undefined;
+	const withPath = filePath !== undefined ? { ...raw, file_path: filePath } : { ...raw };
+
+	switch (toolName) {
+		case "bash":
+			return { tool: "Bash", input: withPath };
+		case "powershell":
+			return { tool: "PowerShell", input: withPath };
+		case "read":
+			return { tool: "Read", input: withPath };
+		case "write":
+			return { tool: "Write", input: withPath };
+		case "edit":
+			return { tool: "Edit", input: withPath };
+		case "grep":
+			return { tool: "Grep", input: withPath };
+		case "find":
+			return { tool: "Glob", input: withPath };
+		case "ls":
+			return { tool: "LS", input: withPath };
+		case "agent":
+			return { tool: "Agent", input: withPath };
+		case "web_search":
+		case "google_search":
+			return { tool: "WebSearch", input: withPath };
+		case "fetch_content":
+			return { tool: "WebFetch", input: withPath };
+		default:
+			return { tool: toolName, input: withPath };
+	}
+}
+
 function codeSpan(line: string): string {
 	const content = line || "\u00a0";
 	const longestBacktickRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0].length));
@@ -234,6 +345,7 @@ function codeSpan(line: string): string {
 type ActiveMessageHooks = {
 	isEnabled: () => boolean;
 	renderAssistantText: (text: string, isFirstOfReply: boolean, messageId: string, outputPad: number) => Component;
+	renderUserText: (text: string, messageId: string, outputPad: number) => Component | null;
 };
 
 let activeHooks: ActiveMessageHooks | null = null;
@@ -265,39 +377,97 @@ function ensureMessagePrototypesPatched() {
 		(wrappedUpdate as any)[WRAPPED_MARK] = true;
 		proto.updateContent = wrappedUpdate;
 	}
+
+	const userProto = UserMessageComponent.prototype as any;
+	if (!userProto.rebuild?.[WRAPPED_MARK]) {
+		const prevRebuild = userProto.rebuild;
+		const wrappedRebuild = function (this: any) {
+			if (!activeHooks?.isEnabled()) {
+				return prevRebuild.call(this);
+			}
+			const custom = activeHooks.renderUserText(this.text, `user:${this.text.slice(0, 64)}`, this.outputPad ?? 1);
+			if (!custom) {
+				return prevRebuild.call(this);
+			}
+			this.clear();
+			this.addChild(new Spacer(1));
+			this.addChild(custom);
+		};
+		(wrappedRebuild as any)[WRAPPED_MARK] = true;
+		userProto.rebuild = wrappedRebuild;
+	}
 }
 
 const SETUP_LIST_COLUMNS = 28;
 const SETUP_HEAD_ROWS = 8;
 
-const KEPT_SETUP_KEYS: ReadonlySet<SetupStep["key"]> = new Set(["theme", "tableStyle", "taskStyle", "headingStyle", "copyButtonStyle", "pieStyle"]);
-const SETUP_STEPS = setupSteps(PRESET_NAMES).filter((step) => KEPT_SETUP_KEYS.has(step.key));
-
-function setupPartsAt(at: number): SetupParts {
-	const step = SETUP_STEPS[at]!;
-	const next = SETUP_STEPS[at + 1];
-	return {
-		head: `## Setup ${at + 1}/${SETUP_STEPS.length}: ${step.title}\n\n${step.note}`,
-		options: step.options.map((value, i) => ({
-			value,
-			text: `### ${i + 1}. ${value}${step.key === "theme" && value !== "mono" && !RANDOM_THEMES.includes(value) ? " (for a light terminal)" : ""}${step.sample ? `\n\n${step.sample}` : ""}`,
-		})),
-		tail: `Pick with \`/prismantis setup ${step.name} <number or name>\`${step.key === "theme" ? " or `random`" : ""}.${next ? ` Skip with \`/prismantis setup ${next.name}\`.` : ""} Stop any time, \`/prismantis setup\` starts over.`,
-	};
-}
-
-type FoundSetup = { at: number; before: string; parts: SetupParts };
-
-function findSetupIn(text: string): FoundSetup | undefined {
-	for (let at = 0; at < SETUP_STEPS.length; at++) {
-		const parts = setupPartsAt(at);
-		const whole = setupText(parts);
-		if (text.endsWith(whole)) return { at, before: text.slice(0, -whole.length).trim(), parts };
-	}
-	return undefined;
-}
-
+const SETUP_GIT_STATUS = [
+	"On branch main",
+	"Changes not staged for commit:",
+	'  (use "git add <file>..." to update what will be committed)',
+	"        modified:   src/app.ts",
+	"",
+	'no changes added to commit (use "git add" and/or "git commit -a")',
+];
+const SETUP_BUILD_ERROR = [
+	"> app@1.4.0 build",
+	"> tsc",
+	...[3, 7, 12, 18, 25, 31, 40, 44, 52, 60].map(
+		(line) => `src/app.ts(${line},5): error TS2322: Type 'string' is not assignable to type 'number'.`,
+	),
+	"Found 10 errors in the same file, starting at: src/app.ts:3",
+];
 const SETUP_TABLE = "| Item | Qty |\n|:-----|----:|\n| Apples | 3 |\n| Pears | 5 |";
+const SETUP_SENT = new Date(2026, 0, 15, 14, 32).getTime();
+const SETUP_EDIT = {
+	filePath: "src/config.ts",
+	structuredPatch: [
+		{
+			oldStart: 12,
+			newStart: 12,
+			lines: [
+				" export const config = {",
+				"-  retries: 3,",
+				"-  timeout: 5000,",
+				"+  retries: 5,",
+				"+  timeout: 10_000,",
+				"   verbose: false,",
+				" }",
+			],
+		},
+	],
+};
+
+function toolOutputSample(style: Style, value: string, id: string, columns: number): RenderElement[] {
+	const status: ToolRow = { tool: "Bash", input: { command: "git status" }, isRunning: false, isErrored: false, isInterrupted: false };
+	const build: ToolRow = {
+		tool: "Bash",
+		input: { command: "npm run build", description: "Build the app" },
+		isRunning: false,
+		isErrored: true,
+		isInterrupted: false,
+	};
+	const statusRow = h(EL.Box, { key: `${id}s` }, renderToolRow(EL, style, status, columns));
+	const buildRow = h(EL.Box, { key: `${id}r` }, renderToolRow(EL, style, build, columns));
+	if (value === "quiet") {
+		return [statusRow, buildRow, renderFailure(EL, style, SETUP_BUILD_ERROR.join("\n"), `${id}e`) ?? h(EL.Box, { key: `${id}e` })];
+	}
+	const folded = (lines: readonly string[], keep: number, color?: string) => [
+		...lines.slice(0, keep).map((line, i) => h(EL.Text, { key: `l${i}`, color }, `${i === 0 ? "  ⎿  " : "     "}${line}`)),
+		h(EL.Text, { key: "more", dimColor: true }, `     … +${lines.length - keep} lines`),
+	];
+	return [
+		statusRow,
+		h(EL.Box, { key: `${id}so`, flexDirection: "column" }, ...folded(SETUP_GIT_STATUS, 3)),
+		buildRow,
+		h(
+			EL.Box,
+			{ key: `${id}e`, flexDirection: "column" },
+			...folded(["Error: Exit code 2", ...SETUP_BUILD_ERROR], 10, style.theme.codeFlag),
+		),
+	];
+}
+
 function copySample(style: Style, value: string, id: string, columns: number): RenderElement[] {
 	const label: CopyButton = (_text, key, name = "⧉ copy", html) =>
 		html && !style.htmlCopy ? null : h(EL.Text, { key, bold: true }, `[ ${name} ]`);
@@ -315,22 +485,67 @@ function copySample(style: Style, value: string, id: string, columns: number): R
 	];
 }
 
+function clockSample(style: Style, value: string, id: string, columns: number): RenderElement[] {
+	const time = value === "24h" || value === "12h" ? clockText(SETUP_SENT, SETUP_SENT, value) : undefined;
+	const prompt =
+		style.promptStyle === "off"
+			? h(EL.Text, { dimColor: true }, `> ${time === undefined ? "" : `[${time}] `}fix the failing test`)
+			: renderUserPrompt(EL, style, "fix the failing test", columns, time);
+	return [
+		h(EL.Box, { key: `${id}p` }, prompt),
+		h(EL.Box, { key: `${id}d` }, renderTurnDuration(EL, style, "Baked", 115000, time)),
+	];
+}
+
+function diffSample(style: Style, id: string, columns: number): RenderElement[] {
+	return [
+		h(
+			EL.Box,
+			{ key: `${id}r` },
+			renderToolRow(EL, style, { tool: "Edit", input: { file_path: "src/config.ts" }, isRunning: false, isErrored: false, isInterrupted: false }, columns),
+		),
+		h(EL.Box, { key: `${id}d`, flexDirection: "column" }, renderDiffCard(EL, style, SETUP_EDIT, () => null, id, columns)),
+	];
+}
+
 export function drawSetupElements(
 	base: Style,
 	options: PrismantisOptions,
-	found: FoundSetup,
+	found: NonNullable<ReturnType<typeof findSetup>>,
 	columns: number,
 	drawMd: (style: Style, blocks: Block[], cols: number) => RenderElement[],
 ): RenderElement[] {
-	const key = SETUP_STEPS[found.at]!.key;
+	const key = setupSteps(PRESET_NAMES)[found.at]!.key;
 	const md = (style: Style, text: string, id: string) =>
 		h(
 			EL.Box,
 			{ key: id, flexDirection: "column", rowGap: 1 },
 			...drawMd(style, parse(text, { numbers: style.highlightNumbers, paths: style.highlightPaths }), columns),
 		);
-	const sample = (style: Style, value: string, id: string): RenderElement[] =>
-		key === "copyButtonStyle" ? copySample(style, value, id, columns) : [];
+	const sample = (style: Style, value: string, id: string): RenderElement[] => {
+		if (key === "promptStyle") {
+			return [
+				value === "off"
+					? h(EL.Text, { key: id, dimColor: true }, "> fix the failing test")
+					: h(EL.Box, { key: id }, renderUserPrompt(EL, style, "fix the failing test", columns)),
+			];
+		}
+		if (key === "toolStyle") {
+			return [
+				md({ ...style, narration: style.toolStyle === "tree-bold" }, "Reading the config.", `${id}s`),
+				h(
+					EL.Box,
+					{ key: id },
+					renderToolRow(EL, style, { tool: "Read", input: { file_path: "src/config.ts" }, isRunning: false, isErrored: false, isInterrupted: false }, columns),
+				),
+			];
+		}
+		if (key === "toolOutput") return toolOutputSample(style, value, id, columns);
+		if (key === "diffStyle") return diffSample(style, id, columns);
+		if (key === "copyButtonStyle") return copySample(style, value, id, columns);
+		if (key === "clock") return clockSample(style, value, id, columns);
+		return [];
+	};
 	const picks = found.parts.options.map(({ value, text }, i) => {
 		const style = key === "theme" ? { ...base, theme: resolveStyle({ ...options, theme: value }).theme } : { ...base, [key]: value };
 		return h(EL.Box, { key: `o${i}`, flexDirection: "column" }, md(style, text, "m"), ...sample(style, value, "x"));
@@ -371,8 +586,13 @@ class SetupPaneComponent implements Component {
 		this.syncFocusToCurrentStep();
 	}
 
+	private steps(): SetupStep[] {
+		return setupSteps(PRESET_NAMES);
+	}
+
 	private currentStep(): SetupStep {
-		return SETUP_STEPS[Math.min(this.stepIndex, SETUP_STEPS.length - 1)]!;
+		const steps = this.steps();
+		return steps[Math.min(this.stepIndex, steps.length - 1)]!;
 	}
 
 	private choicesFor(step: SetupStep): readonly string[] {
@@ -402,10 +622,11 @@ class SetupPaneComponent implements Component {
 	}
 
 	private confirmCurrent(): void {
+		const steps = this.steps();
 		const step = this.currentStep();
 		const value = this.focusedValue || this.currentValueOf(step);
 		this.onPick(step, value);
-		if (this.stepIndex + 1 < SETUP_STEPS.length) {
+		if (this.stepIndex + 1 < steps.length) {
 			this.stepIndex++;
 			this.syncFocusToCurrentStep();
 			this.tui.requestRender();
@@ -422,7 +643,7 @@ class SetupPaneComponent implements Component {
 		const currentVal = this.currentValueOf(step);
 		const shown = choices.includes(this.focusedValue) ? this.focusedValue : currentVal;
 		const sampled = shown === "random" ? pickedTheme : shown;
-		const parts = setupPartsAt(this.stepIndex);
+		const parts = setupParts(PRESET_NAMES, this.stepIndex);
 		const previewOptions = parts.options
 			.filter((o) => o.value === sampled)
 			.map((o) => (step.key === "theme" ? { ...o, text: `${o.text.split("\n\n")[0]}\n\n${THEME_PREVIEW}` } : o));
@@ -487,7 +708,7 @@ class SetupPaneComponent implements Component {
 				const pad = Math.max(0, innerWidth - visibleWidth(cut));
 				return `${this.piTheme.fg("border", "│")} ${cut}${" ".repeat(pad)} ${this.piTheme.fg("border", "│")}`;
 			}),
-			edge("╰", this.piTheme.fg("dim", `Step ${this.stepIndex + 1}/${SETUP_STEPS.length} · Esc close`), "╯"),
+			edge("╰", this.piTheme.fg("dim", `Step ${this.stepIndex + 1}/${this.steps().length} · Esc close`), "╯"),
 		].map((l) => truncateToWidth(l, width));
 	}
 
@@ -528,10 +749,16 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	let uiCtx: ExtensionContext | undefined;
 	let tuiInstance: TUI | undefined;
 	let screenTui: TUI | undefined;
+	let promptsCount = 0;
+	let turnStartedAt = Date.now();
 
 	const parsedCache = new Map<string, ReturnType<typeof parse>>();
 	const unfolded = new Set<string>();
+	const readOnlyCalls = new Set<string>();
+	const firstDrawnMap = new Map<string, number>();
 	const pathChecks: PathChecks = { asked: new Set<string>(), found: new Set<string>() };
+	let sentRecords: Sent[] = [];
+	let turnEndsRecords: TurnEnd[] = [];
 	let formulasStore: Record<string, Formula> = {};
 	const pictureCache = new Map<string, LoadedPicture | null>();
 	const latexSuffix = randomUUID();
@@ -562,6 +789,18 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		}
 	}
 
+	function firstDrawn(id: string): number {
+		const hit = firstDrawnMap.get(id);
+		if (hit !== undefined) return hit;
+		const now = Date.now();
+		firstDrawnMap.set(id, now);
+		if (firstDrawnMap.size > 1000) {
+			const oldest = firstDrawnMap.keys().next().value;
+			if (oldest !== undefined) firstDrawnMap.delete(oldest);
+		}
+		return now;
+	}
+
 	function notify(text: string, level: "info" | "warning" | "error" = "info"): void {
 		uiCtx?.ui.notify(text, level);
 	}
@@ -577,7 +816,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		tuiInstance?.requestRender();
 	}
 
-	function makeFolder(onInvalidate?: () => void): Fold {
+	function makeFolder(onInvalidate?: () => void, faces = false): Fold {
 		return (id, hidden, key, look) => {
 			const folded = !unfolded.has(id);
 			const label = folded ? (look?.label ?? `+${hidden} more lines`) : "show less";
@@ -594,10 +833,21 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 				onInvalidate?.();
 				requestRender();
 			};
+			if (!faces) {
+				return {
+					folded,
+					faced: false,
+					element: h(EL.Button, { key, variant: "secondary", label, onPress: toggle }),
+				};
+			}
+			const element = look?.face
+				? h(EL.Button, { key, plain: true, label, onPress: toggle }, look.face(folded))
+				: h(EL.Button, { key, variant: "secondary", label, onPress: toggle });
 			return {
 				folded,
-				faced: false,
-				element: h(EL.Button, { key, variant: "secondary", label, onPress: toggle }),
+				faced: look?.face !== undefined,
+				element,
+				around: (rows, hover) => h(EL.Button, { key: `${key}.rows`, plain: true, label, hover, onPress: toggle }, rows),
 			};
 		};
 	}
@@ -816,9 +1066,11 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 			comp = new PrismantisComponent((columns) => {
 				const blocks = parseCached(text);
 				if (blocks.length === 0) return h(EL.Text, {}, text);
+				const narration = style.toolStyle === "tree-bold" && blocks.length === 1 && blocks[0]!.kind === "paragraph";
+				const surfaceStyle = narration ? { ...style, narration } : style;
 				const replyText = blocks.length > 1 || hasRtl(text) ? text : undefined;
-				const corner = replyText !== undefined && markerRoom(style) > 0;
-				const elements = drawMarkdownElements(style, blocks, columns - 2, {
+				const corner = replyText !== undefined && markerRoom(surfaceStyle) > 0;
+				const elements = drawMarkdownElements(surfaceStyle, blocks, columns - 2, {
 					replyText,
 					noteId: messageId,
 					onInvalidate: () => comp?.invalidate(),
@@ -830,6 +1082,53 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 					h(EL.Box, { flexDirection: "column", rowGap: 1, flexGrow: 1 }, ...elements),
 					corner ? h(EL.Box, { width: MARK, flexShrink: 0 }) : null,
 				);
+			}, outputPad);
+			return comp;
+		},
+		renderUserText: (text, messageId, outputPad) => {
+			if (style.promptStyle === "off" && style.clock === "off") return null;
+			let comp: PrismantisComponent | undefined;
+			comp = new PrismantisComponent((columns) => {
+				const at = style.clock === "off" ? undefined : sentAt(sentRecords, text, firstDrawn(messageId));
+				const time = at === undefined ? undefined : clockText(at, Date.now(), style.clock);
+				if (style.promptStyle === "off") {
+					return h(EL.Text, { dimColor: true }, `> ${time ? `[${time}] ` : ""}${text}`);
+				}
+				const fold = makeFolder(() => comp?.invalidate());
+				const paste: DrawPaste = (body, key) => {
+					const lines = body.split("\n");
+					const title = `pasted text · ${lines.length} lines`;
+					const toggle = fold(`${messageId}:${key}`, lines.length, key, { label: title });
+					const opened = toggle?.folded === false;
+					return h(
+						EL.Box,
+						{
+							key,
+							borderStyle: "double",
+							borderColor: style.theme.codeComment,
+							paddingX: 1,
+							flexDirection: "column",
+							alignSelf: "flex-start",
+						},
+						opened
+							? h(
+									EL.Box,
+									{ key: "head", flexDirection: "row", justifyContent: "space-between", columnGap: 4 },
+									h(EL.Text, { color: style.theme.codeComment }, title),
+									toggle.element,
+								)
+							: (toggle?.element ?? null),
+						...(opened
+							? drawMarkdownElements(
+									style,
+									[{ kind: "code", lang: pasteLang(body), lines, raw: body }],
+									Math.max(20, columns - 8),
+									{ onInvalidate: () => comp?.invalidate() },
+								)
+							: []),
+					);
+				};
+				return renderUserPrompt(EL, style, text, columns, time, paste);
 			}, outputPad);
 			return comp;
 		},
@@ -872,7 +1171,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 					: "";
 		let comp: PrismantisComponent | undefined;
 		comp = new PrismantisComponent((columns) => {
-			const found = findSetupIn(rawText);
+			const found = findSetup(PRESET_NAMES, rawText);
 			if (found) {
 				const base = { ...style, copyButtons: false, pathLinks: false };
 				const elements = drawSetupElements(base, options, found, columns, (s, b, cols) =>
@@ -894,6 +1193,141 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		return container;
 	});
 
+	pi.registerEntryRenderer<{ durationMs: number; at: number }>(TURN_ENTRY_TYPE, (entry) => {
+		if (options.enabled === false) return undefined;
+		const durationMs = entry.data?.durationMs ?? 0;
+		const recordedAt = entry.data?.at ?? Date.now();
+		return new PrismantisComponent(() => {
+			const at = style.clock === "off" ? undefined : endedAt(turnEndsRecords, durationMs, recordedAt) ?? recordedAt;
+			const time = at === undefined ? undefined : clockText(at, Date.now(), style.clock);
+			return renderTurnDuration(EL, style, "Baked", durationMs, time);
+		}, 1);
+	});
+
+	pi.registerToolRenderer((toolName, next) => {
+		if (options.enabled === false || options.toolRows === false) {
+			return next();
+		}
+		return {
+			renderShell: "self",
+			renderCall(args: unknown, _theme: PiTheme, context: ToolRenderContext) {
+				const mapped = normalizeToolForPrismantis(toolName, args);
+				if (style.toolOutput === "quiet" && isReadOnlyCall(mapped.tool, mapped.input)) {
+					rememberCall(readOnlyCalls, context.toolCallId);
+				}
+				return new PrismantisComponent((columns) => {
+					const row: ToolRow = {
+						tool: mapped.tool,
+						input: mapped.input,
+						isRunning: context.isPartial,
+						isErrored: context.isError,
+						isInterrupted: false,
+					};
+					if (context.expanded && (mapped.tool === "Bash" || mapped.tool === "PowerShell")) {
+						return renderExpandedShell(EL, style, row);
+					}
+					return renderToolRow(EL, style, row, columns);
+				}, context.outputPad);
+			},
+			renderResult(
+				result: { content: { type: string; text?: string }[]; details?: unknown },
+				renderOpts: ToolRenderResultOptions,
+				_theme: PiTheme,
+				context: ToolRenderContext,
+			) {
+				const mapped = normalizeToolForPrismantis(toolName, context.args);
+				const textOutput = (result.content ?? [])
+					.filter((c) => c.type === "text" && typeof c.text === "string")
+					.map((c) => c.text!)
+					.join("\n");
+
+				let comp: PrismantisComponent | undefined;
+				comp = new PrismantisComponent((columns) => {
+					const fold = makeFolder(() => {
+						comp?.invalidate();
+						context.invalidate();
+					}, true);
+
+					if (!context.isError && mapped.tool === "Edit") {
+						const details = result.details as { patch?: string } | undefined;
+						const hunks =
+							typeof details?.patch === "string"
+								? parseUnifiedPatchToHunks(details.patch)
+								: syntheticHunksFromEdits(mapped.input.edits);
+						if (hunks.length > 0) {
+							const card = renderDiffCard(
+								EL,
+								{ ...style, pressPreview: true },
+								{ filePath: mapped.input.file_path, structuredPatch: hunks },
+								fold,
+								context.toolCallId,
+								columns,
+							);
+							if (card) return card;
+						}
+					}
+
+					if (!context.isError && mapped.tool === "Write") {
+						const content = typeof mapped.input.content === "string" ? mapped.input.content : textOutput;
+						if (typeof mapped.input.file_path === "string") {
+							const card = renderDiffCard(
+								EL,
+								{ ...style, pressPreview: true },
+								{ type: "create", filePath: mapped.input.file_path, content },
+								fold,
+								context.toolCallId,
+								columns,
+							);
+							if (card) return card;
+						}
+					}
+
+					if (context.isError) {
+						if (style.toolOutput === "quiet" && !renderOpts.expanded) {
+							return renderFailure(EL, style, textOutput) ?? h(EL.Box, {});
+						}
+						const lines = textOutput.split("\n").filter(Boolean);
+						const shown = renderOpts.expanded ? lines : lines.slice(0, 10);
+						return h(
+							EL.Box,
+							{ flexDirection: "column" },
+							...shown.map((line, i) =>
+								h(EL.Text, { key: `e${i}`, color: style.theme.codeFlag }, `${i === 0 ? "  ⎿  " : "     "}${line}`),
+							),
+							...(lines.length > shown.length
+								? [h(EL.Text, { key: "more", dimColor: true }, `     … +${lines.length - shown.length} lines`)]
+								: []),
+						);
+					}
+
+					if (style.toolOutput === "quiet" && !renderOpts.expanded) {
+						if (readOnlyCalls.has(context.toolCallId) || isReadOnlyCall(mapped.tool, mapped.input)) {
+							return null;
+						}
+						if (mapped.tool === "Bash" || mapped.tool === "PowerShell") {
+							return renderShellResult(EL, style, { stdout: textOutput, stderr: "" });
+						}
+						return null;
+					}
+
+					if (!textOutput.trim()) return null;
+					const lines = textOutput.split("\n");
+					const keep = renderOpts.expanded ? lines.length : 10;
+					const shown = lines.slice(0, keep);
+					return h(
+						EL.Box,
+						{ flexDirection: "column" },
+						...shown.map((line, i) => h(EL.Text, { key: `l${i}` }, `${i === 0 ? "  ⎿  " : "     "}${line}`)),
+						...(lines.length > keep
+							? [h(EL.Text, { key: "more", dimColor: true }, `     … +${lines.length - keep} lines`)]
+							: []),
+					);
+				}, context.outputPad);
+				return comp;
+			},
+		};
+	});
+
 	pi.on("session_start", (_event, ctx) => {
 		uiCtx = ctx;
 		pathChecks.asked.clear();
@@ -907,6 +1341,9 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 				screenTui = t;
 				watchPointerLeave(t);
 				return { render: () => [], invalidate: () => {} };
+			});
+			ctx.ui.setWorkingIndicator({
+				frames: [`\x1b[38;2;203;166;247m●\x1b[0m`],
 			});
 		}
 	});
@@ -926,19 +1363,41 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		pathChecks.asked = new Set(pathChecks.found);
 	});
 
+	pi.on("input", (event, ctx) => {
+		uiCtx = ctx;
+		if (event.source !== "extension" && style.clock !== "off") {
+			sentRecords = withRecord(sentRecords, { text: promptKey(event.text), at: Date.now() });
+		}
+	});
+
 	pi.on("before_agent_start", (event, ctx) => {
 		uiCtx = ctx;
 		refreshFromDisk(ctx.cwd);
+		turnStartedAt = Date.now();
 		if (options.enabled === false || event.messageType !== "user") return;
 
 		const hints: string[] = [
 			...(style.diagramHints ? [HINT, FIGURE_HINT, ...(style.latex && getCapabilities().images ? [LATEX_HINT] : [])] : []),
+			...(style.issueHint && promptsCount++ % 10 === 0 ? [ISSUE_HINT] : []),
 		];
 		if (hints.length > 0) {
 			event.systemPromptOptions.guidelines = [
 				...(event.systemPromptOptions.guidelines ?? []),
 				...hints,
 			];
+		}
+	});
+
+	pi.on("agent_end", (_event, ctx) => {
+		uiCtx = ctx;
+		if (options.enabled === false) return;
+		const durationMs = Math.max(0, Date.now() - turnStartedAt);
+		const at = Date.now();
+		if (style.clock !== "off") {
+			turnEndsRecords = withRecord(turnEndsRecords, { durationMs, at });
+		}
+		if (durationMs >= 1000) {
+			pi.appendEntry(TURN_ENTRY_TYPE, { durationMs, at });
 		}
 	});
 
@@ -1029,7 +1488,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 				}));
 			}
 			if (first === "setup") {
-				const steps = SETUP_STEPS.map((s) => s.name);
+				const steps = setupSteps(PRESET_NAMES).map((s) => s.name);
 				return steps.filter((s) => s.startsWith(second)).map((s) => ({
 					value: `setup ${s}`,
 					label: s,
@@ -1105,14 +1564,15 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 					return;
 				}
 
-				const at = name ? SETUP_STEPS.findIndex((s) => s.name === name) : 0;
-				const step = SETUP_STEPS[at];
+				const steps = setupSteps(PRESET_NAMES);
+				const at = name ? steps.findIndex((s) => s.name === name) : 0;
+				const step = steps[at];
 				if (!step) {
-					sendPrismantisOutput(`Unknown setup step "${name}". Steps: ${SETUP_STEPS.map((s) => s.name).join(", ")}`);
+					sendPrismantisOutput(`Unknown setup step "${name}". Steps: ${steps.map((s) => s.name).join(", ")}`);
 					return;
 				}
 				if (!third) {
-					sendPrismantisOutput(setupText(setupPartsAt(at)));
+					sendPrismantisOutput(setupText(setupParts(PRESET_NAMES, at)));
 					return;
 				}
 				const choices = step.key === "theme" ? THEME_ARGS : step.options;
@@ -1129,7 +1589,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 					return;
 				}
 				sendPrismantisOutput(
-					`${saved}\n\n${at + 1 < SETUP_STEPS.length ? setupText(setupPartsAt(at + 1)) : SETUP_DONE}`,
+					`${saved}\n\n${at + 1 < steps.length ? setupText(setupParts(PRESET_NAMES, at + 1)) : SETUP_DONE}`,
 				);
 				return;
 			}
