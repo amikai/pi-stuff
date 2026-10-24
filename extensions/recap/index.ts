@@ -96,14 +96,6 @@ export function loadSettings(): RecapSettings {
 	}
 }
 
-export function saveSettings(settings: RecapSettings): void {
-	try {
-		writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`);
-	} catch {
-		// Losing settings only means the next load returns defaults.
-	}
-}
-
 export function writeRecord(record: RecapRecord): void {
 	if (!/^[A-Za-z0-9-]+$/.test(record.sessionId)) return;
 	try {
@@ -481,7 +473,6 @@ export async function runSideCall(
 export default function recap(pi: ExtensionAPI): void {
 	let settings = loadSettings();
 	let state: RecapState = { phase: "idle" };
-	let lastRecord: RecapRecord | null = null;
 	let lastRunAt: number | null = null;
 	let lastFingerprint = "";
 	let lastTurnMessages: Parameters<typeof convertToLlm>[0] | null = null;
@@ -627,48 +618,22 @@ export default function recap(pi: ExtensionAPI): void {
 
 		lastRunAt = Date.now();
 		lastFingerprint = fp;
-		lastRecord = record;
 		state = { phase: "done", record, shownAt: Date.now() };
 		writeRecord(record);
 		render(ctx);
 	}
 
 	pi.registerCommand("recap", {
-		description: "Show, refresh, or toggle the session recap line above the prompt",
+		description: "Refresh the session recap line above the prompt",
 		handler: async (args, ctx) => {
+			if (args.trim()) {
+				ctx.ui.notify("Usage: /recap", "warning");
+				return;
+			}
 			uiCtx = ctx;
 			settings = loadSettings();
-			const sub = args.trim().toLowerCase();
-
-			if (sub === "hide") {
-				clearWidget(ctx);
-				return;
-			}
-
-			if (sub === "off") {
-				settings = { ...settings, enabled: false };
-				saveSettings(settings);
-				cancelPending();
-				clearWidget(ctx);
-				ctx.ui.notify("Recap is off. Run /recap on to re-enable.", "info");
-				return;
-			}
-
-			if (sub === "on") {
-				settings = { ...settings, enabled: true };
-				saveSettings(settings);
-				ctx.ui.notify("Recap is on.", "info");
-				if (lastRecord) {
-					state = { phase: "done", record: lastRecord, shownAt: Date.now() };
-					render(ctx);
-				} else {
-					schedule(ctx);
-				}
-				return;
-			}
-
 			if (!settings.enabled) {
-				ctx.ui.notify("Recap is off. Run /recap on to enable.", "warning");
+				ctx.ui.notify("Recap is off. Set enabled to true in recap.json to enable.", "warning");
 				return;
 			}
 			if (ctx.mode !== "tui") {
@@ -688,7 +653,6 @@ export default function recap(pi: ExtensionAPI): void {
 		cancelInFlight();
 		clearWidget(ctx);
 		state = { phase: "idle" };
-		lastRecord = null;
 		lastRunAt = null;
 		lastFingerprint = "";
 		lastTurnMessages = null;
@@ -699,7 +663,6 @@ export default function recap(pi: ExtensionAPI): void {
 		const sessionId = ctx.sessionManager.getSessionId();
 		const prior = readRecord(sessionId);
 		if (prior) {
-			lastRecord = prior;
 			lastFingerprint = prior.fingerprint;
 			state = { phase: "done", record: prior, shownAt: Date.now() };
 			render(ctx);

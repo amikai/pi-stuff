@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
+import { setImmediate as settle } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
@@ -306,9 +307,6 @@ test("same-model path preserves LLM message prefix, passes sessionId and transpo
 
 	assert.ok(h.getWidget() !== null);
 	assert.ok(h.renderWidget().includes("Test objective · Running tests → Check results"));
-
-	await h.commands.get("recap")!("hide", h.ctx);
-	assert.equal(h.getWidget(), null);
 });
 
 test("cross-model path uses 5000-token slice with systemPrompt and cacheRetention none", async () => {
@@ -341,35 +339,81 @@ test("cross-model path uses 5000-token slice with systemPrompt and cacheRetentio
 	assert.ok(call.messages[0].content[0].text.includes("<recent>"));
 });
 
-test("draft text in editor skips automatic recap", async () => {
+test("draft text in editor skips automatic recap", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 	const h = createHarness();
 	await h.emit("session_start");
+	await h.emit("context_with_system", {
+		messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+	});
+	await h.emit("turn_end", {
+		message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+	});
 	h.setEditorText("drafting a message...");
 
 	await h.emit("agent_settled");
-	await h.flush(10);
+	t.mock.timers.tick(RECAP_IDLE_MS);
+	await settle();
 
 	assert.equal(h.streamCalls.length, 0);
 	assert.equal(h.getWidget(), null);
 });
 
-test("disabled recap skips side call and clears widget", async () => {
+test("disabled recap skips automatic and manual calls and live JSON settings take effect", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 	const h = createHarness({ initialSettings: { enabled: false } });
 	await h.emit("session_start");
+	await h.emit("context_with_system", {
+		messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+	});
+	await h.emit("turn_end", {
+		message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+	});
 
+	const path = join(h.dir, "recap.json");
+	const disabledSettings = readFileSync(path, "utf8");
 	await h.emit("agent_settled");
-	await h.flush(10);
+	t.mock.timers.tick(RECAP_IDLE_MS);
+	await h.commands.get("recap")!("", h.ctx);
+	await settle();
 	assert.equal(h.streamCalls.length, 0);
-
-	await h.commands.get("recap")!("on", h.ctx);
-	assert.ok(h.notifications.some((n) => n.text.includes("Recap is on")));
-
-	await h.commands.get("recap")!("off", h.ctx);
-	assert.ok(h.notifications.some((n) => n.text.includes("Recap is off")));
 	assert.equal(h.getWidget(), null);
+	assert.ok(h.notifications.some((n) => n.level === "warning" && n.text.includes("recap.json")));
+	assert.equal(readFileSync(path, "utf8"), disabledSettings);
+
+	const enabledSettings = JSON.stringify({ enabled: true, model: "faux/faux-2" });
+	writeFileSync(path, enabledSettings);
+	await h.commands.get("recap")!("", h.ctx);
+	await settle();
+	assert.equal(h.streamCalls.length, 1);
+	assert.equal(h.streamCalls[0].model, "faux/faux-2");
+	assert.ok(h.getWidget() !== null);
+	assert.equal(readFileSync(path, "utf8"), enabledSettings);
+
+	writeFileSync(path, disabledSettings);
+	await h.emit("agent_settled");
+	t.mock.timers.tick(60_000);
+	await settle();
+	assert.equal(h.streamCalls.length, 1);
+	assert.equal(h.getWidget(), null);
+
+	writeFileSync(path, JSON.stringify({ enabled: true, model: "" }));
+	await h.emit("context_with_system", {
+		messages: [{ role: "user", content: [{ type: "text", text: "a new request" }] }],
+	});
+	await h.emit("turn_end", {
+		message: { role: "assistant", content: [{ type: "text", text: "a new reply" }] },
+	});
+	await h.emit("agent_settled");
+	t.mock.timers.tick(RECAP_IDLE_MS);
+	await settle();
+	assert.equal(h.streamCalls.length, 2);
+	assert.equal(h.streamCalls[1].model, "faux/faux-1");
+	assert.ok(h.getWidget() !== null);
 });
 
-test("fingerprint unchanged skips automatic rerun", async () => {
+test("automatic recap waits for idle and skips unchanged fingerprints, but bare recap forces refresh", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
 	const h = createHarness();
 	await h.emit("session_start");
 
@@ -382,13 +426,63 @@ test("fingerprint unchanged skips automatic rerun", async () => {
 		message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
 	});
 
-	await h.commands.get("recap")!("", h.ctx);
-	await h.flush();
-	assert.equal(h.streamCalls.length, 1);
-
 	await h.emit("agent_settled");
-	await h.flush(10);
+	t.mock.timers.tick(RECAP_IDLE_MS - 1);
+	await settle();
+	assert.equal(h.streamCalls.length, 0);
+	t.mock.timers.tick(1);
+	await settle();
 	assert.equal(h.streamCalls.length, 1);
+	assert.ok(h.getWidget() !== null);
+
+	h.setEditorText("drafting a message...");
+	await h.commands.get("recap")!("", h.ctx);
+	await settle();
+	assert.equal(h.streamCalls.length, 2);
+
+	h.setEditorText("");
+	await h.emit("agent_settled");
+	t.mock.timers.tick(59_999);
+	await settle();
+	assert.equal(h.streamCalls.length, 2);
+	t.mock.timers.tick(1);
+	await settle();
+	assert.equal(h.streamCalls.length, 2);
+
+	t.mock.timers.tick(300_000);
+	await h.commands.get("recap")!(" \t ", h.ctx);
+	await settle();
+	assert.equal(h.streamCalls.length, 3);
+});
+
+test("recap rejects all arguments without requests, settings writes, or hiding the widget", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+	const h = createHarness({ initialSettings: { enabled: true, model: "" } });
+	await h.emit("session_start");
+	await h.emit("context_with_system", {
+		messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+	});
+	await h.emit("turn_end", {
+		message: { role: "assistant", content: [{ type: "text", text: "hi" }] },
+	});
+	await h.commands.get("recap")!("", h.ctx);
+	await settle();
+	assert.equal(h.streamCalls.length, 1);
+	const recapLine = h.renderWidget();
+	assert.ok(h.getWidget() !== null);
+	const path = join(h.dir, "recap.json");
+	const settings = readFileSync(path, "utf8");
+
+	for (const args of ["on", "off", "now", "hide", "unknown", " ON ", "now extra"]) {
+		await h.commands.get("recap")!(args, h.ctx);
+		assert.deepEqual(h.notifications.at(-1), { text: "Usage: /recap", level: "warning" });
+		assert.equal(h.renderWidget(), recapLine);
+		assert.equal(readFileSync(path, "utf8"), settings);
+	}
+	t.mock.timers.tick(300_000);
+	await settle();
+	assert.equal(h.streamCalls.length, 1);
+	assert.equal(h.notifications.length, 7);
 });
 
 test("new agent or turn start cancels pending timers and in-flight calls", async () => {
@@ -425,7 +519,7 @@ test("session record persists and restores on session_start, and empty session s
 	const h = createHarness();
 	await h.emit("session_start");
 
-	await h.commands.get("recap")!("now", h.ctx);
+	await h.commands.get("recap")!("", h.ctx);
 	await h.flush();
 	assert.equal(h.streamCalls.length, 0);
 	assert.ok(h.notifications.some((n) => n.text.includes("Nothing in the session")));
@@ -437,7 +531,7 @@ test("session record persists and restores on session_start, and empty session s
 		message: { role: "assistant", content: [{ type: "text", text: "working on it" }] },
 	});
 
-	await h.commands.get("recap")!("now", h.ctx);
+	await h.commands.get("recap")!("", h.ctx);
 	await h.flush();
 
 	const record = readRecord(h.sm.getSessionId());

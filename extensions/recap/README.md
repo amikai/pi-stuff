@@ -27,10 +27,10 @@ Settings live in `~/.pi/agent/recap.json` (`PI_CODING_AGENT_DIR` overrides `~/.p
 
 | Field | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | Run the idle recap and show the line above the prompt editor. `/recap off` writes `false`. `/recap on` writes `true`. |
+| `enabled` | `true` | Enable automatic and manual recaps and show the line above the prompt editor. Set to `false` to disable recaps. |
 | `model` | `""` | `provider/modelId` override for recap calls. An empty string uses the session's current model so the call shares the session's prompt cache. |
 
-`recap` reads `recap.json` from disk before each scheduled run and before each `/recap` command.
+`recap` reads `recap.json` from disk before each scheduled run and before each bare `/recap` command.
 
 ## How it works
 
@@ -69,14 +69,13 @@ waiting: <yes | no>
 
 | Command | Effect |
 |---|---|
-| `/recap` or `/recap now` | Force a fresh recap immediately, bypassing the 60-second gap, fingerprint check, and cache TTL guard. |
-| `/recap hide` | Hide the recap line until the next recap update without disabling background updates. |
-| `/recap off` | Disable recaps and clear the recap line. |
-| `/recap on` | Enable recaps and restore the recap line or schedule a run. |
+| `/recap` | Force a fresh recap immediately, bypassing the 60-second gap, editor draft check, fingerprint check, and cache TTL guard. |
+
+`/recap` rejects arguments with a usage notification and leaves the current recap and settings unchanged. Configure `enabled` in `recap.json` to enable or disable recaps. The command does not change settings.
 
 ## Files
 
-`recap` writes these files under pi's agent directory (`~/.pi/agent` unless `PI_CODING_AGENT_DIR` is set):
+`recap` uses these files under pi's agent directory (`~/.pi/agent` unless `PI_CODING_AGENT_DIR` is set):
 
 | File | Contents |
 |---|---|
