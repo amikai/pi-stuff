@@ -317,91 +317,38 @@ test("2. AssistantMessageComponent renders tables, headings, code folding, diagr
 	assert.ok(expandedPlain.includes("[ show less ]"), "shows show less button when unfolded");
 });
 
-test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles and clock times", async () => {
-	const h = createHarness({ promptStyle: "bubble", clock: "24h" });
+test("3. A config that enabled prompt bubbles, clocks and tool rows leaves those surfaces to pi", async () => {
+	const h = createHarness({ promptStyle: "bubble", clock: "24h", toolRows: true });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
 	await h.emit("input", { text: "fix the failing test", source: "interactive" });
 
-	const userComp = new UserMessageComponent("fix the failing test");
-	const bubblePlain = stripAnsi(userComp.render(80).join("\n"));
-	assert.ok(bubblePlain.includes("╭─"), "draws bubble border around user prompt");
-	assert.ok(bubblePlain.includes("fix the failing test"), "draws prompt text");
-	assert.match(bubblePlain, /\d{2}:\d{2}/, "draws 24h clock timestamp");
+	assert.equal(h.toolRenderers.length, 0, "registers no tool renderer");
+	assert.equal(h.entryRenderers.has("prismantis-turn"), false, "registers no turn entry renderer");
+	assert.ok(h.messageRenderers.has("prismantis-output"), "the harness records the renderers prismantis still registers");
 
-	await h.commands.get("prismantis")!.handler("setup prompts wide", h.ctx);
-	userComp.rebuild();
-	const widePlain = stripAnsi(userComp.render(80).join("\n"));
-	assert.ok(widePlain.includes(`╭${"─".repeat(76)}╮`), "wide prompt spans full content width");
+	await h.emit("agent_end", { messages: [] });
+	assert.equal(h.appendedEntries.some((e) => e.customType === "prismantis-turn"), false, "appends no turn entry");
 
-	await h.commands.get("prismantis")!.handler("setup prompts chevron", h.ctx);
-	userComp.rebuild();
-	const chevronPlain = stripAnsi(userComp.render(80).join("\n"));
-	assert.ok(chevronPlain.includes("› "), "draws chevron prompt marker");
+	const userPlain = stripAnsi(new UserMessageComponent("fix the failing test").render(80).join("\n"));
+	assert.ok(userPlain.includes("fix the failing test"), "draws the prompt text");
+	assert.ok(!userPlain.includes("╭─"), "draws no prompt bubble");
+	assert.doesNotMatch(userPlain, /\d{2}:\d{2}/, "draws no clock time");
+
+	const assistantPlain = stripAnsi(
+		new AssistantMessageComponent({
+			role: "assistant",
+			content: [{ type: "text", text: "| a | b |\n|:--|:--|\n| 1 | 2 |" }],
+			timestamp: 2000,
+		} as any)
+			.render(80)
+			.join("\n"),
+	);
+	assert.ok(assistantPlain.includes("╞══"), "assistant replies still draw through prismantis in the same harness");
 });
 
-test("4. Tool renderer draws quiet tool rows and clickable diff cards for edit and write", async () => {
-	const h = createHarness({ toolStyle: "tree-dim", toolOutput: "quiet", diffStyle: "card" });
-	cleanupFn = h.cleanup;
-	await h.emit("session_start");
-
-	const resolver = h.toolRenderers[0]!;
-	const bashRenderers = resolver("bash", () => undefined);
-	assert.equal(bashRenderers.renderShell, "self");
-
-	const bashCtx = {
-		args: { command: 'rg "TODO" src/' },
-		toolCallId: "tc-bash-1",
-		invalidate: () => {},
-		state: {},
-		cwd: "/tmp/project",
-		executionStarted: true,
-		argsComplete: true,
-		isPartial: false,
-		expanded: false,
-		showImages: true,
-		isError: false,
-		outputPad: 1,
-	};
-	const callComp = bashRenderers.renderCall(bashCtx.args, mockPiTheme, bashCtx);
-	const callPlain = stripAnsi(callComp.render(80).join("\n"));
-	assert.ok(callPlain.includes('Searched src/ for "TODO"'), `expected quiet shell description, got: ${callPlain}`);
-
-	const resultComp = bashRenderers.renderResult(
-		{ content: [{ type: "text", text: "src/a.ts:1: // TODO" }] },
-		{ expanded: false, isPartial: false },
-		mockPiTheme,
-		bashCtx,
-	);
-	assert.equal(resultComp.render(80).length, 0, "quiet mode hides read-only tool output");
-
-	const editRenderers = resolver("edit", () => undefined);
-	const patchLines = Array.from({ length: 25 }, (_, i) => `+const line${i + 1} = ${i + 1};`);
-	const patch = `@@ -1,1 +1,25 @@\n-const old = 0;\n${patchLines.join("\n")}`;
-	const editCtx = {
-		...bashCtx,
-		toolCallId: "tc-edit-1",
-		args: { path: "/tmp/project/src/config.ts", edits: [] },
-	};
-	const diffComp = editRenderers.renderResult(
-		{ content: [{ type: "text", text: "Edited" }], details: { patch } },
-		{ expanded: false, isPartial: false },
-		mockPiTheme,
-		editCtx,
-	);
-	const diffLines = diffComp.render(80);
-	const diffPlain = stripAnsi(diffLines.join("\n"));
-	assert.ok(diffPlain.includes("+25 −1"), "draws diff header counts");
-	assert.ok(diffPlain.includes("[ +6 more lines ]"), "folds diff card past 20 lines");
-
-	diffComp.handleMouse({ type: "press", button: "left", x: 10, y: 2 } as any);
-	diffComp.handleMouse({ type: "click", button: "left", x: 10, y: 2 } as any);
-	const unfoldedDiffPlain = stripAnsi(diffComp.render(80).join("\n"));
-	assert.ok(unfoldedDiffPlain.includes("const line25 = 25;"), "clicking diff card unfolds all lines");
-});
-
-test("5. /prismantis commands, interactive setup pane, system prompt hints, and turn duration entry work", async () => {
-	const h = createHarness({ theme: "catppuccin-mocha", clock: "24h" });
+test("4. /prismantis commands, interactive setup pane, and system prompt hints work", async () => {
+	const h = createHarness({ theme: "catppuccin-mocha" });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
 	assert.equal(h.getActivePiTheme(), "prismantis-catppuccin-mocha");
@@ -423,11 +370,11 @@ test("5. /prismantis commands, interactive setup pane, system prompt hints, and 
 	const overlay = h.getOverlay();
 	assert.ok(overlay, "opens interactive setup overlay in TUI mode");
 	const initialOverlayPlain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(initialOverlayPlain.includes("Setup 1/11: Theme"), "renders step 1 in setup overlay");
+	assert.ok(initialOverlayPlain.includes("Setup 1/6: Theme"), "renders step 1 in setup overlay");
 	overlay.handleInput("\x1b[B");
 	overlay.handleInput("\r");
 	const step2Plain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(step2Plain.includes("Setup 2/11: Tables"), "advances to step 2 after Enter");
+	assert.ok(step2Plain.includes("Setup 2/6: Tables"), "advances to step 2 after Enter");
 	overlay.handleInput("\x1b");
 	assert.equal(h.getOverlay(), null, "Escape closes setup overlay");
 
@@ -447,11 +394,6 @@ test("5. /prismantis commands, interactive setup pane, system prompt hints, and 
 		startEvent.systemPromptOptions.guidelines.some((g) => g.includes("```figure")),
 		"injects figure hint into guidelines",
 	);
-
-	const entryRenderer = h.entryRenderers.get("prismantis-turn")!;
-	const turnComp = entryRenderer({ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } }, { expanded: false }, mockPiTheme);
-	const turnPlain = stripAnsi(turnComp.render(80).join("\n"));
-	assert.ok(turnPlain.includes("✻ Baked for 2m 5s"), `expected Baked duration footer, got: ${turnPlain}`);
 
 	const transformer = h.markdownTransformers[0]!;
 	const transformed = transformer("```figure\n{ok:✓ healthy}\n```", {
@@ -478,7 +420,7 @@ function hoverFixture() {
 	return comp;
 }
 
-test("6. Hovering a button highlights it and moving off clears it", () => {
+test("5. Hovering a button highlights it and moving off clears it", () => {
 	const comp = hoverFixture();
 	assert.ok(!comp.render(40).join("").includes(INVERSE), "no highlight before any pointer move");
 
@@ -491,7 +433,7 @@ test("6. Hovering a button highlights it and moving off clears it", () => {
 	assert.ok(!comp.render(40).join("").includes(INVERSE), "moving to plain text clears the highlight");
 });
 
-test("7. A hover prop replaces the default inverse highlight", () => {
+test("6. A hover prop replaces the default inverse highlight", () => {
 	const comp = hoverFixture();
 	comp.handleMouse(move(2, 1));
 	const lines = comp.render(40);
@@ -499,7 +441,7 @@ test("7. A hover prop replaces the default inverse highlight", () => {
 	assert.ok(!lines[1]!.includes(INVERSE), "does not fall back to inverse");
 });
 
-test("8. Only one element is highlighted across components, and leaving them all clears it", () => {
+test("7. Only one element is highlighted across components, and leaving them all clears it", () => {
 	const a = hoverFixture();
 	const b = hoverFixture();
 	a.handleMouse(move(3, 0));
@@ -514,7 +456,7 @@ test("8. Only one element is highlighted across components, and leaving them all
 	assert.equal(clearHover(), false, "nothing left to clear");
 });
 
-test("9. neon theme, table <br> line breaks, and probed loose path hyperlinks work", async () => {
+test("8. neon theme, table <br> line breaks, and probed loose path hyperlinks work", async () => {
 	const prevForce = process.env.FORCE_HYPERLINK;
 	process.env.FORCE_HYPERLINK = "1";
 	const h = createHarness({ theme: "catppuccin-mocha" });
