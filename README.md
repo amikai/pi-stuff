@@ -12,7 +12,7 @@ Pi clones the repo to `~/.pi/agent/git/github.com/amikai/pi-stuff` and loads it 
 
 ## Extensions
 
-- [`btw.ts`](extensions/btw.ts) - `/btw` side-chat popover for quick tangential questions, with thread restore/reset and summary handoff into the main chat, from [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/a3f8ab1108a48fec9e175f6cd5d9aaa4694ce29d/extensions/btw.ts).
+- [`btw.ts`](extensions/btw.ts) - `/btw` side-chat popover for quick tangential questions, with thread restore/reset and summary handoff into the main chat. Use `Shift+Left` and `Shift+Right`, or `Shift+Tab` and `Tab`, to browse past exchanges. Use `Up` and `Down` to scroll the selected answer. Adapted from [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/a3f8ab1108a48fec9e175f6cd5d9aaa4694ce29d/extensions/btw.ts).
 - [`files.ts`](extensions/files.ts) - `/files` browser with git status and session references, plus shortcuts to browse (`ctrl+shift+o`), reveal, diff, and Quick Look (`ctrl+shift+r`) referenced files, from [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/13bc8f87970bec8830aab0f1c0487d35aa7c0917/extensions/files.ts).
 - [`no-sleep.ts`](extensions/no-sleep.ts) - `/no-sleep` macOS `caffeinate` integration to prevent sleep while an agent or session is active, from [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/ab0a07b6d3b0e3a2846c4ee3753dee4c683e7ec2/extensions/no-sleep.ts).
 - [`view-image.ts`](extensions/view-image.ts) - `view_image` tool for reading image files as inline image attachments, from [mitsuhiko/agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/4fb0c7d68c87c3612af6289f72b5d90a11a726b8/extensions/view-image.ts).

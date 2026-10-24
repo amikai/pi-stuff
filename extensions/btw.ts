@@ -24,6 +24,7 @@ import {
 	Container,
 	Input,
 	Markdown,
+	matchesKey,
 	truncateToWidth,
 	visibleWidth,
 	type Focusable,
@@ -67,6 +68,7 @@ type OverlayRuntime = {
 	close?: () => void;
 	finish?: () => void;
 	setDraft?: (value: string) => void;
+	resetView?: () => void;
 	closed?: boolean;
 };
 
@@ -200,12 +202,20 @@ function notify(ctx: ExtensionContext | ExtensionCommandContext, message: string
 }
 
 
-class BtwOverlay extends Container implements Focusable {
+type BtwSnapshot = { lines: string[]; index: number; total: number };
+type BtwViewCursor =
+	| { kind: "latest"; scroll: "bottom" | number }
+	| { kind: "pinned"; index: number; scrollTop: number };
+
+export class BtwOverlay extends Container implements Focusable {
 	private readonly input: Input;
-	private readonly tui: TUI;
+	private readonly tui: Pick<TUI, "terminal" | "requestRender">;
 	private readonly theme: ExtensionContext["ui"]["theme"];
 	private readonly keybindings: KeybindingsManager;
-	private readonly getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"]) => string[];
+	private readonly getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"], selected: number | "latest") => BtwSnapshot;
+	private view: BtwViewCursor = { kind: "latest", scroll: "bottom" };
+	private viewportHeight = 1;
+	private viewportWidth = 1;
 	private readonly getStatus: () => string;
 	private readonly onSubmitCallback: (value: string) => void;
 	private readonly onDismissCallback: () => void;
@@ -221,10 +231,10 @@ class BtwOverlay extends Container implements Focusable {
 	}
 
 	constructor(
-		tui: TUI,
+		tui: Pick<TUI, "terminal" | "requestRender">,
 		theme: ExtensionContext["ui"]["theme"],
 		keybindings: KeybindingsManager,
-		getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"]) => string[],
+		getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"], selected: number | "latest") => BtwSnapshot,
 		getStatus: () => string,
 		onSubmit: (value: string) => void,
 		onDismiss: () => void,
@@ -253,7 +263,57 @@ class BtwOverlay extends Container implements Focusable {
 			return;
 		}
 
+		if (matchesKey(data, "shift+left") || matchesKey(data, "shift+tab")) {
+			this.selectExchange(-1);
+			return;
+		}
+		if (matchesKey(data, "shift+right") || matchesKey(data, "tab")) {
+			this.selectExchange(1);
+			return;
+		}
+		if (matchesKey(data, "up") || matchesKey(data, "down")) {
+			this.scroll(matchesKey(data, "up") ? -3 : 3);
+			return;
+		}
+		if (matchesKey(data, "pageUp") || matchesKey(data, "pageDown")) {
+			this.scroll(matchesKey(data, "pageUp") ? -this.viewportHeight : this.viewportHeight);
+			return;
+		}
+
 		this.input.handleInput(data);
+	}
+
+	resetView(): void {
+		this.view = { kind: "latest", scroll: "bottom" };
+		this.tui.requestRender();
+	}
+
+	private getSnapshot(): BtwSnapshot {
+		return this.getTranscript(this.viewportWidth, this.theme, this.view.kind === "latest" ? "latest" : this.view.index);
+	}
+
+	private selectExchange(direction: number): void {
+		const snapshot = this.getSnapshot();
+		if (snapshot.total === 0) return;
+		const next = Math.max(0, Math.min(snapshot.total - 1, snapshot.index + direction));
+		if (next === snapshot.index) return;
+		this.view = next === snapshot.total - 1
+			? { kind: "latest", scroll: 0 }
+			: { kind: "pinned", index: next, scrollTop: 0 };
+		this.tui.requestRender();
+	}
+
+	private scroll(delta: number): void {
+		const snapshot = this.getSnapshot();
+		if (snapshot.total === 0) return;
+		const maxTop = Math.max(0, snapshot.lines.length - this.viewportHeight);
+		const anchor = this.view.kind === "latest" ? this.view.scroll : this.view.scrollTop;
+		const current = anchor === "bottom" ? maxTop : Math.min(maxTop, anchor);
+		const top = Math.max(0, Math.min(maxTop, current + delta));
+		if (top === current) return;
+		if (this.view.kind === "latest") this.view = { kind: "latest", scroll: top };
+		else this.view = { kind: "pinned", index: this.view.index, scrollTop: top };
+		this.tui.requestRender();
 	}
 
 	setDraft(value: string): void {
@@ -267,8 +327,9 @@ class BtwOverlay extends Container implements Focusable {
 
 	private edge(left: string, label: string, right: string, width: number): string {
 		const text = label === "" ? "" : ` ${label} `;
-		const fill = Math.max(0, width - 2 - visibleWidth(text) - 1);
-		return truncateToWidth(this.theme.fg("border", `${left}─${text}${"─".repeat(fill)}${right}`), width, "");
+		const labelText = truncateToWidth(text, Math.max(0, width - 3), "");
+		const fill = Math.max(0, width - 3 - visibleWidth(labelText));
+		return this.theme.fg("border", `${left}─${labelText}${"─".repeat(fill)}${right}`);
 	}
 
 	private row(content: string, inner: number): string {
@@ -287,17 +348,31 @@ class BtwOverlay extends Container implements Focusable {
 		const transcriptHeight = Math.max(1, dialogHeight - chromeHeight);
 
 		// Markdown renders to inner width already — no manual wrapping needed
-		const transcript = this.getTranscript(inner, t);
-		const visibleTranscript = transcript.slice(-transcriptHeight);
+		this.viewportWidth = inner;
+		this.viewportHeight = transcriptHeight;
+		const snapshot = this.getSnapshot();
+		if (snapshot.total === 0) this.view = { kind: "latest", scroll: "bottom" };
+		else if (this.view.kind === "pinned" && snapshot.index !== this.view.index) {
+			this.view = { kind: "latest", scroll: "bottom" };
+		}
+		const transcript = snapshot.lines;
+		const maxTop = Math.max(0, transcript.length - transcriptHeight);
+		const desiredTop = this.view.kind === "latest" ? this.view.scroll : this.view.scrollTop;
+		const top = desiredTop === "bottom" ? maxTop : Math.max(0, Math.min(maxTop, desiredTop));
+		if (this.view.kind === "latest" && this.view.scroll !== "bottom") this.view.scroll = top;
+		if (this.view.kind === "pinned") this.view.scrollTop = top;
+		const visibleTranscript = transcript.slice(top, top + transcriptHeight);
 		const transcriptPadding = Math.max(0, transcriptHeight - visibleTranscript.length);
 
 		const status = this.getStatus();
+		const position = snapshot.total > 0 ? `${snapshot.index + 1}/${snapshot.total}` : "0/0";
+		const range = transcript.length > transcriptHeight ? ` · Lines ${top + 1}-${top + visibleTranscript.length}/${transcript.length} ↑↓` : "";
 		const statusColor = status === "Ready" ? "dim" : "warning";
 		const inputLine = this.input.render(inner)[0] ?? "";
 		const inputPad = " ".repeat(Math.max(0, inner - visibleWidth(inputLine)));
 
 		const lines = [
-			this.edge("╭", `${t.bold("BTW side chat")} ${t.fg("dim", "· Separate side conversation")}`, "╮", dialogWidth),
+			this.edge("╭", `${t.bold("BTW side chat")} ${t.fg("dim", `· ${position} · Separate side conversation`)}`, "╮", dialogWidth),
 		];
 
 		for (const line of visibleTranscript) {
@@ -307,9 +382,9 @@ class BtwOverlay extends Container implements Focusable {
 			lines.push(this.row("", inner));
 		}
 
-		lines.push(this.edge("├", t.fg(statusColor, status), "┤", dialogWidth));
+		lines.push(this.edge("├", `${t.fg(statusColor, status)}${t.fg("dim", range)}`, "┤", dialogWidth));
 		lines.push(`${t.fg("border", "│")} ${inputLine}${inputPad} ${t.fg("border", "│")}`);
-		lines.push(this.edge("╰", t.fg("dim", "Enter submit · Esc close"), "╯", dialogWidth));
+		lines.push(this.edge("╰", t.fg("dim", "↑↓ scroll · Shift+←/→ or Tab history · Enter submit · Esc close"), "╯", dialogWidth));
 
 		return lines;
 	}
@@ -382,57 +457,32 @@ export default function (pi: ExtensionAPI) {
 		return lines;
 	}
 
-	function getTranscriptLines(width: number, theme: ExtensionContext["ui"]["theme"]): string[] {
+	function getTranscriptSnapshot(width: number, theme: ExtensionContext["ui"]["theme"], selected: number | "latest"): BtwSnapshot {
+		const total = thread.length + (pendingQuestion === null ? 0 : 1);
+		if (total === 0) {
+			return { index: 0, total, lines: [theme.fg("dim", "No BTW messages yet. Type a question below.")] };
+		}
+
+		const index = selected === "latest" ? total - 1 : Math.max(0, Math.min(total - 1, selected));
+		const item = thread[index];
+		const question = item?.question ?? pendingQuestion ?? "";
+		const lines = [theme.fg("accent", theme.bold("You: ")) + truncateToWidth(question.trim().split("\n")[0], Math.max(0, width - 5), "…")];
 		try {
-			return getTranscriptLinesInner(width, theme);
+			if (item) {
+				lines.push("", ...renderMarkdownLines(item.answer, width));
+			} else {
+				if (pendingToolCalls.length > 0) lines.push(...renderToolCallLines(pendingToolCalls, theme, width));
+				if (pendingError) lines.push(theme.fg("error", `❌ ${pendingError}`));
+				else if (pendingAnswer) lines.push("", ...renderMarkdownLines(pendingAnswer, width));
+				else if (pendingToolCalls.length === 0) lines.push(theme.fg("dim", "…"));
+			}
 		} catch (error) {
-			return [theme.fg("error", `Render error: ${error instanceof Error ? error.message : String(error)}`)];
+			lines.push(theme.fg("error", `Render error: ${error instanceof Error ? error.message : String(error)}`));
 		}
-	}
-
-	function getTranscriptLinesInner(width: number, theme: ExtensionContext["ui"]["theme"]): string[] {
-		if (thread.length === 0 && !pendingQuestion && !pendingAnswer && !pendingError) {
-			return [theme.fg("dim", "No BTW messages yet. Type a question below.")];
-		}
-
-		const lines: string[] = [];
-		for (const item of thread.slice(-6)) {
-			// User message
-			const userText = item.question.trim().split("\n")[0];
-			lines.push(theme.fg("accent", theme.bold("You: ")) + truncateToWidth(userText, width - 5, "…"));
-			lines.push("");
-
-			// Assistant message rendered as markdown
-			const mdLines = renderMarkdownLines(item.answer, width);
-			lines.push(...mdLines);
-			lines.push("");
-		}
-
-		if (pendingQuestion) {
-			const userText = pendingQuestion.trim().split("\n")[0];
-			lines.push(theme.fg("accent", theme.bold("You: ")) + truncateToWidth(userText, width - 5, "…"));
-
-			// Show tool calls inline
-			if (pendingToolCalls.length > 0) {
-				lines.push(...renderToolCallLines(pendingToolCalls, theme, width));
-			}
-
-			if (pendingError) {
-				lines.push(theme.fg("error", `❌ ${pendingError}`));
-			} else if (pendingAnswer) {
-				lines.push("");
-				const mdLines = renderMarkdownLines(pendingAnswer, width);
-				lines.push(...mdLines);
-			} else if (pendingToolCalls.length === 0) {
-				lines.push(theme.fg("dim", "…"));
-			}
-		}
-
-		// Trim trailing empty line
 		while (lines.length > 0 && lines[lines.length - 1] === "") {
 			lines.pop();
 		}
-		return lines;
+		return { lines, index, total };
 	}
 
 	function syncOverlay(): void {
@@ -507,6 +557,7 @@ export default function (pi: ExtensionAPI) {
 		pendingToolCalls = [];
 		sideBusy = false;
 		setOverlayDraft("");
+		overlayRuntime?.resetView?.();
 		setOverlayStatus("Ready");
 		await disposeSideSession();
 		if (persist) {
@@ -525,7 +576,8 @@ export default function (pi: ExtensionAPI) {
 		pendingToolCalls = [];
 		sideBusy = false;
 		overlayStatus = "Ready";
-		overlayDraft = "";
+		setOverlayDraft("");
+		overlayRuntime?.resetView?.();
 		const branch = ctx.sessionManager.getBranch();
 		let lastResetIndex = -1;
 		for (let i = 0; i < branch.length; i++) {
@@ -678,7 +730,7 @@ export default function (pi: ExtensionAPI) {
 						tui,
 						theme,
 						keybindings,
-						(width, t) => getTranscriptLines(width, t),
+						(width, t, selected) => getTranscriptSnapshot(width, t, selected),
 						() => overlayStatus,
 						(value) => {
 							void submitFromOverlay(ctx, value);
@@ -691,6 +743,7 @@ export default function (pi: ExtensionAPI) {
 					overlay.focused = true;
 					overlay.setDraft(overlayDraft);
 					runtime.setDraft = (value) => overlay.setDraft(value);
+					runtime.resetView = () => overlay.resetView();
 					runtime.refresh = () => {
 						overlay.focused = runtime.handle?.isFocused() ?? false;
 						tui.requestRender();
@@ -843,6 +896,8 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		sideBusy = true;
+		setOverlayDraft("");
+		overlayRuntime?.resetView?.();
 		pendingQuestion = question;
 		pendingAnswer = "";
 		pendingError = null;
@@ -875,11 +930,10 @@ export default function (pi: ExtensionAPI) {
 				usage: response.usage,
 			};
 			thread.push(details);
-			pi.appendEntry(BTW_ENTRY_TYPE, details);
-
 			pendingQuestion = null;
 			pendingAnswer = "";
 			pendingToolCalls = [];
+			pi.appendEntry(BTW_ENTRY_TYPE, details);
 			setOverlayStatus("Ready for the next side question.");
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -899,7 +953,6 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		setOverlayDraft("");
 		if (!("waitForIdle" in ctx)) {
 			setOverlayStatus("BTW submit requires command context. Re-open with /btw.");
 			return;
