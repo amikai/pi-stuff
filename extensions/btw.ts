@@ -909,29 +909,36 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("btw", {
-		description: "Open a BTW side-chat popover. Usage: /btw [fresh|continue]",
-		getArgumentCompletions: (prefix) => {
-			const normalized = prefix.trim().toLowerCase();
-			const options = [
-				{ value: "fresh", label: "fresh", description: "Start a fresh BTW side conversation" },
-				{ value: "continue", label: "continue", description: "Continue previous BTW side conversation" },
-			];
-			const filtered = options.filter((item) => item.value.startsWith(normalized));
-			return filtered.length > 0 ? filtered : null;
-		},
+		description: "Open a simple BTW side-chat popover. `/btw <text>` asks immediately, `/btw` opens the side thread.",
 		handler: async (args, ctx) => {
-			const mode = args.trim().toLowerCase();
+			const question = args.trim();
 
-			if (mode === "continue" && thread.length > 0) {
-				await disposeSideSession();
-				setOverlayStatus("Continuing BTW thread.");
-				await ensureOverlay(ctx);
+			if (!question) {
+				if (thread.length > 0 && ctx.hasUI) {
+					const choice = await ctx.ui.select("BTW side chat:", [
+						"Continue previous conversation",
+						"Start fresh",
+					]);
+					if (choice === "Continue previous conversation") {
+						// Dispose session so it's recreated with fresh main context on next submit
+						await disposeSideSession();
+						setOverlayStatus("Continuing BTW thread.");
+						await ensureOverlay(ctx);
+					} else if (choice === "Start fresh") {
+						await resetThread(ctx, true);
+						setOverlayStatus("Ready");
+						await ensureOverlay(ctx);
+					}
+				} else {
+					await resetThread(ctx, true);
+					setOverlayStatus("Ready");
+					await ensureOverlay(ctx);
+				}
 				return;
 			}
 
-			await resetThread(ctx, true);
-			setOverlayStatus("Ready");
 			await ensureOverlay(ctx);
+			await runBtwPrompt(ctx, question);
 		},
 	});
 
