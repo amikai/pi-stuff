@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -35,6 +35,7 @@ const { default: prismantisExtension } = await import("../extensions/prismantis/
 const { EL, h } = await import("../extensions/prismantis/core/jsx.ts");
 const { PrismantisComponent } = await import("../extensions/prismantis/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
+const { tableHtml, tableText } = await import("../extensions/prismantis/core/html.ts");
 const { parse } = await import("../extensions/prismantis/core/markdown.ts");
 const { drawDiagrams } = await import("../extensions/prismantis/core/mermaid.ts");
 const { renderBlocks } = await import("../extensions/prismantis/core/render.ts");
@@ -183,10 +184,11 @@ afterEach(() => {
 	cleanupFn?.();
 });
 
-test("1. all 16 generated prismantis themes load and validate in pi, and core matches upstream snapshots", () => {
+test("1. all 17 generated prismantis themes load and validate in pi, and core matches upstream snapshots", () => {
 	const themesDir = join(repoRoot, "themes");
 	const files = readdirSync(themesDir).filter((f) => f.startsWith("prismantis-") && f.endsWith(".json"));
-	assert.equal(files.length, 16);
+	assert.equal(files.length, 17);
+	assert.ok(files.includes("prismantis-neon.json"));
 	for (const file of files) {
 		const loaded = loadThemeFromPath(join(themesDir, file));
 		assert.equal(loaded.name, file.replace(/\.json$/, ""));
@@ -315,7 +317,7 @@ test("2. AssistantMessageComponent renders tables, headings, code folding, diagr
 	assert.ok(expandedPlain.includes("[ show less ]"), "shows show less button when unfolded");
 });
 
-test("3. UserMessageComponent renders bubble, bar, chevron prompt styles and clock times", async () => {
+test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles and clock times", async () => {
 	const h = createHarness({ promptStyle: "bubble", clock: "24h" });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
@@ -326,6 +328,11 @@ test("3. UserMessageComponent renders bubble, bar, chevron prompt styles and clo
 	assert.ok(bubblePlain.includes("╭─"), "draws bubble border around user prompt");
 	assert.ok(bubblePlain.includes("fix the failing test"), "draws prompt text");
 	assert.match(bubblePlain, /\d{2}:\d{2}/, "draws 24h clock timestamp");
+
+	await h.commands.get("prismantis")!.handler("setup prompts wide", h.ctx);
+	userComp.rebuild();
+	const widePlain = stripAnsi(userComp.render(80).join("\n"));
+	assert.ok(widePlain.includes(`╭${"─".repeat(76)}╮`), "wide prompt spans full content width");
 
 	await h.commands.get("prismantis")!.handler("setup prompts chevron", h.ctx);
 	userComp.rebuild();
@@ -506,3 +513,79 @@ test("8. Only one element is highlighted across components, and leaving them all
 	assert.ok(!b.render(40).join("").includes(INVERSE), "pointer left every component");
 	assert.equal(clearHover(), false, "nothing left to clear");
 });
+
+test("9. neon theme, table <br> line breaks, and probed loose path hyperlinks work", async () => {
+	const prevForce = process.env.FORCE_HYPERLINK;
+	process.env.FORCE_HYPERLINK = "1";
+	const h = createHarness({ theme: "catppuccin-mocha" });
+	const projectDir = join(h.dir, "workspace");
+	mkdirSync(join(projectDir, "docs", "guide"), { recursive: true });
+	mkdirSync(join(projectDir, "src"), { recursive: true });
+	writeFileSync(join(projectDir, "src", "app.ts"), "export const x = 1;\n");
+	writeFileSync(join(projectDir, "notes.md"), "# Notes\n");
+	writeFileSync(join(projectDir, "run.sh"), "#!/bin/sh\n");
+	h.ctx.cwd = projectDir;
+
+	cleanupFn = () => {
+		if (prevForce === undefined) delete process.env.FORCE_HYPERLINK;
+		else process.env.FORCE_HYPERLINK = prevForce;
+		h.cleanup();
+	};
+
+	await h.emit("session_start");
+
+	const cmd = h.commands.get("prismantis")!;
+	await cmd.handler("neon", h.ctx);
+	assert.equal(h.getActivePiTheme(), "prismantis-neon");
+	assert.equal(h.readConfig().theme, "neon");
+
+	const tableMd = [
+		"| Cell | Code |",
+		"|:-----|:-----|",
+		"| a<br>b<br/>c<BR>d | `x<br>y` |",
+	].join("\n");
+	const tableBlocks = parse(tableMd, { numbers: true, paths: true });
+	const tableBlock = tableBlocks[0];
+	assert.equal(tableBlock?.kind, "table");
+	assert.ok(tableHtml(tableBlock).includes("a<br>b<br>c<br>d"));
+	assert.ok(tableHtml(tableBlock).includes("<code style=\"white-space: pre-wrap\">x&lt;br&gt;y</code>"));
+	assert.ok(tableText(tableBlock).includes('"a\nb\nc\nd"\tx<br>y'));
+
+	const reply = [
+		tableMd,
+		"",
+		"See docs/guide/, src/app.ts:42, `src/app.ts`, notes.md, missing.ts, later.ts, and/or run.sh.",
+	].join("\n");
+
+	const comp = new AssistantMessageComponent({
+		role: "assistant",
+		content: [{ type: "text", text: reply }],
+		timestamp: 2000,
+	} as any);
+
+	const rawRendered = comp.render(100).join("\n");
+	const plainRendered = stripAnsi(rawRendered);
+	assert.ok(plainRendered.includes("x<br>y"), "keeps <br> literal inside inline code");
+	for (const linePart of ["│ a", "│ b", "│ c", "│ d"]) {
+		assert.ok(plainRendered.includes(linePart), `breaks table cell line for ${linePart}`);
+	}
+
+	assert.ok(rawRendered.includes(`file://${projectDir}/docs/guide/`), "links existing directory path");
+	assert.equal(
+		rawRendered.split(`file://${projectDir}/src/app.ts`).length - 1,
+		2,
+		"links both loose path:line and inline-code `path`",
+	);
+	assert.ok(rawRendered.includes(`file://${projectDir}/notes.md`), "links existing root file");
+	assert.ok(!rawRendered.includes(`file://${projectDir}/missing.ts`), "does not link missing file");
+	assert.ok(!rawRendered.includes(`file://${projectDir}/later.ts`), "does not link not-yet-created file");
+	assert.ok(!rawRendered.includes("and/or\x1b]8;;"), "does not link slash prose");
+	assert.ok(!rawRendered.includes(`file://${projectDir}/run.sh`), "does not link launcher script");
+
+	writeFileSync(join(projectDir, "later.ts"), "export const y = 2;\n");
+	await h.emit("tool_result", {});
+	comp.invalidate();
+	const rawAfterTool = comp.render(100).join("\n");
+	assert.ok(rawAfterTool.includes(`file://${projectDir}/later.ts`), "links file created after tool_result resets unfound probes");
+});
+

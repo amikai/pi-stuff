@@ -81,6 +81,7 @@ import {
 	mirrored,
 	noteTip,
 	pasteLang,
+	pathsToProbe,
 	remember,
 	rememberCall,
 	renderBlocks,
@@ -736,6 +737,8 @@ class SetupPaneComponent implements Component {
 
 type TypesetFormula = Exclude<Formula, { error: true }> & { tex: string };
 type LoadedPicture = { png: string; width: number; height: number; alt: string };
+type PathChecks = { asked: Set<string>; found: Set<string> };
+const MAX_FOUND_PATHS = 2000;
 
 export default function prismantisExtension(pi: ExtensionAPI) {
 	ensureMessagePrototypesPatched();
@@ -753,6 +756,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	const unfolded = new Set<string>();
 	const readOnlyCalls = new Set<string>();
 	const firstDrawnMap = new Map<string, number>();
+	const pathChecks: PathChecks = { asked: new Set<string>(), found: new Set<string>() };
 	let sentRecords: Sent[] = [];
 	let turnEndsRecords: TurnEnd[] = [];
 	let formulasStore: Record<string, Formula> = {};
@@ -975,6 +979,25 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		return out;
 	}
 
+	function withFoundPaths(activeStyle: Style, blocks: Block[]): Style {
+		for (const candidate of pathsToProbe(blocks, activeStyle)) {
+			if (pathChecks.asked.has(candidate)) continue;
+			pathChecks.asked.add(candidate);
+			try {
+				const st = statSync(candidate);
+				if (st.isFile() || st.isDirectory()) {
+					pathChecks.found.add(candidate);
+					if (pathChecks.found.size > MAX_FOUND_PATHS) {
+						const oldest = pathChecks.found.values().next().value;
+						if (oldest !== undefined) pathChecks.found.delete(oldest);
+					}
+				}
+			} catch {
+			}
+		}
+		return pathChecks.found.size > 0 ? { ...activeStyle, found: pathChecks.found } : activeStyle;
+	}
+
 	function drawMarkdownElements(
 		activeStyle: Style,
 		blocks: Block[],
@@ -1019,7 +1042,8 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		}
 
 		const tip = options?.noteId ? noteTip(blocks, (text) => notify(text, "info")) : undefined;
-		const effectiveStyle = options?.noteId ? { ...activeStyle, noteKey: instanceKey(options.noteId) } : activeStyle;
+		const probedStyle = withFoundPaths(activeStyle, blocks);
+		const effectiveStyle = options?.noteId ? { ...probedStyle, noteKey: instanceKey(options.noteId) } : probedStyle;
 		const elements = renderBlocks(
 			EL,
 			effectiveStyle,
@@ -1306,6 +1330,8 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		uiCtx = ctx;
+		pathChecks.asked.clear();
+		pathChecks.found.clear();
 		ensureMessagePrototypesPatched();
 		void Promise.resolve().then(() => ensureMessagePrototypesPatched());
 		refreshFromDisk(ctx.cwd);
@@ -1327,6 +1353,14 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		tuiInstance = undefined;
 		screenTui = undefined;
 		clearHover();
+	});
+
+	pi.on("tool_result", () => {
+		pathChecks.asked = new Set(pathChecks.found);
+	});
+
+	pi.on("tool_execution_end", () => {
+		pathChecks.asked = new Set(pathChecks.found);
 	});
 
 	pi.on("input", (event, ctx) => {

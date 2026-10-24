@@ -1,6 +1,6 @@
 # prismantis
 
-A pi port of [NahumLitvin/prismantis](https://github.com/NahumLitvin/prismantis) 0.33.1. It redraws assistant replies, user prompts, tool rows, and diff cards with 16 themes, multi-color Mermaid diagrams, `xychart-beta` bar and line charts, pie and Gantt charts, ` ```figure ` text pictures, copy buttons, LaTeX math, and right-to-left prose.
+A pi port of [NahumLitvin/prismantis](https://github.com/NahumLitvin/prismantis) 0.35.0. It redraws assistant replies, user prompts, tool rows, and diff cards with 17 themes, multi-color Mermaid diagrams, `xychart-beta` bar and line charts, pie and Gantt charts, ` ```figure ` text pictures, copy buttons, LaTeX math, and right-to-left prose.
 
 The extension entry point is [`index.ts`](index.ts). [`renderer.ts`](renderer.ts) lays out element trees into ANSI terminal lines and mouse click regions. [`core/`](core) holds the upstream rendering modules, synced by [`scripts/sync-prismantis.mjs`](../../scripts/sync-prismantis.mjs).
 
@@ -19,7 +19,7 @@ Run `/prismantis setup` to pick a theme and styles from live previews, or `/pris
 | Command | Action |
 |---|---|
 | `/prismantis` | Show the help screen and theme list |
-| `/prismantis theme <name>` | Switch to one of the 16 themes or `random` (`/prismantis <name>` also works) |
+| `/prismantis theme <name>` | Switch to one of the 17 themes or `random` (`/prismantis <name>` also works) |
 | `/prismantis setup` | Open the interactive setup overlay in TUI mode, or step through options with `/prismantis setup <step> <pick>` |
 | `/prismantis copy` | Copy the last assistant reply, or `/prismantis copy code` for its last code block |
 | `/prismantis demo` | Print the full showcase (`demo ko` appends the Korean section) |
@@ -76,4 +76,4 @@ npm test
 test/prismantis.sh
 ```
 
-`npm test` runs [`test/prismantis.test.ts`](../../test/prismantis.test.ts), which checks all 16 generated pi themes, verifies that `core/` matches the 4 upstream snapshot files in `../prismantis/tests/snapshots/`, and exercises assistant replies, user prompts, tool rows, diff cards, mouse click handlers, setup overlay navigation, and prompt hints.
+`npm test` runs [`test/prismantis.test.ts`](../../test/prismantis.test.ts), which checks all 17 generated pi themes, verifies that `core/` matches the 4 upstream snapshot files in `../prismantis/tests/snapshots/`, and exercises assistant replies, user prompts, tool rows, diff cards, mouse click handlers, setup overlay navigation, and prompt hints.
