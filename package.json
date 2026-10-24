@@ -7,19 +7,23 @@
   "type": "module",
   "keywords": [
     "pi-package",
-    "pi-extension"
+    "pi-extension",
+    "pi-skill"
   ],
   "pi": {
     "extensions": [
       "./extensions/*.ts",
       "./extensions/*/index.ts"
     ],
+    "skills": [
+      "./skills"
+    ],
     "themes": [
       "./themes/*.json"
     ]
   },
   "scripts": {
-    "test": "node --test test/btw.test.ts test/recap.test.ts test/you-should-know.test.ts test/prismantis.test.ts",
+    "test": "node --test test/btw.test.ts test/recap.test.ts test/you-should-know.test.ts test/prismantis.test.ts test/uv.test.ts",
     "sync:prismantis": "node scripts/sync-prismantis.mjs"
   },
   "peerDependencies": {

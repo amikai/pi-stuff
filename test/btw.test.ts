@@ -35,14 +35,17 @@ function createView(initial: { question: string; answer: string }[] = []) {
 	let dismisses = 0;
 	const terminal = new TestTerminal();
 	const tui = { terminal, requestRender: () => {} };
-	const overlay = new BtwOverlay(tui, theme, new KeybindingsManager(TUI_KEYBINDINGS), (width, _theme, selected) => {
+	const overlay = new BtwOverlay(tui, theme, new KeybindingsManager(TUI_KEYBINDINGS), (width) => {
 		const total = exchanges.length + (pending ? 1 : 0);
-		if (!total) return { total, index: 0, lines: ["No BTW messages yet. Type a question below."] };
-		const index = selected === "latest" ? total - 1 : Math.max(0, Math.min(total - 1, selected));
-		const entry = exchanges[index] ?? pending;
-		if (!entry) throw new Error("Missing exchange");
-		const lines = [`You: ${entry.question}`, "", ...new Markdown(entry.answer, 0, 0, getMarkdownTheme()).render(width)];
-		return { total, index, lines };
+		if (!total) return { offsets: [], lines: ["No BTW messages yet. Type a question below."] };
+		const lines: string[] = [];
+		const offsets: number[] = [];
+		for (const entry of [...exchanges, ...(pending ? [pending] : [])]) {
+			if (lines.length > 0) lines.push("");
+			offsets.push(lines.length);
+			lines.push(`You: ${entry.question}`, "", ...new Markdown(entry.answer, 0, 0, getMarkdownTheme()).render(width));
+		}
+		return { offsets, lines };
 	}, () => "Ready", (value) => { submits.push(value); }, () => { dismisses++; });
 	overlay.focused = true;
 	const render = (width = 72) => overlay.render(width);
@@ -52,8 +55,20 @@ function createView(initial: { question: string; answer: string }[] = []) {
 
 const text = (lines: string[]) => lines.join("\n");
 
-test("browse all exchanges without wrapping and start each selected answer at top", () => {
-	const view = createView(Array.from({ length: 9 }, (_, i) => ({ question: `question-${i + 1}`, answer: `answer-${i + 1}` })));
+test("stacks exchanges vertically and scrolls through all older exchanges with Up/Down or history keys", () => {
+	const short = createView([{ question: "first", answer: "answer-1" }, { question: "second", answer: "answer-2" }]);
+	const stacked = text(short.render());
+	assert.match(stacked, /You: first/);
+	assert.match(stacked, /answer-1/);
+	assert.match(stacked, /You: second/);
+	assert.match(stacked, /answer-2/);
+	const view = createView(Array.from({ length: 9 }, (_, i) => ({ question: `question-${i + 1}`, answer: `answer-${i + 1}\n\ndetail-${i + 1}` })));
+	assert.match(text(view.render()), /9\/9/);
+	assert.match(text(view.render()), /answer-9/);
+	for (let i = 0; i < 20; i++) view.press("\x1b[A");
+	assert.match(text(view.render()), /1\/9/);
+	assert.match(text(view.render()), /answer-1/);
+	for (let i = 0; i < 12; i++) view.press("\t");
 	assert.match(text(view.render()), /9\/9/);
 	for (let i = 0; i < 12; i++) view.press("\x1b[Z");
 	assert.match(text(view.render()), /1\/9/);
@@ -62,9 +77,6 @@ test("browse all exchanges without wrapping and start each selected answer at to
 	assert.match(text(view.render()), /1\/9/);
 	view.press("\x1b[1;2C");
 	assert.match(text(view.render()), /2\/9/);
-	for (let i = 0; i < 12; i++) view.press("\t");
-	assert.match(text(view.render()), /9\/9/);
-	assert.doesNotMatch(text(view.render()), /answer-1/);
 });
 
 test("rapid history and scroll keys accumulate before the next render", () => {
@@ -77,7 +89,8 @@ test("rapid history and scroll keys accumulate before the next render", () => {
 	assert.match(text(view.render()), /9\/9/);
 	for (let i = 0; i < 100; i++) view.overlay.handleInput("\x1b[B");
 	assert.match(text(view.render()), /burst-line-64/);
-	for (let i = 0; i < 100; i++) view.overlay.handleInput("\x1b[A");
+	for (let i = 0; i < 400; i++) view.overlay.handleInput("\x1b[A");
+	assert.match(text(view.render()), /1\/9/);
 	assert.match(text(view.render()), /burst-line-00/);
 });
 
@@ -96,7 +109,7 @@ test("navigation reads the selected answer and newly pending slot before a rende
 	pending.overlay.handleInput("\x1b[Z");
 	assert.match(text(pending.render()), /1\/2/);
 	assert.match(text(pending.render()), /old answer/);
-	assert.doesNotMatch(text(pending.render()), /mixed-line-/);
+	assert.doesNotMatch(text(pending.render()), /mixed-line-64/);
 });
 
 test("scroll three lines per key, clamp at both ends, and preserve numeric offset during growth", () => {
@@ -143,13 +156,14 @@ test("draft, literal brackets, cursor edit, submit and dismiss use real Input bi
 });
 
 test("pinned history stays fixed through pending growth and completion in the same slot", () => {
-	const view = createView([{ question: "old", answer: "old answer" }]);
+	const longOld = Array.from({ length: 30 }, (_, i) => `old-line-${i}`).join("\n\n");
+	const view = createView([{ question: "old", answer: longOld }]);
 	view.pending = { question: "new", answer: "start" };
 	view.render();
 	view.press("\x1b[Z");
 	view.press("d");
 	view.pending.answer = "start\n\nstreamed continuation";
-	assert.match(text(view.render()), /old answer/);
+	assert.match(text(view.render()), /old-line-0/);
 	assert.doesNotMatch(text(view.render()), /streamed continuation/);
 	assert.equal(view.overlay.getDraft(), "d");
 	view.press("\t");

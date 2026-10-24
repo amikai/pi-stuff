@@ -202,18 +202,18 @@ function notify(ctx: ExtensionContext | ExtensionCommandContext, message: string
 }
 
 
-type BtwSnapshot = { lines: string[]; index: number; total: number };
+type BtwSnapshot = { lines: string[]; offsets: number[] };
 type BtwViewCursor =
-	| { kind: "latest"; scroll: "bottom" | number }
-	| { kind: "pinned"; index: number; scrollTop: number };
+	| { kind: "bottom" }
+	| { kind: "scroll"; top: number; index?: number };
 
 export class BtwOverlay extends Container implements Focusable {
 	private readonly input: Input;
 	private readonly tui: Pick<TUI, "terminal" | "requestRender">;
 	private readonly theme: ExtensionContext["ui"]["theme"];
 	private readonly keybindings: KeybindingsManager;
-	private readonly getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"], selected: number | "latest") => BtwSnapshot;
-	private view: BtwViewCursor = { kind: "latest", scroll: "bottom" };
+	private readonly getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"]) => BtwSnapshot;
+	private view: BtwViewCursor = { kind: "bottom" };
 	private viewportHeight = 1;
 	private viewportWidth = 1;
 	private readonly getStatus: () => string;
@@ -234,7 +234,7 @@ export class BtwOverlay extends Container implements Focusable {
 		tui: Pick<TUI, "terminal" | "requestRender">,
 		theme: ExtensionContext["ui"]["theme"],
 		keybindings: KeybindingsManager,
-		getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"], selected: number | "latest") => BtwSnapshot,
+		getTranscript: (width: number, theme: ExtensionContext["ui"]["theme"]) => BtwSnapshot,
 		getStatus: () => string,
 		onSubmit: (value: string) => void,
 		onDismiss: () => void,
@@ -284,35 +284,50 @@ export class BtwOverlay extends Container implements Focusable {
 	}
 
 	resetView(): void {
-		this.view = { kind: "latest", scroll: "bottom" };
+		this.view = { kind: "bottom" };
 		this.tui.requestRender();
 	}
 
 	private getSnapshot(): BtwSnapshot {
-		return this.getTranscript(this.viewportWidth, this.theme, this.view.kind === "latest" ? "latest" : this.view.index);
+		return this.getTranscript(this.viewportWidth, this.theme);
+	}
+
+	private activeIndex(offsets: number[], top: number): number {
+		if (offsets.length === 0) return 0;
+		if (this.view.kind === "scroll" && this.view.index !== undefined) {
+			return Math.max(0, Math.min(offsets.length - 1, this.view.index));
+		}
+		if (this.view.kind === "bottom") return offsets.length - 1;
+		let active = 0;
+		for (let i = 0; i < offsets.length; i++) {
+			if (offsets[i] <= top) active = i;
+			else break;
+		}
+		return active;
 	}
 
 	private selectExchange(direction: number): void {
 		const snapshot = this.getSnapshot();
-		if (snapshot.total === 0) return;
-		const next = Math.max(0, Math.min(snapshot.total - 1, snapshot.index + direction));
-		if (next === snapshot.index) return;
-		this.view = next === snapshot.total - 1
-			? { kind: "latest", scroll: 0 }
-			: { kind: "pinned", index: next, scrollTop: 0 };
+		const total = snapshot.offsets.length;
+		if (total === 0) return;
+		const maxTop = Math.max(0, snapshot.lines.length - this.viewportHeight);
+		const currentTop = this.view.kind === "bottom" ? maxTop : Math.max(0, Math.min(maxTop, this.view.top));
+		const current = this.activeIndex(snapshot.offsets, currentTop);
+		const next = Math.max(0, Math.min(total - 1, current + direction));
+		const nextTop = Math.min(maxTop, snapshot.offsets[next]);
+		if (next === current && currentTop === nextTop) return;
+		this.view = { kind: "scroll", top: nextTop, index: next };
 		this.tui.requestRender();
 	}
 
 	private scroll(delta: number): void {
 		const snapshot = this.getSnapshot();
-		if (snapshot.total === 0) return;
+		if (snapshot.offsets.length === 0) return;
 		const maxTop = Math.max(0, snapshot.lines.length - this.viewportHeight);
-		const anchor = this.view.kind === "latest" ? this.view.scroll : this.view.scrollTop;
-		const current = anchor === "bottom" ? maxTop : Math.min(maxTop, anchor);
+		const current = this.view.kind === "bottom" ? maxTop : Math.max(0, Math.min(maxTop, this.view.top));
 		const top = Math.max(0, Math.min(maxTop, current + delta));
 		if (top === current) return;
-		if (this.view.kind === "latest") this.view = { kind: "latest", scroll: top };
-		else this.view = { kind: "pinned", index: this.view.index, scrollTop: top };
+		this.view = { kind: "scroll", top };
 		this.tui.requestRender();
 	}
 
@@ -351,21 +366,20 @@ export class BtwOverlay extends Container implements Focusable {
 		this.viewportWidth = inner;
 		this.viewportHeight = transcriptHeight;
 		const snapshot = this.getSnapshot();
-		if (snapshot.total === 0) this.view = { kind: "latest", scroll: "bottom" };
-		else if (this.view.kind === "pinned" && snapshot.index !== this.view.index) {
-			this.view = { kind: "latest", scroll: "bottom" };
-		}
+		const total = snapshot.offsets.length;
+		if (total === 0) this.view = { kind: "bottom" };
 		const transcript = snapshot.lines;
 		const maxTop = Math.max(0, transcript.length - transcriptHeight);
-		const desiredTop = this.view.kind === "latest" ? this.view.scroll : this.view.scrollTop;
-		const top = desiredTop === "bottom" ? maxTop : Math.max(0, Math.min(maxTop, desiredTop));
-		if (this.view.kind === "latest" && this.view.scroll !== "bottom") this.view.scroll = top;
-		if (this.view.kind === "pinned") this.view.scrollTop = top;
+		const top = this.view.kind === "bottom" ? maxTop : Math.max(0, Math.min(maxTop, this.view.top));
+		const index = this.activeIndex(snapshot.offsets, top);
+		if (this.view.kind === "scroll") {
+			this.view = this.view.index === undefined ? { kind: "scroll", top } : { kind: "scroll", top, index };
+		}
 		const visibleTranscript = transcript.slice(top, top + transcriptHeight);
 		const transcriptPadding = Math.max(0, transcriptHeight - visibleTranscript.length);
 
 		const status = this.getStatus();
-		const position = snapshot.total > 0 ? `${snapshot.index + 1}/${snapshot.total}` : "0/0";
+		const position = total > 0 ? `${index + 1}/${total}` : "0/0";
 		const range = transcript.length > transcriptHeight ? ` · Lines ${top + 1}-${top + visibleTranscript.length}/${transcript.length} ↑↓` : "";
 		const statusColor = status === "Ready" ? "dim" : "warning";
 		const inputLine = this.input.render(inner)[0] ?? "";
@@ -457,20 +471,28 @@ export default function (pi: ExtensionAPI) {
 		return lines;
 	}
 
-	function getTranscriptSnapshot(width: number, theme: ExtensionContext["ui"]["theme"], selected: number | "latest"): BtwSnapshot {
+	function getTranscriptSnapshot(width: number, theme: ExtensionContext["ui"]["theme"]): BtwSnapshot {
 		const total = thread.length + (pendingQuestion === null ? 0 : 1);
 		if (total === 0) {
-			return { index: 0, total, lines: [theme.fg("dim", "No BTW messages yet. Type a question below.")] };
+			return { lines: [theme.fg("dim", "No BTW messages yet. Type a question below.")], offsets: [] };
 		}
 
-		const index = selected === "latest" ? total - 1 : Math.max(0, Math.min(total - 1, selected));
-		const item = thread[index];
-		const question = item?.question ?? pendingQuestion ?? "";
-		const lines = [theme.fg("accent", theme.bold("You: ")) + truncateToWidth(question.trim().split("\n")[0], Math.max(0, width - 5), "…")];
+		const lines: string[] = [];
+		const offsets: number[] = [];
 		try {
-			if (item) {
+			for (const item of thread) {
+				if (lines.length > 0) lines.push("");
+				offsets.push(lines.length);
+				const userText = item.question.trim().split("\n")[0];
+				lines.push(theme.fg("accent", theme.bold("You: ")) + truncateToWidth(userText, Math.max(0, width - 5), "…"));
 				lines.push("", ...renderMarkdownLines(item.answer, width));
-			} else {
+			}
+
+			if (pendingQuestion !== null) {
+				if (lines.length > 0) lines.push("");
+				offsets.push(lines.length);
+				const userText = pendingQuestion.trim().split("\n")[0];
+				lines.push(theme.fg("accent", theme.bold("You: ")) + truncateToWidth(userText, Math.max(0, width - 5), "…"));
 				if (pendingToolCalls.length > 0) lines.push(...renderToolCallLines(pendingToolCalls, theme, width));
 				if (pendingError) lines.push(theme.fg("error", `❌ ${pendingError}`));
 				else if (pendingAnswer) lines.push("", ...renderMarkdownLines(pendingAnswer, width));
@@ -482,7 +504,7 @@ export default function (pi: ExtensionAPI) {
 		while (lines.length > 0 && lines[lines.length - 1] === "") {
 			lines.pop();
 		}
-		return { lines, index, total };
+		return { lines, offsets };
 	}
 
 	function syncOverlay(): void {
@@ -730,7 +752,7 @@ export default function (pi: ExtensionAPI) {
 						tui,
 						theme,
 						keybindings,
-						(width, t, selected) => getTranscriptSnapshot(width, t, selected),
+						(width, t) => getTranscriptSnapshot(width, t),
 						() => overlayStatus,
 						(value) => {
 							void submitFromOverlay(ctx, value);
