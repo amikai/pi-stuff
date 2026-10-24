@@ -39,7 +39,7 @@ Settings live in `~/.pi/agent/recap.json` (`PI_CODING_AGENT_DIR` overrides `~/.p
 - When the main agent settles (`agent_settled`), `recap` schedules a timer for `delayFor(now, lastRunAt)`:
   - The first run in a session waits `RECAP_IDLE_MS` (5 seconds).
   - Later runs wait at least `RECAP_IDLE_MS` (5 seconds) and at least `RECAP_MIN_GAP_MS` (60 seconds) after the previous run.
-- Any new prompt or turn (`before_agent_start`, `agent_start`, `turn_start`, or user `input`) cancels the pending timer and aborts any in-flight recap call.
+- Any new prompt or turn (`before_agent_start`, `agent_start`, `turn_start`, or user `input`) clears the visible recap line, cancels the pending timer, and aborts any in-flight recap call.
 - `recap` enforces no minimum turn count.
 - Automatic runs skip when any of the following conditions hold:
   - `enabled` is `false`, or pi is not in `tui` mode.

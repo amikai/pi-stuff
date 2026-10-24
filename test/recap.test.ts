@@ -449,4 +449,7 @@ test("session record persists and restores on session_start, and empty session s
 	await h2.emit("session_start");
 	assert.ok(h2.getWidget() !== null);
 	assert.ok(h2.renderWidget().includes("Test objective · Running tests → Check results"));
+
+	await h2.emit("input", { source: "user" });
+	assert.equal(h2.getWidget(), null);
 });

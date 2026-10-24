@@ -493,7 +493,7 @@ export default function recap(pi: ExtensionAPI): void {
 
 	function render(ctx = uiCtx): void {
 		if (!ctx || ctx.mode !== "tui") return;
-		const record = state.phase === "done" ? state.record : lastRecord;
+		const record = state.phase === "done" ? state.record : null;
 		if (!settings.enabled || !record) {
 			ctx.ui.setWidget(WIDGET, undefined);
 			return;
@@ -528,6 +528,12 @@ export default function recap(pi: ExtensionAPI): void {
 		generation++;
 		cancelTimer();
 		cancelInFlight();
+	}
+
+	function clearForActiveTurn(): void {
+		cancelPending();
+		state = { phase: "idle" };
+		clearWidget();
 	}
 
 	function schedule(ctx: ExtensionContext): void {
@@ -712,15 +718,15 @@ export default function recap(pi: ExtensionAPI): void {
 	});
 
 	pi.on("before_agent_start", () => {
-		cancelPending();
+		clearForActiveTurn();
 	});
 
 	pi.on("agent_start", () => {
-		cancelPending();
+		clearForActiveTurn();
 	});
 
 	pi.on("turn_start", () => {
-		cancelPending();
+		clearForActiveTurn();
 	});
 
 	pi.on("context_with_system", (event) => {
@@ -746,6 +752,6 @@ export default function recap(pi: ExtensionAPI): void {
 
 	pi.on("input", (event) => {
 		if (event.source === "extension") return;
-		cancelPending();
+		clearForActiveTurn();
 	});
 }
