@@ -3,9 +3,9 @@ import type { ElementTable, RenderElement, RenderNode, TextHoverProps } from "./
 import { tableHtml, tableText } from "./html.ts"
 import type { Block, Inline } from "./markdown.ts"
 import { mathOf } from "./latex.ts"
-import { CONTROL, displayText, inlineText, isWebLink, texText } from "./markdown.ts"
+import { CONTROL, displayText, inlineText, isWebLink, nestedBlocks, texText } from "./markdown.ts"
 import type { Flow } from "./rtl.ts"
-import { LTR_BLANK, ROW_MARK, ROW_MARK_TEXT, WALL, codeVisual, commentTail, commentVisual, containsRtl, flow, hasRtl, listMarker, terminalLine } from "./rtl.ts"
+import { LTR_BLANK, ROW_MARK, ROW_MARK_TEXT, WALL, codeVisual, commentTail, commentVisual, containsRtl, flow, hasRtl, heldCell, listMarker, opensLatin, terminalLine } from "./rtl.ts"
 import type { Style, Theme } from "./theme.ts"
 import type { PrismToken } from "./vendor/prism.js"
 import { languages, tokenize } from "./vendor/prism.js"
@@ -45,7 +45,11 @@ const width = (s) =>
 s.length === 1 ? ZERO.test(s) ? 0 : WIDE.test(s) ? 2 : 1 :
 graphemes(s).reduce((w, g) => ZERO.test(g) ? w : w + (WIDE.test(g) ? 2 : 1), 0);
 
+const widestLine = (text) => Math.max(...text.split('\n').map(width));
+
 const wrapRanges = (text, w) => {
+  const br = text.indexOf('\n');
+  if (br >= 0) return [...wrapRanges(text.slice(0, br), w), ...wrapRanges(text.slice(br + 1), w).map(([a, b]) => [a + br + 1, b + br + 1])];
   if (width(text) <= w) return [[0, text.length]];
   const out = [];
   let line;
@@ -133,7 +137,7 @@ const fileRoot = (distro) => distro ? `file://wsl.localhost/${encodeURIComponent
 
 
 
-const HYPERLINK_TERMINALS = ['ghostty', 'Hyper', 'kitty', 'alacritty', 'iTerm.app', 'iTerm2', 'WarpTerminal'];
+const HYPERLINK_TERMINALS = ['ghostty', 'Hyper', 'kitty', 'alacritty', 'iTerm.app', 'iTerm2', 'WarpTerminal', 'Orca'];
 
 const versionOf = (value = '') => {
   const short = /^(\d{1,2})(\d{2})$/.exec(value);
@@ -288,13 +292,97 @@ const drawnPath = (n, reach) => {
   return href === undefined ? n : { ...n, href };
 };
 
-const hyperlinks = (nodes, reach) =>
-nodes.map((node) => {
+const PART = String.raw`[\p{L}\p{N}_@+-]+`;
+const NAME = String.raw`\.?${PART}(?:\.${PART})*`;
+const LOOSE_PATH = new RegExp(String.raw`(?<![\p{L}\p{N}_/\\.:~@+-])(?:[A-Za-z]:[\\/](?:${NAME}[\\/])*(?:${NAME})?|${NAME}(?:\/${NAME})*\/(?:${NAME})?|${PART}(?:\.${PART})+)(?![\p{L}\p{N}_/\\@+-]|\.[\p{L}\p{N}])`, 'gu');
+
+
+
+const looseProbe = (reach, spelling) => {
+  const drive = /^[a-z]:[\\/]/i.test(spelling);
+  if (!drive && !reach.cwd) return undefined;
+  const href = toolHref(reach, spelling);
+  const key = drive ? spelling.replace(/\\/g, '/') : `${slashes(reach.cwd)}/${spelling}`;
+  return href === undefined ? undefined : { key: key.replace(/(?<=[^/:])\/+$/, ''), href };
+};
+
+const looseSpellings = (text) => [...text.matchAll(LOOSE_PATH)];
+
+const foundProbe = (reach, spelling) => {
+  const probe = looseProbe(reach, spelling);
+  return probe && reach.found?.has(probe.key) ? probe : undefined;
+};
+
+const loosePaths = (n, reach) => {
+  const out = [];
+  let at = 0;
+  for (const m of looseSpellings(n.text)) {
+    const probe = foundProbe(reach, m[0]);
+    if (!probe) continue;
+    if (m.index > at) out.push({ kind: 'text', text: n.text.slice(at, m.index) });
+    out.push({ kind: 'path', text: m[0], href: probe.href });
+    at = m.index + m[0].length;
+  }
+  if (at === 0) return [n];
+  if (at < n.text.length) out.push({ kind: 'text', text: n.text.slice(at) });
+  return out;
+};
+
+const looseCode = (n, reach) => {
+  const probe = isWholePath(n.text) ? foundProbe(reach, n.text) : undefined;
+  return probe ? { ...n, href: probe.href } : n;
+};
+
+const isWholePath = (text) => looseSpellings(text).some((m) => m[0] === text);
+
+const looseNode = (n, reach) => {
+  if (n.kind === 'text') return loosePaths(n, reach);
+  return n.kind === 'code' ? looseCode(n, reach) : n;
+};
+
+const linked = (node, reach) => {
   const n = node.kind === 'image' && isWebLink(node.src) ? { kind: 'link', text: node.text, href: node.src } : node;
   if (n.kind === 'link') return drawnLink(n, reach);
   if (n.kind === 'path') return drawnPath(n, reach);
   return 'children' in n ? { ...n, children: hyperlinks(n.children, reach) } : n;
+};
+
+const hyperlinks = (nodes, reach) =>
+reach.found?.size ? nodes.flatMap((node) => looseNode(linked(node, reach), reach)) : nodes.map((node) => linked(node, reach));
+
+const spellingsIn = (nodes) =>
+nodes.flatMap((n) => {
+  if ('children' in n) return spellingsIn(n.children);
+  if (n.kind === 'code') return isWholePath(n.text) ? [n.text] : [];
+  return n.kind === 'text' ? looseSpellings(n.text).map((m) => m[0]) : [];
 });
+
+const inlinesOf = (block) => {
+  switch (block.kind) {
+    case 'heading':
+    case 'paragraph':
+      return [block.inline];
+    case 'list':
+      return block.items.map((item) => item.inline);
+    case 'table':
+      return [...block.header, ...block.rows.flat()];
+    case 'notes':
+      return block.notes.map((note) => note.inline);
+    default:
+      return [];
+  }
+};
+
+const spelled = new WeakMap();
+
+const pathsToProbe = (blocks, reach) => {
+  if (!reach.pathLinks || reach.fileLinks === null) return [];
+  return nestedBlocks(blocks).flatMap((block) => {
+    const spellings = spelled.get(block) ?? inlinesOf(block).flatMap(spellingsIn);
+    spelled.set(block, spellings);
+    return spellings.flatMap((spelling) => looseProbe(reach, spelling)?.key ?? []);
+  });
+};
 
 const hyperlinkBlock = (block, reach) => {
   const drawn = (nodes) => hyperlinks(nodes, reach);
@@ -318,13 +406,14 @@ const hyperlinked = new WeakMap();
 const drawable = (block, reach) => {
   const cached = hyperlinked.get(block) ?? {};
   hyperlinked.set(block, cached);
-  const key = `${+reach.httpLinks}${+reach.editorLinks}${reach.fileLinks ?? ''}${reach.pathLinks ? `\0${reach.home}\0${reach.cwd}` : ''}`;
+  const key = `${+reach.httpLinks}${+reach.editorLinks}${reach.fileLinks ?? ''}${reach.pathLinks ? `\0${reach.home}\0${reach.cwd}\0${reach.found?.size ?? 0}` : ''}`;
   return cached[key] ??= hyperlinkBlock(block, reach);
 };
 
 const mostLines = (text, w) => (text.match(/\S+/g)?.length ?? 0) + Math.ceil(width(text) / w);
 
-const textRows = (text, w) => width(text) <= w ? 1 : mostLines(text, Math.max(1, w));
+const textRows = (text, w) =>
+text.split('\n').reduce((sum, line) => sum + (width(line) <= w ? 1 : mostLines(line, Math.max(1, w))), 0);
 
 const heightOf = (blocks, w) => blocks.reduce((sum, block, b) => sum + (b ? 1 : 0) + blockHeight(block, w), 0);
 
@@ -360,16 +449,21 @@ const blockHeight = (block, w) => {
 
 const wrapInline = (nodes, w) => {
   const text = inlineText(nodes);
-  return width(text) <= w ? [nodes] : wrapRanges(text, w).map(([a, b]) => sliceInline(nodes, a, b));
+  return width(text) <= w && !text.includes('\n') ? [nodes] : wrapRanges(text, w).map(([a, b]) => sliceInline(nodes, a, b));
 };
 
 const mirrored = (style) => style.shape === 'mirror';
 
 const heldLtr = (style) => style.shape === 'engine' ? { dir: 'ltr' } : {};
 
+const heldLabel = (style, label, text) => mirrored(style) && hasRtl(text) ? label.replace(/ $/, LTR_BLANK) : label;
+
 const flows = new Map();
 const flowOf = (style, nodes, columns, mark = !(style.inside && mirrored(style))) =>
 style.reorder && containsRtl(nodes) ? remember(flows, `${style.shape}\0${mark}\0${columns}\0${JSON.stringify(nodes)}`, () => flow(nodes, columns, width, style.shape, mark), 2000) : null;
+
+const cellFlow = (style, nodes, held, mark) =>
+held && style.reorder && containsRtl(nodes) ? remember(flows, `held\0${JSON.stringify(nodes)}`, () => heldCell(nodes), 2000) : flowOf(style, nodes, Infinity, mark);
 
 const noteHover = (style, note) =>
 note === undefined || style.noteKey === undefined ? {} : { hover: { scope: `fn:${style.noteKey}:${note}`, inverse: true } };
@@ -389,7 +483,7 @@ const renderInline = (el, style, nodes, keyBase) => {
       case 'strike':
         return h(Text, { key: key, strikethrough: true, dimColor: true }, renderInline(el, style, n.children, key));
       case 'code':
-        return h(Text, { key: key, color: t.inlineCode }, n.text);
+        return h(Text, { key: key, color: t.inlineCode }, n.href === undefined ? n.text : h(el.Link, { href: n.href, label: n.text }));
       case 'math':
         return h(Text, { key: key, italic: true, color: t.emphasis }, n.text);
       case 'link':
@@ -494,7 +588,7 @@ const PRISM_COLORS = {
 
 
 
-const shownCode = (text, style, room) => style.reorder ? codeVisual(text, style.shape, room, width) : text;
+const shownCode = (text, style, room, command = false) => style.reorder ? codeVisual(text, style.shape, room, width, command) : text;
 
 const flatten = (tokens, style, color, italic = false) =>
 tokens.flatMap((token) => {
@@ -558,6 +652,30 @@ const highlightBlock = ({ Text }, style, lines, lang, key, room) => {
 
 const gutterOf = (lines, numbered) => numbered ? String(lines.length).length + 2 : 0;
 
+const heldCode = (el, style, lines, shown, lang, gutter, room, key) =>
+(segmentRows(style, lines, lang) ?? lines.map((text) => text ? [{ text, italic: false }] : [])).slice(0, shown).flatMap((segs, i) =>
+visualRows(tabbed(wordPieces(segs, null)), room).map((part, k) =>
+h(el.Box, { key: `${key}.h${i}.${k}`, flexDirection: "row" },
+numberedLine(el, style, `  ${gutter ? k ? ' '.repeat(gutter + 2) : `${String(i + 1).padStart(gutter)}  ` : ''}`, part, `${key}.h${i}.${k}`)
+)
+));
+
+const codeRows = (el, style, lines, shown, lang, numbered, room, key) => {
+  if (style.nativeCode) return [h(el.Code, _extends({ key: "code", source: lines.slice(0, shown).join('\n') || ' ' }, lang ? { language: lang } : {}, numbered ? { startLine: 1 } : {}))];
+  const rows = (isShellLang(lang) ? null : highlightBlock(el, style, lines, lang, key, room))?.slice(0, shown) ?? lines.slice(0, shown).map((line, i) => codeLine(el, style, line, lang, `${key}.${i}`, room));
+  return style.shape === 'engine' ? rows.map((row, i) => h(el.Text, _extends({ key: `${key}.ltr${i}` }, heldLtr(style)), row)) : rows;
+};
+
+const codeBody = (el, style, rows, gutter, held, more) => {
+  const { Box, Text } = el;
+  return (
+    h(Box, { flexDirection: "column", paddingLeft: held ? 0 : 2 },
+    held || !gutter || style.nativeCode ? rows : rows.map((row, i) => row.type === 'Text' ? h(Box, { key: `n${i}`, flexDirection: "row" }, h(Text, { color: style.theme.codeComment, dimColor: true }, `${String(i + 1).padStart(gutter)}  `), row) : row),
+    held && more ? h(Box, { paddingLeft: 2 }, more) : more
+    ));
+
+};
+
 const isShellLang = (lang) => lang === '' || /^(sh|bash|zsh|shell|console|fish|powershell|ps1)$/i.test(lang);
 
 const codeLine = (el, style, line, lang, key, room) => {
@@ -576,7 +694,7 @@ const codeLine = (el, style, line, lang, key, room) => {
   }
   if (!isShell) return h(Text, { key: key, color: t.codeText }, shownCode(line, style, room) || ' ');
   if (/^\s*#/.test(line)) return h(Text, { key: key, color: t.codeComment }, line);
-  const parts = shownCode(line, style, room).split(/("[^"]*"|'[^']*'|\s+)/).filter((p) => p !== '');
+  const parts = shownCode(line, style, room, true).split(/("[^"]*"|'[^']*'|\s+)/).filter((p) => p !== '');
   let seenCommand = false;
   return (
     h(Text, { key: key, color: t.codeText },
@@ -635,7 +753,7 @@ const ART_WIDTH = 100;
 const tableSize = (block) => {
   const cells = [block.header, ...block.rows].map((r) => block.header.map((_, c) => displayText(r[c] ?? [])));
   const column = (measure) => block.header.map((_, c) => Math.max(...cells.map((r) => measure(r[c]))));
-  return { natural: column(width), words: column(longestWord) };
+  return { natural: column(widestLine), words: column(longestWord) };
 };
 
 const tableArt = (block) => {
@@ -734,7 +852,7 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
   box && border(`${k}.l`, wall('│ ')),
   order.map((c, i) => {
     const w = widths[c];
-    const cell = flowOf(style, cells[c] ?? [], Infinity, marked);
+    const cell = cellFlow(style, cells[c] ?? [], held, marked);
     const content = cell ? cell.lines[0] : cells[c] ?? [];
     const side = mirror ? block.align[c] === 'center' ? 'center' : 'flex-start' : cell?.base === 'R' && block.align[c] !== 'center' ? 'flex-end' : justify(c);
     const runs = isHeader ? headerRuns(content) : content;
@@ -757,7 +875,7 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
     if (!isHeader && cells.some(hasLink)) return [row(cells, k, isHeader, clipped(Math.max(1, ...widths.map((w, c) => mostLines(displayText(cells[c] ?? []), w)))))];
     const wrapped = widths.map((w, c) => {
       const content = cells[c] ?? [];
-      if (natural[c] <= w) return [content];
+      if (natural[c] <= w && !inlineText(content).includes('\n')) return [content];
       return wrapInline(isHeader ? headerRuns(content) : content, w);
     });
     return Array.from({ length: Math.max(...wrapped.map((l) => l.length)) }, (_, i) =>
@@ -799,6 +917,8 @@ const mirroredBanner = (el, style, level, inline, key) => {
   return h(Box, { key: key, flexDirection: "column" }, edge(`${key}.t`), text, edge(`${key}.b`));
 };
 
+const HEADING_RULE = 200;
+
 const drawHeading = (el, style, block, inline, key) => {
   const { Box, Text } = el;
   const t = style.theme;
@@ -812,7 +932,7 @@ const drawHeading = (el, style, block, inline, key) => {
     case 'banner':
       if (block.level === 1) return h(Box, { key: key, alignSelf: "flex-start", borderStyle: "bold", borderColor: color, paddingX: 1 }, h(Text, { bold: true, color: color }, renderInline(el, style, inline, key)));
       return block.level === 2 ?
-      h(Box, { key: key, flexDirection: "column", alignSelf: "flex-start" }, h(Text, { bold: true, color: color }, renderInline(el, style, inline, key)), h(Text, { color: color }, '━'.repeat(width(label)))) :
+      h(Box, { key: key, flexDirection: "column", alignSelf: "flex-start" }, h(Text, { bold: true, color: color }, renderInline(el, style, inline, key)), style.gridFace ? h(Box, { flexDirection: "row" }, h(Box, { width: 0, flexGrow: 1, height: 1, overflow: "hidden" }, h(Text, { color: color }, '━'.repeat(HEADING_RULE)))) : h(Text, { color: color }, '━'.repeat(width(label)))) :
       h(Text, { key: key, bold: true, color: block.level === 3 ? color : t.strong }, renderInline(el, style, inline, key));
     default:
       return h(Text, { key: key, bold: true, color: color }, renderInline(el, style, inline, key));
@@ -1132,10 +1252,9 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
           const shown = toggle?.folded ? FOLD_SHOW : lines.length;
           const numbered = lines.length >= NUMBER_AT && lines.length <= NUMBER_MAX;
           const room = columns - 2 - gutterOf(lines, numbered);
-          const drawnRows = (isShellLang(block.lang) ? null : highlightBlock(el, style, lines, block.lang, key, room))?.slice(0, shown) ?? lines.slice(0, shown).map((line, i) => codeLine(el, style, line, block.lang, `${key}.${i}`, room));
-          const rows = style.nativeCode ? [h(el.Code, _extends({ key: "code", source: lines.slice(0, shown).join('\n') || ' ' }, block.lang ? { language: block.lang } : {}, numbered ? { startLine: 1 } : {}))] :
-          style.shape === 'engine' ? drawnRows.map((row, i) => h(Text, _extends({ key: `${key}.ltr${i}` }, heldLtr(style)), row)) : drawnRows;
-          const gutter = String(lines.length).length;
+          const gutter = numbered ? String(lines.length).length : 0;
+          const held = !style.nativeCode && mirrored(style) && lines.some((line) => hasRtl(line) && (!opensLatin(line) || width(line) > room));
+          const rows = held ? heldCode(el, style, lines, shown, block.lang, gutter, room, key) : codeRows(el, style, lines, shown, block.lang, numbered, room, key);
           const button = copy?.(lines.join('\n'), `copy${b}`) ?? null;
           const label = codeLabel(block);
           const head = codeHead(label, button);
@@ -1147,10 +1266,7 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
             head ? head.marker : button,
             head?.element
             ),
-            h(Box, { flexDirection: "column", paddingLeft: 2 },
-            !numbered || style.nativeCode ? rows : rows.map((row, i) => row.type === 'Text' ? h(Box, { key: `n${i}`, flexDirection: "row" }, h(Text, { color: t.codeComment, dimColor: true }, `${String(i + 1).padStart(gutter)}  `), row) : row),
-            toggle?.element ?? null
-            )
+            codeBody(el, style, rows, gutter, held, toggle?.element ?? null)
             ));
 
         }
@@ -1634,7 +1750,7 @@ const onBand = (color, band) => {
 const muted = (style, band) => onBand(style.theme.codeComment ?? style.theme.codeText, band);
 
 const numberedLine = (el, style, label, pieces, key, band) => [
-h(el.Text, _extends({ key: `${key}.g`, color: style.theme.codeComment, dimColor: true }, muted(style, band)), label),
+h(el.Text, _extends({ key: `${key}.g`, color: style.theme.codeComment, dimColor: true }, muted(style, band)), heldLabel(style, label, pieceText(pieces))),
 h(el.Text, _extends({ key: `${key}.c`, color: style.theme.codeText }, lift(style.theme.codeText, band)), drawCode(el, style, pieces, undefined, undefined, `${key}.c`, band))];
 
 
@@ -1723,7 +1839,7 @@ const lineText = (el, style, paint, r, key, k, part, pad, fill = true) => {
   const code = style.theme.codeText;
   return [
   ...(paint.look === 'bar' ? [h(Text, _extends({ key: `${key}.b`, color: paint.marks[r.mark] }, on), barOf(r.mark))] : []),
-  h(Text, _extends({ key: `${key}.n`, dimColor: true }, on), numberOf(paint, r, k)),
+  h(Text, _extends({ key: `${key}.n`, dimColor: true }, on), heldLabel(style, numberOf(paint, r, k), r.text)),
   h(Text, _extends({ key: `${key}.m`, color: paint.marks[r.mark], dimColor: r.mark === ' ' }, on), markOf(r.mark)),
   h(Text, _extends({ key: `${key}.c`, color: bg ? onTint(code, bg) : code }, on), drawCode(el, style, part, bg, paint.words[r.mark], key)),
   ...(bg && pad > 0 ? [h(Text, _extends({ key: `${key}.p` }, on), ' '.repeat(pad))] : [])];
@@ -2485,6 +2601,10 @@ const PASTE = /<pasted_content id="([^"]*)">\n?([\s\S]*?)\n?<\/pasted_content id
 
 
 
+const boxedPrompt = (style) => style.promptStyle === 'bubble' || style.promptStyle === 'wide';
+
+const widePrompt = (style, hebrew) => style.promptStyle === 'wide' || hebrew && mirrored(style);
+
 const renderUserPrompt = (el, style, typed, columns, time, paste) => {
   const { Box, Text } = el;
   const pastes = [];
@@ -2509,10 +2629,10 @@ const renderUserPrompt = (el, style, typed, columns, time, paste) => {
 
   const stamp = time === undefined ? null : h(Text, { color: t.codeComment }, rtl ? ` ${time}` : `${time} `);
   const content = stamp === null ? body : h(Box, { flexDirection: "row" }, rtl ? body : stamp, rtl ? stamp : body);
-  if (style.promptStyle === 'bubble') {
-    return h(Box, _extends({ borderStyle: "round", borderColor: t.accent, paddingX: 1, alignSelf: rtl ? 'flex-end' : 'flex-start' }, hebrew && mirrored(style) ? { width: '100%' } : {}), content);
+  if (boxedPrompt(style)) {
+    return h(Box, _extends({ borderStyle: "round", borderColor: t.accent, paddingX: 1, alignSelf: rtl ? 'flex-end' : 'flex-start' }, widePrompt(style, hebrew) ? { width: '100%' } : {}), content);
   }
   const mark = h(Text, { color: t.accent, bold: true }, style.promptStyle === 'bar' ? rtl ? ' ▐' : '▌ ' : rtl ? ' ‹' : '› ');
   return h(Box, _extends({ flexDirection: "row" }, rtl ? { justifyContent: 'flex-end' } : {}), rtl ? content : mark, rtl ? mark : content);
 };
-export { graphemes, cells, width, takesHttpLinks, takesEditorLinks, takesClickableMarks, fileRoot, drawsHyperlinks, mirrored, heldLtr, PRISM_COLORS, remember, highlightBlock, codeLine, columnWidths, tableArt, instanceKey, noteTip, drawMath, MARK, markerRoom, renderBlocks, shortPath, shortTarget, renderShellResult, tint, contrast, fullHue, diffTint, leftToEngine, diffLines, pathLanguage, onTint, wordTint, renderDiffCard, EDIT_NOTES, bashEdits, withoutBashEdits, hasShellOutput, BAND_STEP, previewBand, renderBashEdits, editNotes, movesTree, refusalReason, rememberCall, errorReason, renderFailure, renderToolRow, isReadOnlyCall, programsOf, shortenPaths, describeShell, renderExpandedShell, groupSummary, renderToolGroup, formatDuration, renderTurnDuration, pasteLang, renderUserPrompt };
+export { graphemes, cells, width, takesHttpLinks, takesEditorLinks, takesClickableMarks, fileRoot, drawsHyperlinks, pathsToProbe, mirrored, heldLtr, PRISM_COLORS, remember, highlightBlock, codeLine, columnWidths, tableArt, instanceKey, noteTip, drawMath, MARK, markerRoom, renderBlocks, shortPath, shortTarget, renderShellResult, tint, contrast, fullHue, diffTint, leftToEngine, diffLines, pathLanguage, onTint, wordTint, renderDiffCard, EDIT_NOTES, bashEdits, withoutBashEdits, hasShellOutput, BAND_STEP, previewBand, renderBashEdits, editNotes, movesTree, refusalReason, rememberCall, errorReason, renderFailure, renderToolRow, isReadOnlyCall, programsOf, shortenPaths, describeShell, renderExpandedShell, groupSummary, renderToolGroup, formatDuration, renderTurnDuration, pasteLang, renderUserPrompt };

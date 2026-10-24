@@ -21,7 +21,7 @@ export type Style = {
   headingStyle: 'bold' | 'underline' | 'uppercase' | 'banner'
   tableStyle: 'box' | 'rules' | 'grid' | 'minimal'
   taskStyle: 'checks' | 'ticks' | 'box' | 'progress'
-  promptStyle: 'bubble' | 'bar' | 'chevron' | 'off'
+  promptStyle: 'bubble' | 'wide' | 'bar' | 'chevron' | 'off'
   clock: Clock
   toolStyle: 'chat' | 'tree-dim' | 'tree-bold' | 'classic'
   toolOutput: 'full' | 'quiet'
@@ -39,10 +39,12 @@ export type Style = {
   copyButtonStyle: 'inline' | 'hover'
   htmlCopy: ClipboardBackend | null
   nativeCode?: boolean
+  gridFace?: boolean
   httpLinks: boolean
   editorLinks: boolean
   fileLinks: string | null
   pathLinks: boolean
+  found?: ReadonlySet<string>
   diagramHints: boolean
   issueHint: boolean
   rtl: 'auto' | Terminal | 'off'
@@ -82,7 +84,7 @@ export const resolveStyle = (options: PluginOptions): Style => {
     headingStyle: pick(options.headingStyle, ['bold', 'underline', 'uppercase', 'banner'] as const, 'banner'),
     tableStyle: pick(options.tableStyle, ['box', 'rules', 'grid', 'minimal'] as const, 'box'),
     taskStyle: pick(options.taskStyle, ['checks', 'ticks', 'box', 'progress'] as const, 'checks'),
-    promptStyle: pick(options.promptStyle, ['bubble', 'bar', 'chevron', 'off'] as const, 'bubble'),
+    promptStyle: pick(options.promptStyle, ['bubble', 'wide', 'bar', 'chevron', 'off'] as const, 'bubble'),
     clock: pick(options.clock, ['off', '24h', '12h'] as const, 'off'),
     toolStyle: pick(options.toolStyle, ['chat', 'tree-dim', 'tree-bold', 'classic'] as const, 'chat'),
     toolOutput: pick(options.toolOutput, ['full', 'quiet'] as const, 'full'),
