@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 
 const CTRL = process.env.YSK_CTRL ?? "";
+const RECAP_CTRL = process.env.RECAP_CTRL ?? process.env.YSK_CTRL ?? "";
 
 function textOf(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -37,6 +38,23 @@ export default function (pi: any) {
 	const respond = async (context: any) => {
 		const messages: any[] = context?.messages ?? [];
 		const blob = JSON.stringify(context ?? {});
+		if (blob.includes("Summarize where this coding-agent session stands")) {
+			let text = "goal: Test coding session\nnow: Running automated checks\nnext: Complete verification\nwaiting: no";
+			try {
+				if (RECAP_CTRL) {
+					text = readFileSync(join(RECAP_CTRL, "recap.txt"), "utf8");
+				}
+			} catch {}
+			try {
+				if (RECAP_CTRL) {
+					appendFileSync(
+						join(RECAP_CTRL, "calls.log"),
+						`${JSON.stringify({ at: new Date().toISOString(), kind: "recap", chars: blob.length })}\n`,
+					);
+				}
+			} catch {}
+			return fauxAssistantMessage(text);
+		}
 		if (blob.includes("Retell only what is in the transcript")) {
 			retellCalls++;
 			// With $YSK_CTRL/slow present a retell takes 5 seconds, long enough to press again while it runs.
