@@ -66,11 +66,14 @@ const stripAnsi = (s: string) =>
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
 
 function recordingDesktop(pictures = true) {
-	const did = { pngs: [] as Buffer[], previews: [] as Buffer[] };
+	const did = { pngs: [] as Buffer[], previews: [] as Buffer[], previewReports: [] as Parameters<Desktop["previewPng"]>[1][] };
 	const desktop: Desktop = {
 		pictures,
 		copyPng: (png) => (did.pngs.push(Buffer.from(png)), null),
-		previewPng: (png) => void did.previews.push(Buffer.from(png)),
+		previewPng: (png, report) => {
+			did.previews.push(Buffer.from(png));
+			did.previewReports.push(report);
+		},
 	};
 	return { desktop, did };
 }
@@ -1176,10 +1179,10 @@ test("23. a plantuml image offers source, image and preview, and each button han
 		await until(() => inFlight.size === 0);
 		const hover = copyButtonStyle === "hover";
 
-		assert.deepEqual(shownLabels(comp, 100, hover), ["⧉ source", "⧉ image", "preview"], `${copyButtonStyle}: three buttons, in order`);
+		assert.deepEqual(shownLabels(comp, 100, hover), ["⧉ source", "⧉ image", "⧉ preview"], `${copyButtonStyle}: three buttons, in order`);
 		if (!hover) {
 			const plain = comp.render(100).map(onScreen).join("\n");
-			assert.ok(plain.includes("[ ⧉ source ] [ ⧉ image ] [ preview ]"), "inline: the three buttons share one row");
+			assert.ok(plain.includes("[ ⧉ source ] [ ⧉ image ] [ ⧉ preview ]"), "inline: the three buttons share one row");
 			assert.ok(!plain.includes("[ ⧉ copy ]"), "inline: the old copy button is gone");
 		}
 
@@ -1190,9 +1193,13 @@ test("23. a plantuml image offers source, image and preview, and each button han
 		press(comp, 100, "⧉ image", hover);
 		assert.deepEqual(h.desktop.pngs, [png], `${copyButtonStyle}: image copies the exact PNG that was drawn`);
 		assert.deepEqual(h.notifications.at(-1), { text: "Copied image", level: "info" }, `${copyButtonStyle}: image toasts Copied image`);
-		press(comp, 100, "preview", hover);
+		press(comp, 100, "⧉ preview", hover);
 		assert.deepEqual(h.desktop.previews, [png], `${copyButtonStyle}: preview opens the exact PNG that was drawn`);
 		assert.deepEqual(h.desktop.pngs, [png], `${copyButtonStyle}: preview does not copy`);
+		h.desktop.previewReports[0]!("Building the Quick Look helper (first use, about 10 s)", "info");
+		assert.deepEqual(h.notifications.at(-1), { text: "Building the Quick Look helper (first use, about 10 s)", level: "info" }, `${copyButtonStyle}: a preview notice reaches the user as an info toast`);
+		h.desktop.previewReports[0]!("Quick Look failed", "error");
+		assert.deepEqual(h.notifications.at(-1), { text: "Quick Look failed", level: "error" }, `${copyButtonStyle}: a preview failure reaches the user as an error toast`);
 		cleanupFn();
 		cleanupFn = undefined;
 	}
@@ -1220,8 +1227,8 @@ test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, 
 		const hover = copyButtonStyle === "hover";
 		const { comp } = await drawnReply({ copyButtonStyle });
 		const at = (columns: number) => shownLabels(comp, fittedAt(columns), hover);
-		assert.deepEqual(at(36), ["⧉ source", "⧉ image", "preview"], `${copyButtonStyle}: render width ${fittedAt(36)} fits 36 columns, the 36 cells all three need`);
-		assert.deepEqual(at(35), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(35)} fits 35 columns, so preview drops`);
+		assert.deepEqual(at(38), ["⧉ source", "⧉ image", "⧉ preview"], `${copyButtonStyle}: render width ${fittedAt(38)} fits 38 columns, the 38 cells all three need`);
+		assert.deepEqual(at(37), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(37)} fits 37 columns, so preview drops`);
 		assert.deepEqual(at(30), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(30)} fits 30 columns, enough for two`);
 		assert.deepEqual(at(24), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(24)} fits 24 columns, the 24 cells two need`);
 		assert.deepEqual(at(23), ["⧉ source"], `${copyButtonStyle}: render width ${fittedAt(23)} fits 23 columns, so image drops`);
@@ -1246,13 +1253,24 @@ test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, 
 	}
 });
 
-test("25. the system desktop sends the PNG to osascript on stdin and opens Quick Look without waiting, one panel at a time", async () => {
+test("25. the system desktop sends the PNG to osascript on stdin, builds the Quick Look helper once without waiting, and keeps one panel at a time", async () => {
 	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
 	const dir = mkdtempSync(join(tmpdir(), "prism-desktop-"));
 	const log = join(dir, "ql.log");
 	const opens = () => {
 		try {
 			return readFileSync(log, "utf8").split("\n").filter((line) => line.startsWith("open "));
+		} catch {
+			return [];
+		}
+	};
+	const opened = (n: number) => {
+		const [, pid, file, ...argv] = opens()[n]!.split(" ") as [string, string, string, ...string[]];
+		return { pid, file, argv };
+	};
+	const builds = (name: string) => {
+		try {
+			return readFileSync(join(dir, `${name}.log`), "utf8").split("\n").filter(Boolean);
 		} catch {
 			return [];
 		}
@@ -1268,7 +1286,8 @@ test("25. the system desktop sends the PNG to osascript on stdin and opens Quick
 	cleanupFn = () => {
 		for (const line of opens()) {
 			try {
-				process.kill(Number(line.split(" ")[1]));
+				// SIGTERM would run the panel's trap, which appends to the log while rmSync empties the directory.
+				process.kill(Number(line.split(" ")[1]), "SIGKILL");
 			} catch {}
 		}
 		rmSync(dir, { recursive: true, force: true });
@@ -1278,22 +1297,37 @@ test("25. the system desktop sends the PNG to osascript on stdin and opens Quick
 		writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 		return file;
 	};
+	const fakePanel = (name: string, fileArg: string) =>
+		fakeBin(
+			name,
+			[
+				`sleep 5 &`,
+				`panel=$!`,
+				`trap 'kill $panel; echo "killed $$ ${fileArg}" >> "${log}"; exit 0' TERM`,
+				`cp "${fileArg}" "${dir}/seen-$$.png"`,
+				`echo "open $$ ${fileArg} $0 $*" >> "${log}"`,
+				`wait $panel`,
+			].join("\n"),
+		);
+	const fakeSwiftc = (name: string, helper: string, seconds = 0) =>
+		fakeBin(name, `echo "$*" >> "${dir}/${name}.log"\nsleep ${seconds}\ncp "${helper}" "$4"`);
+	const recorder = () => {
+		const reports: [string, string][] = [];
+		return {
+			reports,
+			report: (text: string, level: string) => void reports.push([text, level]),
+			at: (level: string) => reports.filter(([, l]) => l === level).map(([text]) => text),
+		};
+	};
+	const building = "Building the Quick Look helper (first use, about 10 s)";
 	const osascript = fakeBin("osascript", `cat > "${dir}/stdin.bin"\nprintf '%s\\n' "$@" > "${dir}/osascript.args"`);
-	const qlmanage = fakeBin(
-		"qlmanage",
-		[
-			`sleep 5 &`,
-			`panel=$!`,
-			`trap 'kill $panel; echo "killed $$ $2" >> "${log}"; exit 0' TERM`,
-			`cp "$2" "${dir}/seen-$$.png"`,
-			`echo "open $$ $2" >> "${log}"`,
-			`wait $panel`,
-		].join("\n"),
-	);
-	const failures: string[] = [];
-	const fail = (reason: string) => void failures.push(reason);
+	const qlmanage = fakePanel("qlmanage", "$2");
+	const helperSource = join(dir, "quicklook.swift");
+	writeFileSync(helperSource, "// helper v1\n");
+	const helperDir = join(dir, "helpers");
 	const previews = join(dir, "previews");
-	const desktop = systemDesktop({ pictures: true, osascript, qlmanage, dir: previews });
+	const options = { pictures: true, osascript, qlmanage, swiftc: fakeSwiftc("swiftc", fakePanel("helper", "$1"), 1), helperSource, helperDir, dir: previews };
+	const desktop = systemDesktop(options);
 	const first = pngOf(320, 280);
 	const second = pngOf(200, 100);
 
@@ -1305,37 +1339,76 @@ test("25. the system desktop sends the PNG to osascript on stdin and opens Quick
 	const broken = systemDesktop({ pictures: true, osascript: fakeBin("osascript-fails", `cat > /dev/null\necho 'no pasteboard' >&2\nexit 1`) });
 	assert.equal(broken.copyPng(first), "no pasteboard", "copyPng returns what osascript printed when it exits 1");
 
+	const session = recorder();
 	const before = performance.now();
-	desktop.previewPng(first, fail);
-	assert.ok(performance.now() - before < 500, "previewPng returns before the panel closes");
+	desktop.previewPng(first, session.report);
+	assert.ok(performance.now() - before < 500, "previewPng returns while the 1 s helper build runs");
+	assert.deepEqual(session.reports, [[building, "info"]], "the first preview says the helper is building");
 	await until(() => opens().length === 1);
-	const [, firstPid, firstFile] = opens()[0]!.split(" ") as [string, string, string];
-	assert.ok(alive(Number(firstPid)), "the fake panel is still open after previewPng returned");
+	assert.equal(builds("swiftc").length, 1, "the first preview runs swiftc once");
+	const [optimize, source, outputFlag, output] = builds("swiftc")[0]!.split(" ");
+	assert.deepEqual([optimize, source, outputFlag], ["-O", helperSource, "-o"], "swiftc compiles the helper source with -O");
+	assert.ok(output!.startsWith(helperDir), "swiftc writes into the helper directory");
+	const { pid: firstPid, file: firstFile, argv: firstArgv } = opened(0);
+	const helper = firstArgv[0]!;
+	assert.ok(helper.startsWith(join(helperDir, "quicklook-")), "the panel is the helper binary swiftc built");
+	assert.deepEqual(firstArgv.slice(1), [firstFile], "the helper gets the PNG path as its only argument");
+	assert.ok(alive(Number(firstPid)), "the fake panel is still open after the build finished");
 	assert.ok(firstFile.startsWith(previews) && firstFile.endsWith(".png"), "Quick Look gets a .png under the preview directory");
 	assert.deepEqual(readFileSync(join(dir, `seen-${firstPid}.png`)), first, "the file Quick Look opened holds the PNG");
 
-	desktop.previewPng(first, fail);
+	desktop.previewPng(first, session.report);
 	await sleep(300);
 	assert.equal(opens().length, 1, "a repeat on the same PNG spawns nothing");
 	assert.ok(alive(Number(firstPid)), "a repeat on the same PNG leaves the panel open");
 
-	desktop.previewPng(second, fail);
+	desktop.previewPng(second, session.report);
 	await until(() => opens().length === 2);
-	const [, secondPid, secondFile] = opens()[1]!.split(" ") as [string, string, string];
+	const { pid: secondPid, file: secondFile, argv: secondArgv } = opened(1);
 	await until(() => readFileSync(log, "utf8").includes(`killed ${firstPid} ${firstFile}`));
 	await until(() => !alive(Number(firstPid)));
+	assert.equal(builds("swiftc").length, 1, "a second PNG reuses the built helper");
+	assert.deepEqual(secondArgv, [helper, secondFile], "the second panel is the same helper on the second file");
 	assert.notEqual(secondFile, firstFile, "the different PNG opens its own file");
 	assert.deepEqual(readFileSync(join(dir, `seen-${secondPid}.png`)), second, "the second panel shows the second PNG");
 	assert.ok(alive(Number(secondPid)), "the second panel is open");
-	assert.deepEqual(failures, [], "replacing a panel reports no failure");
+	assert.deepEqual(session.reports, [[building, "info"]], "a ready helper and a replaced panel report nothing more");
 
-	const exits = systemDesktop({ pictures: true, qlmanage: fakeBin("qlmanage-exits", "exit 1"), dir: previews });
-	exits.previewPng(first, fail);
-	await until(() => failures.length === 1);
-	assert.deepEqual(failures, ["Quick Look failed"], "an immediate exit 1 reports a failure");
-	const missing = systemDesktop({ pictures: true, qlmanage: join(dir, "absent"), dir: previews });
-	missing.previewPng(first, fail);
-	await until(() => failures.length === 2);
-	assert.equal(failures[1], "Quick Look is unavailable", "a missing Quick Look binary reports a failure");
+	const nextSession = recorder();
+	systemDesktop(options).previewPng(first, nextSession.report);
+	await until(() => opens().length === 3);
+	assert.equal(builds("swiftc").length, 1, "a new desktop reuses the helper already in the helper directory");
+	assert.equal(opened(2).argv[0], helper, "the new desktop opens the same helper");
+	assert.deepEqual(nextSession.reports, [], "a reused helper reports nothing");
+
+	writeFileSync(helperSource, "// helper v2\n");
+	systemDesktop(options).previewPng(second, recorder().report);
+	await until(() => opens().length === 4);
+	assert.equal(builds("swiftc").length, 2, "a changed helper source builds again");
+	assert.notEqual(opened(3).argv[0], helper, "the changed source gets its own helper binary");
+
+	const exits = recorder();
+	const exitsAtOnce = { ...options, swiftc: fakeSwiftc("swiftc-exits", fakeBin("helper-exits", "exit 1")), helperDir: join(dir, "helpers-exits") };
+	systemDesktop(exitsAtOnce).previewPng(first, exits.report);
+	await until(() => exits.at("error").length === 1);
+	assert.deepEqual(exits.at("error"), ["Quick Look failed"], "a helper that exits 1 at once reports a failure");
+
+	const fallback = recorder();
+	const noHelper = systemDesktop({ ...options, swiftc: fakeBin("swiftc-fails", `echo "error: no SDK found" >&2\nexit 1`), helperDir: join(dir, "helpers-fails") });
+	noHelper.previewPng(first, fallback.report);
+	await until(() => opens().length === 5);
+	assert.deepEqual(opened(4).argv, [qlmanage, "-p", opened(4).file], "a failed build falls back to qlmanage -p on the file");
+	noHelper.previewPng(second, fallback.report);
+	await until(() => opens().length === 6);
+	assert.deepEqual(opened(5).argv, [qlmanage, "-p", opened(5).file], "the next press goes straight to qlmanage");
+	assert.deepEqual(fallback.at("warning"), ["Quick Look helper could not be built (error: no SDK found), using qlmanage"], "two presses after a failed build warn once, with the reason");
+	assert.deepEqual(fallback.at("error"), [], "the qlmanage fallback reports no failure");
+
+	const missing = recorder();
+	const nothing = { ...options, swiftc: join(dir, "absent-swiftc"), qlmanage: join(dir, "absent-qlmanage"), helperDir: join(dir, "helpers-missing") };
+	systemDesktop(nothing).previewPng(first, missing.report);
+	await until(() => missing.at("error").length === 1);
+	assert.deepEqual(missing.at("warning"), ["Quick Look helper could not be built (swiftc not found), using qlmanage"], "a missing swiftc warns and falls back");
+	assert.deepEqual(missing.at("error"), ["Quick Look is unavailable"], "a missing qlmanage after that reports a failure");
 	assert.equal(systemDesktop({ pictures: false }).pictures, false, "pictures follows the option");
 });
