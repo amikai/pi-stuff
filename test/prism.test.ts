@@ -10,15 +10,31 @@ import { afterEach, beforeEach, test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { crc32, deflateSync, inflateRawSync } from "node:zlib";
 
+import type { Desktop } from "../extensions/prism/desktop.ts";
+
 const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
 const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
 const parentURL = pathToFileURL(piPkg).href;
+const copiedTexts: string[] = [];
+(globalThis as any).__prismCopiedTexts = copiedTexts;
 registerHooks({
 	resolve(specifier, context, nextResolve) {
 		if (specifier.startsWith("@earendil-works/")) {
 			return nextResolve(specifier, { ...context, parentURL });
 		}
 		return nextResolve(specifier, context);
+	},
+	// pi's copyToClipboard writes the real pasteboard, so pressing a source button would clobber it. Record the text instead.
+	load(url, context, nextLoad) {
+		const loaded = nextLoad(url, context);
+		if (!url.endsWith("/pi-coding-agent/dist/utils/clipboard.js")) return loaded;
+		const real = "export async function copyToClipboard(";
+		const source = String(loaded.source);
+		if (!source.includes(real)) throw new Error("pi's copyToClipboard moved; the tests would write the real clipboard");
+		return {
+			...loaded,
+			source: `${source.replace(real, "async function realCopyToClipboard(")}\nexport async function copyToClipboard(text) { globalThis.__prismCopiedTexts.push(text); }\n`,
+		};
 	},
 });
 
@@ -49,7 +65,17 @@ const stripAnsi = (s: string) =>
 		.replace(/\x1b\]8;;.*?(?:\x07|\x1b\\)/g, "")
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
 
-function createHarness(initialConfig?: Record<string, unknown>) {
+function recordingDesktop(pictures = true) {
+	const did = { pngs: [] as Buffer[], previews: [] as Buffer[] };
+	const desktop: Desktop = {
+		pictures,
+		copyPng: (png) => (did.pngs.push(Buffer.from(png)), null),
+		previewPng: (png) => void did.previews.push(Buffer.from(png)),
+	};
+	return { desktop, did };
+}
+
+function createHarness(initialConfig?: Record<string, unknown>, recording = recordingDesktop()) {
 	const dir = mkdtempSync(join(tmpdir(), "prism-unit-"));
 	process.env.PI_CODING_AGENT_DIR = dir;
 	if (initialConfig) {
@@ -145,7 +171,7 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 		},
 	} as any;
 
-	prismExtension(pi);
+	prismExtension(pi, recording.desktop);
 
 	const emit = async (event: string, payload: any = {}) => {
 		let lastResult: any;
@@ -171,6 +197,7 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 		toolRenderers,
 		markdownTransformers,
 		notifications,
+		desktop: recording.did,
 		sentCustomMessages,
 		appendedEntries,
 		getActivePiTheme: () => activePiTheme,
@@ -1092,4 +1119,223 @@ test("22. a plantuml diagram replaces its source after a streaming update that a
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("Alice -> Bob : hi"), "the rebuilt frame still shows the source while it renders");
 	await until(() => inFlight.size === 0);
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the image");
+});
+
+const mouse = (type: "move" | "press" | "click", x: number, y: number, width: number, height: number) =>
+	({ type, button: type === "move" ? "none" : "left", x, y, screenX: x, screenY: y, width, height }) as any;
+
+const onScreen = (line: string) => stripAnsi(line).replace(/\x1b_G[^\x1b]*\x1b\\/g, "");
+
+// Hover mode keeps its buttons in a panel the renderer never reveals, so they are read from the tree the reply built.
+function treeButtons(comp: any, width: number) {
+	comp.render(width);
+	const prism = comp.contentContainer.children.find((child: unknown) => child instanceof PrismComponent);
+	const found: { label: string; onPress: () => void }[] = [];
+	const walk = (node: any) => {
+		if (Array.isArray(node)) return node.forEach(walk);
+		if (node === null || typeof node !== "object") return;
+		if (node.type === "Button") found.push({ label: node.props.label, onPress: node.props.onPress });
+		walk(node.children);
+	};
+	walk(prism.tree.node);
+	return found;
+}
+
+function shownLabels(comp: any, width: number, hover: boolean): string[] {
+	if (hover) return treeButtons(comp, width).map((button) => button.label);
+	return [...comp.render(width).map(onScreen).join("\n").matchAll(/\[ ([^\]]+) \]/g)].map((match) => match[1]!);
+}
+
+function press(comp: any, width: number, label: string, hover: boolean) {
+	if (hover) {
+		const button = treeButtons(comp, width).find((candidate) => candidate.label === label);
+		assert.ok(button, `${label} is in the reply's hover panel`);
+		button.onPress();
+		return;
+	}
+	const lines: string[] = comp.render(width);
+	const y = lines.findIndex((line) => onScreen(line).includes(`[ ${label} ]`));
+	assert.ok(y >= 0, `[ ${label} ] is drawn`);
+	const x = onScreen(lines[y]!).indexOf(`[ ${label} ]`) + 2;
+	for (const type of ["press", "click"] as const) comp.handleMouse(mouse(type, x, y, width, lines.length));
+}
+
+test("23. a plantuml image offers source, image and preview, and each button hands its payload to the desktop", async () => {
+	const png = pngOf(320, 280);
+	for (const copyButtonStyle of ["inline", "hover"] as const) {
+		const fake = plantumlFixture({ png });
+		const h = createHarness({ copyButtonStyle });
+		cleanupFn = () => {
+			fake.restore();
+			h.cleanup();
+		};
+		await h.emit("session_start");
+		const text = diagram(copyButtonStyle);
+		const comp = reply(text);
+		comp.render(100);
+		await until(() => inFlight.size === 0);
+		const hover = copyButtonStyle === "hover";
+
+		assert.deepEqual(shownLabels(comp, 100, hover), ["⧉ source", "⧉ image", "preview"], `${copyButtonStyle}: three buttons, in order`);
+		if (!hover) {
+			const plain = comp.render(100).map(onScreen).join("\n");
+			assert.ok(plain.includes("[ ⧉ source ] [ ⧉ image ] [ preview ]"), "inline: the three buttons share one row");
+			assert.ok(!plain.includes("[ ⧉ copy ]"), "inline: the old copy button is gone");
+		}
+
+		copiedTexts.length = 0;
+		press(comp, 100, "⧉ source", hover);
+		assert.deepEqual(copiedTexts, [text.split("\n").slice(1, -1).join("\n")], `${copyButtonStyle}: source hands the PlantUML text to pi's text copy`);
+		assert.deepEqual(h.notifications.at(-1), { text: "Copied", level: "info" }, `${copyButtonStyle}: source toasts Copied`);
+		press(comp, 100, "⧉ image", hover);
+		assert.deepEqual(h.desktop.pngs, [png], `${copyButtonStyle}: image copies the exact PNG that was drawn`);
+		assert.deepEqual(h.notifications.at(-1), { text: "Copied image", level: "info" }, `${copyButtonStyle}: image toasts Copied image`);
+		press(comp, 100, "preview", hover);
+		assert.deepEqual(h.desktop.previews, [png], `${copyButtonStyle}: preview opens the exact PNG that was drawn`);
+		assert.deepEqual(h.desktop.pngs, [png], `${copyButtonStyle}: preview does not copy`);
+		cleanupFn();
+		cleanupFn = undefined;
+	}
+});
+
+test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, and are absent where the desktop cannot show pictures", async () => {
+	const png = pngOf(320, 280);
+	// A reply renders its blocks 4 columns narrower than the width it is given, so render width W gives renderBlocks (and fitted) W - 4 columns.
+	const fittedAt = (columns: number) => columns + 4;
+	const drawnReply = async (config: Record<string, unknown>, recording = recordingDesktop()) => {
+		const fake = plantumlFixture({ png });
+		const h = createHarness(config, recording);
+		cleanupFn = () => {
+			fake.restore();
+			h.cleanup();
+		};
+		await h.emit("session_start");
+		const comp = reply(diagram(JSON.stringify(config)));
+		comp.render(100);
+		await until(() => inFlight.size === 0);
+		return { comp, h };
+	};
+
+	for (const copyButtonStyle of ["inline", "hover"] as const) {
+		const hover = copyButtonStyle === "hover";
+		const { comp } = await drawnReply({ copyButtonStyle });
+		const at = (columns: number) => shownLabels(comp, fittedAt(columns), hover);
+		assert.deepEqual(at(36), ["⧉ source", "⧉ image", "preview"], `${copyButtonStyle}: render width ${fittedAt(36)} fits 36 columns, the 36 cells all three need`);
+		assert.deepEqual(at(35), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(35)} fits 35 columns, so preview drops`);
+		assert.deepEqual(at(30), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(30)} fits 30 columns, enough for two`);
+		assert.deepEqual(at(24), ["⧉ source", "⧉ image"], `${copyButtonStyle}: render width ${fittedAt(24)} fits 24 columns, the 24 cells two need`);
+		assert.deepEqual(at(23), ["⧉ source"], `${copyButtonStyle}: render width ${fittedAt(23)} fits 23 columns, so image drops`);
+		assert.deepEqual(at(20), ["⧉ source"], `${copyButtonStyle}: render width ${fittedAt(20)} fits 20 columns, where source alone stays`);
+		cleanupFn();
+		cleanupFn = undefined;
+
+		const off = await drawnReply({ copyButtonStyle, copyButtons: false });
+		assert.deepEqual(shownLabels(off.comp, 100, hover), [], `${copyButtonStyle}: copyButtons:false draws no button`);
+		assert.ok(!off.comp.render(100).map(onScreen).join("\n").includes("⧉"), `${copyButtonStyle}: copyButtons:false draws no ⧉ marker`);
+		cleanupFn();
+		cleanupFn = undefined;
+
+		const remote = await drawnReply({ copyButtonStyle }, recordingDesktop(false));
+		assert.deepEqual(shownLabels(remote.comp, 100, hover), ["⧉ source"], `${copyButtonStyle}: a desktop without pictures keeps [ ⧉ source ] alone`);
+		copiedTexts.length = 0;
+		press(remote.comp, 100, "⧉ source", hover);
+		assert.equal(copiedTexts.length, 1, `${copyButtonStyle}: source still copies without pictures`);
+		assert.deepEqual(remote.h.notifications.at(-1), { text: "Copied", level: "info" }, `${copyButtonStyle}: source toasts Copied without pictures`);
+		cleanupFn();
+		cleanupFn = undefined;
+	}
+});
+
+test("25. the system desktop sends the PNG to osascript on stdin and opens Quick Look without waiting, one panel at a time", async () => {
+	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-desktop-"));
+	const log = join(dir, "ql.log");
+	const opens = () => {
+		try {
+			return readFileSync(log, "utf8").split("\n").filter((line) => line.startsWith("open "));
+		} catch {
+			return [];
+		}
+	};
+	const alive = (pid: number) => {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch {
+			return false;
+		}
+	};
+	cleanupFn = () => {
+		for (const line of opens()) {
+			try {
+				process.kill(Number(line.split(" ")[1]));
+			} catch {}
+		}
+		rmSync(dir, { recursive: true, force: true });
+	};
+	const fakeBin = (name: string, body: string) => {
+		const file = join(dir, name);
+		writeFileSync(file, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+		return file;
+	};
+	const osascript = fakeBin("osascript", `cat > "${dir}/stdin.bin"\nprintf '%s\\n' "$@" > "${dir}/osascript.args"`);
+	const qlmanage = fakeBin(
+		"qlmanage",
+		[
+			`sleep 5 &`,
+			`panel=$!`,
+			`trap 'kill $panel; echo "killed $$ $2" >> "${log}"; exit 0' TERM`,
+			`cp "$2" "${dir}/seen-$$.png"`,
+			`echo "open $$ $2" >> "${log}"`,
+			`wait $panel`,
+		].join("\n"),
+	);
+	const failures: string[] = [];
+	const fail = (reason: string) => void failures.push(reason);
+	const previews = join(dir, "previews");
+	const desktop = systemDesktop({ pictures: true, osascript, qlmanage, dir: previews });
+	const first = pngOf(320, 280);
+	const second = pngOf(200, 100);
+
+	assert.equal(desktop.copyPng(first), null, "copyPng reports success when osascript exits 0");
+	assert.deepEqual(readFileSync(join(dir, "stdin.bin")), first, "osascript receives the PNG bytes on stdin");
+	const args = readFileSync(join(dir, "osascript.args"), "utf8").split("\n");
+	assert.deepEqual(args.slice(0, 3), ["-l", "JavaScript", "-e"], "osascript runs the JavaScript for Automation script");
+	assert.ok(args.slice(3).join("\n").includes("NSPasteboardTypePNG"), "the script writes the PNG type");
+	const broken = systemDesktop({ pictures: true, osascript: fakeBin("osascript-fails", `cat > /dev/null\necho 'no pasteboard' >&2\nexit 1`) });
+	assert.equal(broken.copyPng(first), "no pasteboard", "copyPng returns what osascript printed when it exits 1");
+
+	const before = performance.now();
+	desktop.previewPng(first, fail);
+	assert.ok(performance.now() - before < 500, "previewPng returns before the panel closes");
+	await until(() => opens().length === 1);
+	const [, firstPid, firstFile] = opens()[0]!.split(" ") as [string, string, string];
+	assert.ok(alive(Number(firstPid)), "the fake panel is still open after previewPng returned");
+	assert.ok(firstFile.startsWith(previews) && firstFile.endsWith(".png"), "Quick Look gets a .png under the preview directory");
+	assert.deepEqual(readFileSync(join(dir, `seen-${firstPid}.png`)), first, "the file Quick Look opened holds the PNG");
+
+	desktop.previewPng(first, fail);
+	await sleep(300);
+	assert.equal(opens().length, 1, "a repeat on the same PNG spawns nothing");
+	assert.ok(alive(Number(firstPid)), "a repeat on the same PNG leaves the panel open");
+
+	desktop.previewPng(second, fail);
+	await until(() => opens().length === 2);
+	const [, secondPid, secondFile] = opens()[1]!.split(" ") as [string, string, string];
+	await until(() => readFileSync(log, "utf8").includes(`killed ${firstPid} ${firstFile}`));
+	await until(() => !alive(Number(firstPid)));
+	assert.notEqual(secondFile, firstFile, "the different PNG opens its own file");
+	assert.deepEqual(readFileSync(join(dir, `seen-${secondPid}.png`)), second, "the second panel shows the second PNG");
+	assert.ok(alive(Number(secondPid)), "the second panel is open");
+	assert.deepEqual(failures, [], "replacing a panel reports no failure");
+
+	const exits = systemDesktop({ pictures: true, qlmanage: fakeBin("qlmanage-exits", "exit 1"), dir: previews });
+	exits.previewPng(first, fail);
+	await until(() => failures.length === 1);
+	assert.deepEqual(failures, ["Quick Look failed"], "an immediate exit 1 reports a failure");
+	const missing = systemDesktop({ pictures: true, qlmanage: join(dir, "absent"), dir: previews });
+	missing.previewPng(first, fail);
+	await until(() => failures.length === 2);
+	assert.equal(failures[1], "Quick Look is unavailable", "a missing Quick Look binary reports a failure");
+	assert.equal(systemDesktop({ pictures: false }).pictures, false, "pictures follows the option");
 });

@@ -40,7 +40,14 @@ export type CopyButton = (
 	label?: string,
 	html?: () => string,
 ) => RenderElement | null;
-export type Drawn = Map<number, { element?: RenderElement; art?: string; note?: string }>;
+/** `art` and `png` exclude each other: a drawing is text art or a picture of a known PNG (base64). */
+export type DrawnBlock =
+	| { note: string; element?: never; art?: never; png?: never }
+	| { element: RenderElement; art?: string; png?: never; note?: never }
+	| { element: RenderElement; png: string; art?: never; note?: never };
+export type Drawn = Map<number, DrawnBlock>;
+/** Buttons that act on a drawn picture, in display order. Empty when they are off or cannot reach the user's machine. */
+export type PictureButtons = (png: string, b: number) => RenderElement[];
 export type Fold = (id: string, hidden: number, key: string) => { folded: boolean; element: RenderElement } | null;
 export type Tip = (note: number) => (() => void) | undefined;
 
@@ -1510,7 +1517,7 @@ const markedRow = ({ Box }, key, element, float, start) =>
 		),
 	);
 
-const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold, tip) => {
+const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold, tip, picture) => {
 	const { Box, Text } = el;
 	const t = style.theme;
 	const hover = style.copyButtonStyle === "hover";
@@ -1547,13 +1554,22 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
 		const text = hover && holdsOnlyEmptyCode(block) ? undefined : copySource(style, block);
 		const isPlainCode = block.kind === "code" && !drawn.get(b)?.element;
 		const art = drawn.get(b)?.art ?? (block.kind === "table" ? () => tableArt(block) : undefined);
+		const png = drawn.get(b)?.png;
 		const first =
 			text === undefined || isPlainCode
 				? null
-				: copy?.(text, `copy${b}`, block.kind === "table" ? "⧉ md" : art === undefined ? undefined : "⧉ source");
-		const second = first && art !== undefined ? copy?.(art, `art${b}`, "⧉ art") : null;
-		const html = first && block.kind === "table" ? copy?.(() => tableText(block), `html${b}`, "⧉ html", () => tableHtml(block)) : null;
-		return { first, second, html };
+				: copy?.(
+						text,
+						`copy${b}`,
+						block.kind === "table" ? "⧉ md" : art === undefined && png === undefined ? undefined : "⧉ source",
+					);
+		if (!first) return { first, more: [] };
+		const more = [
+			art !== undefined ? copy?.(art, `art${b}`, "⧉ art") : null,
+			block.kind === "table" ? copy?.(() => tableText(block), `html${b}`, "⧉ html", () => tableHtml(block)) : null,
+			...(png === undefined ? [] : (picture?.(png, b) ?? [])),
+		].filter(Boolean);
+		return { first, more };
 	});
 	const codeHead = (label, button) => {
 		if (!hover || !button) return null;
@@ -1629,8 +1645,9 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
 	});
 	const copied = rendered.map((element, b) => {
 		const block = blocks[b];
-		const { first, second, html } = buttons[b];
+		const { first, more } = buttons[b];
 		if (!first) return element;
+		const kept = fitted([first, ...more]);
 		const { Box } = el;
 		const hebrew = style.reorder && hasRtl(block.raw);
 		const rtl = hebrew && !mirrored(style);
@@ -1638,11 +1655,9 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
 		if (hover) {
 			const wide = rtl && (block.kind === "list" || block.kind === "quote" || block.kind === "alert" || rtlTables[b]);
 			const start = !!wide && (!!rtlTables[b] || leadSide(style, block, room(b)) === "R");
-			return markedRow(el, `c${b}`, element, floating(fitted([first, second, html]), opensWithCopy(block), start), start);
+			return markedRow(el, `c${b}`, element, floating(kept, opensWithCopy(block), start), start);
 		}
-		const button = second
-			? h(el.Box, { key: `copies${b}`, flexDirection: "row", columnGap: 1 }, first, second, html)
-			: first;
+		const button = kept.length > 1 ? h(el.Box, { key: `copies${b}`, flexDirection: "row", columnGap: 1 }, ...kept) : first;
 		return (block.kind === "quote" || block.kind === "alert") && !mirrored(style)
 			? h(
 					Box,
