@@ -335,7 +335,7 @@ test("3. decodeDocument accepts valid showcase and help documents and rejects ma
 	);
 });
 
-test("4. diagramCodeSpan and transformBuiltInMermaid escape backticks, render all 5 diagram families, and handle width or syntax fallbacks", () => {
+test("4. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the Mermaid 12.2.0 matrix across all 5 supported families, and handle width, warning, and source fallbacks", () => {
 	assert.equal(diagramCodeSpan(""), "`\u00a0`");
 	assert.equal(diagramCodeSpan("plain row"), "`plain row`");
 	assert.equal(diagramCodeSpan("one ` tick"), "``one ` tick``");
@@ -344,43 +344,561 @@ test("4. diagramCodeSpan and transformBuiltInMermaid escape backticks, render al
 	assert.equal(diagramCodeSpan("trailing`"), "`` trailing` ``");
 	assert.equal(diagramCodeSpan("`both`"), "`` `both` ``");
 
-	const fiveFamilies = [
+	type MermaidCase =
+		| {
+				readonly status: "rendered";
+				readonly name: string;
+				readonly source: string;
+				readonly expectedSubstrings: readonly [string, ...string[]];
+		  }
+		| {
+				readonly status: "warning-fallback";
+				readonly name: string;
+				readonly source: string;
+				readonly expectedWarning: string;
+		  }
+		| {
+				readonly status: "source-fallback";
+				readonly name: string;
+				readonly source: string;
+		  };
+
+	const fence = (body: string): string => `\`\`\`mermaid\n${body}\n\`\`\``;
+
+	const unsupportedMermaid12Headers = [
+		["flowchart-elk", "flowchart-elk LR\n  A[Start] --> B[End]"],
+		["pie", "pie title Pets\n  \"Dogs\" : 45\n  \"Cats\" : 30"],
+		["gantt", "gantt\n  title Roadmap\n  section Phase 1\n  Design :a1, 2026-01-01, 5d"],
+		["xychart-beta", "xychart-beta\n  title \"Latency\"\n  x-axis [Q1, Q2]\n  bar [12, 18]"],
+		["xychart", "xychart\n  title \"Latency\"\n  x-axis [Q1, Q2]\n  bar [12, 18]"],
+		["gitGraph", "gitGraph\n  commit\n  branch feat\n  checkout feat\n  commit"],
+		["mindmap", "mindmap\n  root((Pi))\n    Extensions\n    Themes"],
+		["timeline", "timeline\n  title Releases\n  2026 : v1.4.0"],
+		["journey", "journey\n  title Onboarding\n  section Sign up\n    Open CLI: 5: User"],
+		["quadrantChart", "quadrantChart\n  title Priority\n  x-axis Low --> High\n  y-axis Low --> High\n  Item A: [0.3, 0.8]"],
+		["sankey-beta", "sankey-beta\n  Input,Process,10"],
+		["sankey", "sankey\n  Input,Process,10"],
+		["requirementDiagram", "requirementDiagram\n  requirement test_req {\n    id: 1\n    text: verify\n    risk: low\n    verifymethod: test\n  }"],
+		["requirement", "requirement\n  requirement test_req {\n    id: 1\n    text: verify\n    risk: low\n    verifymethod: test\n  }"],
+		["C4Context", "C4Context\n  Person(user, \"User\")\n  System(sys, \"Pi\")"],
+		["C4Container", "C4Container\n  Container(app, \"TUI\", \"Node.js\")"],
+		["C4Component", "C4Component\n  Component(comp, \"Renderer\", \"TypeScript\")"],
+		["C4Dynamic", "C4Dynamic\n  Rel(user, app, \"Runs command\")"],
+		["C4Deployment", "C4Deployment\n  Deployment_Node(host, \"Workstation\")"],
+		["kanban", "kanban\n  Todo\n    [Write tests]"],
+		["block-beta", "block-beta\n  columns 2\n  a[\"Lexer\"] b[\"Renderer\"]"],
+		["block", "block\n  columns 2\n  a[\"Lexer\"] b[\"Renderer\"]"],
+		["packet-beta", "packet-beta\n  0-7: \"Magic\"\n  8-15: \"Version\""],
+		["packet", "packet\n  0-7: \"Magic\"\n  8-15: \"Version\""],
+		["architecture-beta", "architecture-beta\n  service api(server)[API]\n  service db(database)[DB]\n  api:R --> L:db"],
+		["architecture", "architecture\n  service api(server)[API]\n  service db(database)[DB]\n  api:R --> L:db"],
+		["radar-beta", "radar-beta\n  axis Speed, Safety, Ergonomics\n  curve c1{80, 90, 85}"],
+		["treemap", "treemap\n  \"Root\"\n    \"Leaf\": 10"],
+		["zenuml", "zenuml\n  Alice->Bob.greet()"],
+		["ishikawa-beta", "ishikawa-beta\n  Failure\n    Process\n      Missing check"],
+		["venn-beta", "venn-beta\n  set A\n  set B"],
+		["treeView-beta", "treeView-beta\n  src\n    index.ts"],
+		["swimlane-beta", "swimlane-beta\n  lane Client\n  lane Server"],
+		["usecase-beta", "usecase-beta\n  actor User\n  usecase (Login)"],
+		["wardley-beta", "wardley-beta\n  component CLI [0.8, 0.7]"],
+		["cynefin-beta", "cynefin-beta\n  domain Clear"],
+		["eventmodeling", "eventmodeling\n  command SubmitOrder\n  event OrderSubmitted"],
+		["agentflow-beta", "agentflow-beta\n  agent Planner\n  agent Executor\n  Planner --> Executor"],
+		["railroad-beta", "railroad-beta\n  expr ::= term (\"+\" term)*"],
+		["railroad-ebnf-beta", "railroad-ebnf-beta\n  expr = term , { \"+\" , term } ;"],
+		["railroad-abnf-beta", "railroad-abnf-beta\n  expr = term *( \"+\" term )"],
+		["railroad-peg-beta", "railroad-peg-beta\n  Expr <- Term (\"+\" Term)*"],
+		["info", "info"],
+	] as const;
+
+	const mermaidCases: readonly MermaidCase[] = [
 		{
-			name: "flowchart",
-			source: "```mermaid\nflowchart LR\n  A[Start] --> B{Check}\n  B -->|Yes| C([Done])\n```",
+			status: "rendered",
+			name: "flowchart TB with init directive, comments, and semicolon separators",
+			source: fence(
+				[
+					"flowchart TB",
+					"  %%{init: {\"theme\": \"dark\"}}%%",
+					"  %% comment line",
+					"  A[Top] --> B[Middle]; B --> C[Bottom]",
+				].join("\n"),
+			),
+			expectedSubstrings: ["Top", "Middle", "Bottom", "▼"],
 		},
 		{
-			name: "sequenceDiagram",
-			source: "```mermaid\nsequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Ack\n```",
+			status: "rendered",
+			name: "flowchart TD direction",
+			source: fence("flowchart TD\n  A[Start] --> B[Finish]"),
+			expectedSubstrings: ["Start", "Finish", "▼"],
 		},
 		{
-			name: "stateDiagram-v2",
-			source: "```mermaid\nstateDiagram-v2\n  [*] --> Idle\n  Idle --> Active: run\n  Active --> [*]\n```",
+			status: "rendered",
+			name: "graph LR direction",
+			source: fence("graph LR\n  A[Left] --> B[Right]"),
+			expectedSubstrings: ["Left", "Right", "▶"],
 		},
 		{
-			name: "classDiagram",
-			source: "```mermaid\nclassDiagram\n  class Component {\n    +render(width) string[]\n  }\n  Component <|-- Markdown\n```",
+			status: "rendered",
+			name: "graph RL direction",
+			source: fence("graph RL\n  A[Right] --> B[Left]"),
+			expectedSubstrings: ["Right", "Left", "◄"],
 		},
 		{
-			name: "erDiagram",
-			source: "```mermaid\nerDiagram\n  SESSION ||--o{ ENTRY : contains\n```",
+			status: "rendered",
+			name: "flowchart BT direction",
+			source: fence("flowchart BT\n  A[Bottom] --> B[Top]"),
+			expectedSubstrings: ["Bottom", "Top", "▲"],
 		},
+		{
+			status: "rendered",
+			name: "flowchart subgraphs, nested subgraphs, and tolerated styling directives",
+			source: fence(
+				[
+					"flowchart TB",
+					"  subgraph outer[Outer Group]",
+					"    direction LR",
+					"    subgraph \"Inner Group\"",
+					"      A[Alpha]:::hot --> B(Beta)",
+					"    end",
+					"  end",
+					"  classDef hot fill:#f00",
+					"  class A hot",
+					"  style B stroke:#333",
+					"  linkStyle 0 stroke:#0f0",
+					"  click A \"https://example.com\"",
+				].join("\n"),
+			),
+			expectedSubstrings: ["Outer Group", "Inner Group", "Alpha", "Beta"],
+		},
+		{
+			status: "rendered",
+			name: "flowchart node shapes including trapezoids parsed as literal slash labels",
+			source: fence(
+				[
+					"flowchart TD",
+					"  N1[rect] --> N2(round)",
+					"  N2 --> N3([stadium])",
+					"  N3 --> N4[[subroutine]]",
+					"  N4 --> N5[(cylinder)]",
+					"  N5 --> N6((circle))",
+					"  N6 --> N7{diamond}",
+					"  N7 --> N8{{hexagon}}",
+					"  N8 --> N9>asymmetric]",
+					"  N9 --> N10[/trapezoid\\]",
+					"  N10 --> N11[\\trapezoid-alt/]",
+				].join("\n"),
+			),
+			expectedSubstrings: [
+				"rect",
+				"round",
+				"stadium",
+				"subroutine",
+				"cylinder",
+				"circle",
+				"diamond",
+				"hexagon",
+				"asymmetric",
+				"/trapezoid\\",
+				"\\trapezoid-alt/",
+				"┌",
+				"╭",
+			],
+		},
+		{
+			status: "rendered",
+			name: "flowchart link operators and ampersand node group fan-out/fan-in",
+			source: fence(
+				[
+					"flowchart TD",
+					"  A & B --> C & D",
+					"  D --- E",
+					"  E -.-> F",
+					"  F -.- G",
+					"  G ==> H",
+					"  H === I",
+					"  I <--> J",
+					"  J <-- K",
+					"  K --o L",
+					"  L o--o M",
+					"  M --x N",
+					"  N x--x O",
+					"  O -->|pipe label| P",
+					"  P -- inline label --> Q",
+				].join("\n"),
+			),
+			expectedSubstrings: ["╎", "┃", "o", "×", "pipe label", "inline label"],
+		},
+		{
+			status: "rendered",
+			name: "sequenceDiagram participants, actors, autonumber, 8 arrows, activations, notes, dividers, and tolerated directives",
+			source: fence(
+				[
+					"sequenceDiagram",
+					"  title Auth Flow",
+					"  autonumber",
+					"  participant C as Client",
+					"  actor U as End User",
+					"  box Purple Group",
+					"    participant S as Server",
+					"  end",
+					"  links S: {\"Dashboard\": \"https://example.com\"}",
+					"  link S: Docs @ https://example.com",
+					"  properties S: {\"role\": \"api\"}",
+					"  U->C: solid open",
+					"  C-->U: dashed open",
+					"  U->>+C: solid arrow activate",
+					"  C-->>-U: dashed arrow deactivate",
+					"  C-xS: solid cross",
+					"  S--xC: dashed cross",
+					"  C-)S: solid async",
+					"  S--)C: dashed async",
+					"  activate S",
+					"  Note left of U: Left note",
+					"  Note right of S: Right note",
+					"  Note over C: Single over",
+					"  Note over C,S: Span over",
+					"  loop Retry",
+					"    C->>S: ping",
+					"  end",
+					"  alt Valid",
+					"    S-->>C: 200",
+					"  else Invalid",
+					"    S-->>C: 401",
+					"  end",
+					"  opt Cached",
+					"    C->>U: fast path",
+					"  end",
+					"  par Audit",
+					"    S->>S: log",
+					"  and Notify",
+					"    S->>U: alert",
+					"  end",
+					"  critical Lock",
+					"    C->>S: acquire",
+					"  option Timeout",
+					"    S-->>C: abort",
+					"  end",
+					"  break Fatal",
+					"    S--xC: halt",
+					"  end",
+					"  rect rgb(0, 0, 0)",
+					"    create participant W as Worker",
+					"    S->>W: spawn",
+					"    destroy W",
+					"  end",
+					"  deactivate S",
+				].join("\n"),
+			),
+			expectedSubstrings: [
+				"Client",
+				"End User",
+				"Server",
+				"1. solid open",
+				"2. dashed open",
+				"3. solid arrow activate",
+				"4. dashed arrow deactivate",
+				"5. solid cross",
+				"6. dashed cross",
+				"7. solid async",
+				"8. dashed async",
+				"Left note",
+				"Right note",
+				"Single over",
+				"Span over",
+				"loop Retry",
+				"alt Valid",
+				"else Invalid",
+				"opt Cached",
+				"par Audit",
+				"and Notify",
+				"critical Lock",
+				"option Timeout",
+				"break Fatal",
+				"18. spawn",
+			],
+		},
+		{
+			status: "rendered",
+			name: "stateDiagram and stateDiagram-v2 transitions, choices, forks, joins, composites, notes, concurrency, and style tags",
+			source: fence(
+				[
+					"stateDiagram-v2",
+					"  direction LR",
+					"  state \"Idle State\" as Idle",
+					"  Queued: Waiting for job",
+					"  state Check <<choice>>",
+					"  state ForkNode <<fork>>",
+					"  state JoinNode <<join>>",
+					"  [*] --> Idle:::ready",
+					"  Idle --> Queued --> Check : dispatch",
+					"  Check --> ForkNode",
+					"  ForkNode --> Active",
+					"  state Active {",
+					"    Running --> Paused",
+					"    --",
+					"    Watching --> Alerted",
+					"  }",
+					"  Active --> JoinNode",
+					"  JoinNode --> [*]",
+					"  note right of Idle : Single-line note",
+					"  note left of Active",
+					"    Multiline note body",
+					"  end note",
+				].join("\n"),
+			),
+			expectedSubstrings: [
+				"●",
+				"Idle State",
+				"Waiting for job",
+				"Check",
+				"dispatch",
+				"ForkNode",
+				"JoinNode",
+				"Running",
+				"Paused",
+				"Watching",
+				"Alerted",
+			],
+		},
+		{
+			status: "rendered",
+			name: "stateDiagram v1 header compatibility",
+			source: fence("stateDiagram\n  [*] --> Ready\n  Ready --> [*]"),
+			expectedSubstrings: ["●", "Ready"],
+		},
+		{
+			status: "rendered",
+			name: "classDiagram and classDiagram-v2 members, generics, annotations, 14 relationship operators, cardinalities, and directives",
+			source: fence(
+				[
+					"classDiagram-v2",
+					"  direction TB",
+					"  note \"Top note\"",
+					"  namespace Core {",
+					"  class Repository~T~ {",
+					"    <<interface>>",
+					"    +String id",
+					"    -int retries",
+					"    #bool active",
+					"    ~String pkg",
+					"    +List~T~ items",
+					"    +find(id) T",
+					"    #validate() bool",
+					"  }",
+					"  }",
+					"  <<service>> UserService",
+					"  UserService : +Repository~User~ repo",
+					"  UserService : +load(id) User",
+					"  Base <|-- Derived : extends",
+					"  Derived --|> Mixin",
+					"  Repository~T~ <|.. SqlRepo",
+					"  SqlRepo ..|> Auditable",
+					"  Order *-- LineItem",
+					"  LineItem --* Invoice",
+					"  Team o-- Member",
+					"  Member --o Club",
+					"  Client <-- Server",
+					"  UserService \"1\" --> \"0..*\" Order : manages",
+					"  Controller <.. View",
+					"  View ..> Model",
+					"  Alpha -- Beta",
+					"  Gamma .. Delta",
+					"  classDef highlight fill:#ff0",
+					"  cssClass \"UserService\" highlight",
+					"  style UserService stroke:#333",
+					"  click UserService call onClick()",
+					"  link UserService \"https://example.com\"",
+					"  callback UserService \"onEvent\"",
+				].join("\n"),
+			),
+			expectedSubstrings: [
+				"«interface»",
+				"Repository<T>",
+				"+String id",
+				"-int retries",
+				"#bool active",
+				"+List<T> items",
+				"+find(id) T",
+				"«service»",
+				"UserService",
+				"+Repository<User> repo",
+				"1 manages 0..*",
+				"extends",
+				"△",
+				"▽",
+				"◆",
+				"◇",
+			],
+		},
+		{
+			status: "rendered",
+			name: "erDiagram entities, single-word aliases, attributes, and identifying/non-identifying crow's-foot cardinalities",
+			source: fence(
+				[
+					"erDiagram",
+					"  CUSTOMER[Account] {",
+					"    uuid id PK \"primary key\"",
+					"    string email UK \"login address\"",
+					"  }",
+					"  ORDER {",
+					"    int order_id PK",
+					"  }",
+					"  CUSTOMER ||--o{ ORDER : places",
+					"  ORDER |{--|| LINE_ITEM : contains",
+					"  LINE_ITEM }|--|{ TAG : labels",
+					"  TAG |o..o| PROFILE : has",
+					"  PROFILE }o..o{ COUPON : applies",
+				].join("\n"),
+			),
+			expectedSubstrings: [
+				"Account",
+				"uuid id PK",
+				"string email UK",
+				"ORDER",
+				"int order_id PK",
+				"1 places 0..*",
+				"1..* contains 1",
+				"1..* labels 1..*",
+				"0..1 has 0..1",
+				"0..* applies 0..*",
+				"╎",
+			],
+		},
+		{
+			status: "warning-fallback",
+			name: "flowchart unclosed bracket",
+			source: fence("flowchart LR\n  A[unclosed --> B"),
+			expectedWarning: 'Mermaid diagram not rendered: node "A": label is missing its closing `]`',
+		},
+		{
+			status: "warning-fallback",
+			name: "flowchart (((doublecircle))) shape",
+			source: fence("flowchart LR\n  A(((doublecircle))) --> B[normal]"),
+			expectedWarning: 'Mermaid diagram not rendered: dropped, expected a link: ") --> B[normal]"',
+		},
+		{
+			status: "warning-fallback",
+			name: "flowchart Mermaid v11 @{ shape: ... } syntax",
+			source: fence('flowchart LR\n  A@{ shape: cyl, label: "Database" } --> B[Service]'),
+			expectedWarning:
+				'Mermaid diagram not rendered: dropped, expected a link: "@{ shape: cyl, label: "Database" } --> B[Service]"',
+		},
+		{
+			status: "warning-fallback",
+			name: "sequenceDiagram with unreadable final line",
+			source: fence("sequenceDiagram\n  Alice->>Bob: Hello\n  unreadable final line"),
+			expectedWarning:
+				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+		},
+		{
+			status: "warning-fallback",
+			name: "stateDiagram-v2 with unreadable final line",
+			source: fence("stateDiagram-v2\n  [*] --> Idle\n  unreadable final line"),
+			expectedWarning:
+				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+		},
+		{
+			status: "warning-fallback",
+			name: "classDiagram with unreadable final line",
+			source: fence("classDiagram\n  Animal <|-- Duck\n  unreadable final line"),
+			expectedWarning:
+				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+		},
+		{
+			status: "warning-fallback",
+			name: "erDiagram with unreadable final line",
+			source: fence("erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  unreadable final line"),
+			expectedWarning:
+				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+		},
+		{
+			status: "source-fallback",
+			name: "YAML frontmatter before flowchart",
+			source: fence("---\ntitle: Sample\n---\nflowchart LR\n  A --> B"),
+		},
+		{
+			status: "source-fallback",
+			name: "multi-word ER entity alias",
+			source: fence('erDiagram\n  CUSTOMER["Customer Account"] ||--o{ ORDER : places'),
+		},
+		...unsupportedMermaid12Headers.map(
+			([header, body]): MermaidCase => ({
+				status: "source-fallback",
+				name: `unsupported Mermaid 12.2.0 header: ${header}`,
+				source: fence(body),
+			}),
+		),
 	];
 
-	for (const family of fiveFamilies) {
-		const renderedPlain = transformBuiltInMermaid(family.source, 100);
-		assert.ok(!renderedPlain.includes("```mermaid"), `${family.name} replaces mermaid fence at width 100`);
-		assert.ok(
-			(renderedPlain.includes("┌") || renderedPlain.includes("╭")) && renderedPlain.includes("│"),
-			`${family.name} produces Unicode box-drawing characters`,
-		);
+	for (const testCase of mermaidCases) {
+		const plainOutput = transformBuiltInMermaid(testCase.source, 300);
+		const themedOutput = transformBuiltInMermaid(testCase.source, 300, activePiGlobalTheme);
+		const strippedThemedOutput = stripTerminalSequences(themedOutput);
 
-		const renderedThemed = transformBuiltInMermaid(family.source, 100, activePiGlobalTheme);
-		assert.ok(!renderedThemed.includes("```mermaid"), `${family.name} renders with piTheme`);
-		assert.ok(
-			stripTerminalSequences(renderedThemed).includes("┌") || stripTerminalSequences(renderedThemed).includes("╭"),
-			`${family.name} themed output preserves box-drawing characters`,
-		);
+		switch (testCase.status) {
+			case "rendered": {
+				assert.ok(
+					!plainOutput.includes("```mermaid"),
+					`${testCase.name}: plain output replaces mermaid fence`,
+				);
+				assert.ok(
+					!plainOutput.includes("Mermaid diagram not rendered:"),
+					`${testCase.name}: plain output emits no warning`,
+				);
+				assert.ok(
+					!themedOutput.includes("```mermaid"),
+					`${testCase.name}: themed output replaces mermaid fence`,
+				);
+				assert.equal(
+					strippedThemedOutput,
+					plainOutput,
+					`${testCase.name}: stripped themed output matches plain output`,
+				);
+				for (const expected of testCase.expectedSubstrings) {
+					assert.ok(
+						plainOutput.includes(expected),
+						`${testCase.name}: expected rendered output to include ${JSON.stringify(expected)}`,
+					);
+				}
+				break;
+			}
+			case "warning-fallback": {
+				assert.ok(
+					plainOutput.startsWith(`${testCase.source}\n`),
+					`${testCase.name}: plain output preserves original fence before warning`,
+				);
+				assert.ok(
+					plainOutput.includes(testCase.expectedWarning),
+					`${testCase.name}: plain output includes expected warning`,
+				);
+				assert.ok(
+					themedOutput.startsWith(`${testCase.source}\n`),
+					`${testCase.name}: themed output preserves original fence before warning`,
+				);
+				assert.ok(
+					strippedThemedOutput.includes(testCase.expectedWarning),
+					`${testCase.name}: themed output includes expected warning`,
+				);
+				break;
+			}
+			case "source-fallback": {
+				assert.equal(
+					plainOutput,
+					testCase.source,
+					`${testCase.name}: plain output returns exact source fence`,
+				);
+				assert.equal(
+					themedOutput,
+					testCase.source,
+					`${testCase.name}: themed output returns exact source fence`,
+				);
+				break;
+			}
+			default: {
+				const _exhaustive: never = testCase;
+				return _exhaustive;
+			}
+		}
 	}
 
 	const wideSource = [
@@ -391,18 +909,6 @@ test("4. diagramCodeSpan and transformBuiltInMermaid escape backticks, render al
 	].join("\n");
 	const narrowResult = transformBuiltInMermaid(wideSource, 25, activePiGlobalTheme);
 	assert.equal(narrowResult, wideSource);
-
-	const warningSource = [
-		"```mermaid",
-		"flowchart LR",
-		"  A --> B",
-		"  bogus line without link",
-		"```",
-	].join("\n");
-	const warningResult = transformBuiltInMermaid(warningSource, 100, activePiGlobalTheme);
-	const plainWarningResult = stripTerminalSequences(warningResult);
-	assert.ok(warningResult.startsWith(warningSource));
-	assert.ok(plainWarningResult.includes("Mermaid diagram not rendered:"));
 });
 
 test("5. BuiltInDocumentComponent renders every section within width bounds, formats tables, math, diffs, image fallbacks, and refreshes colors on invalidate()", () => {
@@ -440,6 +946,58 @@ test("5. BuiltInDocumentComponent renders every section within width bounds, for
 	assert.ok(mathPlain.includes("∫"));
 	assert.ok(mathPlain.includes("⎛"));
 	assert.ok(mathPlain.includes("⎧"));
+
+	const mermaidPlain = stripTerminalSequences(
+		new BuiltInDocumentComponent(makeDocument("mermaid"), activePiGlobalTheme).render(100).join("\n"),
+	);
+	assert.ok(mermaidPlain.includes("mermaid@12.2.0"), "includes official Mermaid 12.2.0 baseline version");
+	assert.ok(mermaidPlain.includes("grok-mermaid@0.2.3"), "includes bundled grok-mermaid 0.2.3 version");
+	assert.ok(mermaidPlain.includes("subroutine") && mermaidPlain.includes("cylinder"), "renders flowchart box art");
+	assert.ok(
+		mermaidPlain.includes("1. solid open") && mermaidPlain.includes("8. dashed async"),
+		"renders sequenceDiagram box art",
+	);
+	assert.ok(
+		mermaidPlain.includes("●") && mermaidPlain.includes("Waiting for request"),
+		"renders stateDiagram-v2 box art",
+	);
+	assert.ok(
+		mermaidPlain.includes("«interface»") && mermaidPlain.includes("Repository<T>"),
+		"renders classDiagram box art",
+	);
+	assert.ok(
+		mermaidPlain.includes("1 places 0..*") && mermaidPlain.includes("uuid id PK"),
+		"renders erDiagram box art",
+	);
+	assert.ok(
+		mermaidPlain.includes("Mermaid diagram not rendered:"),
+		"includes syntax warning fallback diagnostic",
+	);
+	for (const unsupportedHeader of [
+		"pie title Pets",
+		"gantt",
+		"xychart-beta",
+		"gitGraph",
+		"mindmap",
+		"timeline",
+		"journey",
+		"quadrantChart",
+		"sankey-beta",
+		"requirementDiagram",
+		"C4Context",
+		"kanban",
+		"block-beta",
+		"packet-beta",
+		"architecture-beta",
+		"radar-beta",
+		"treemap",
+		"zenuml",
+	]) {
+		assert.ok(
+			mermaidPlain.includes(unsupportedHeader),
+			`retains source fallback fence for ${unsupportedHeader}`,
+		);
+	}
 
 	const diffRaw = new BuiltInDocumentComponent(makeDocument("diff"), activePiGlobalTheme)
 		.render(100)

@@ -11,10 +11,6 @@ function markdown(source: string): SectionBlock {
 	return { kind: "markdown", source };
 }
 
-function mermaid(source: string): SectionBlock {
-	return markdown("```mermaid\n" + source + "\n```\n");
-}
-
 const BAND_PNG = "iVBORw0KGgoAAAANSUhEUgAAAUAAAAAoCAIAAAAAIrR+AAACdElEQVR42u3TewcQBgAA8ZNkkkySJEmSJJOWrW3t/cyWJJlMkmQmSZIkSSaTJEmSJEmStLS0trX3smVLkiRJkiTJZCZJdrNvsP0xNu73Fc4hOBAfwyH4OA7HkTgax+J4nIiTcQpOw+k4A1/EV/FNfBtn41x8F9/DhbgY38eluBxX4mpci+vxQ/wIN+NW3I47cTfuxf14EA/jUTyOJ/EUfo3f44/4M57DC3gJr+A1vIG38A7+ir/hfXyIf/BIHsjvck/uym25KdflqlyWi3JezsoZOS3fyVfyuZyQY3JEDskB2Sd7ZJfskG2yRTbJRtkg62SNrJIVskw+kCWySBbIfJknc2SWzJQ35BV5QZ6Vp2SqPCGTZIKMkzEySkbIMBkqg2WQDPgrwAAchINxKA7DETgKx+A4nICT8Amcik/hM/g8voyv40ychXNwHs7HBbgIl+AHuAxX4Cpcg+twA27ETbgFt+EO3IV7cB8ewEN4BI/hCfwMv8Rv8TSewbN4Hi/iZbyK1/Em3sa7eA9/xwf4iD/kodyX3+RXuSO35IZckytySS7IOflFfpIf5Bs5JSfluByVw3JQ9ste2S07Zbtslc3ykXwo62WtrJaVslyWyvuyWBbKe/KuzJXZ8o68Ja/JSzJDpss0mSKTZaKMl7EyWkbKcHlchshjMvDvHvAkPo3P/TsHfIyf4Kf4xT88YABJ/rcaOGngJA2cpIGTBk7SwEkaOEkDJw2cpIGTNHDSwEkaOEkDJ2ngpIGTNHCSBk7SwEkDJ2ngJA2cNHCSBk7SwEkaOGngJA2cpIGTNHDSwEkaOEkDJw2cpIGTNHCSBk4aOMl/yZ8SRd1gPq93WQAAAABJRU5ErkJggg==";
 
 export const SECTIONS = {
@@ -171,83 +167,361 @@ x &= \frac{c-b}{a}
 	},
 	mermaid: {
 		title: "Mermaid diagrams",
-		description: "Five native diagram families. Unsupported syntax, warnings, and diagrams wider than the terminal retain their source fences.",
+		description: "Mermaid 12.2.0 vs grok-mermaid 0.2.3 support table, 5 native diagram families, syntax warnings, and source fallbacks.",
 		blocks: [
-			mermaid(`flowchart LR
+			markdown(`Baseline comparison of official \`mermaid@12.2.0\` (35 diagram families) against stock Pi's bundled \`grok-mermaid@0.2.3\` in \`@earendil-works/pi-coding-agent@1.4.0\`.
+
+| Category | Mermaid 12.2.0 families and stock Pi behavior |
+| :--- | :--- |
+| Native (5) | \`flowchart\` (\`graph\`), \`sequenceDiagram\`, \`stateDiagram-v2\` (\`stateDiagram\`), \`classDiagram\` (\`classDiagram-v2\`), and \`erDiagram\` render as box-drawn ASCII and Unicode art when width fits. |
+| Prism (3) | \`pie\`, \`gantt\`, and \`xychart-beta\` (\`xychart\`) stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences in stock Pi, and render as charts when \`prism\` is active. |
+| Source (27) | \`flowchart-elk\`, \`gitGraph\`, \`mindmap\`, \`timeline\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`, \`ishikawa-beta\`, \`venn-beta\`, \`treeView-beta\`, \`swimlane-beta\`, \`usecase-beta\`, \`wardley-beta\`, \`cynefin-beta\`, \`eventmodeling\`, \`agentflow-beta\`, \`railroad-beta\`, and \`info\` stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences. |
+| Warnings | Partial parses emit the original \`\`\`\` \`\`\`mermaid \`\`\`\` source fence followed by \`Mermaid diagram not rendered: ...\`. |
+| Overflow | Diagrams wider than the available terminal width or prefixed with YAML frontmatter (\`---\`) stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning. |
+`),
+			markdown(`### 1. Flowchart (\`flowchart\` and \`graph\`)
+
+Directions (\`LR\`, \`TD\`, \`RL\`, \`BT\`), \`%%{init: ...}%%\` directives, and \`subgraph\` containers.
+
+\`\`\`mermaid
+flowchart LR
+  %%{init: {"theme": "dark"}}%%
   subgraph Input
     A[rect] --> B(round)
   end
-  B -. dotted .-> C{diamond}
-  C ==> D([stadium])`),
-			mermaid(`flowchart TD
-  subgraph Storage
-    A[[subroutine]] --> B[(cylinder)]
-  end
-  B --> C((circle))
-  C -->|solid label| D[done]`),
-			mermaid(`graph LR
-  A[graph alias] --> B[also supported]`),
-			mermaid(`sequenceDiagram
+  B -.-> C{diamond}
+  C ==> D([stadium])
+\`\`\`
+
+\`\`\`mermaid
+graph RL
+  A[Right] --> B[Left]
+\`\`\`
+
+\`\`\`mermaid
+flowchart BT
+  A[Bottom] --> B[Top]
+\`\`\`
+`),
+			markdown(`All 9 native flowchart node shapes (\`[rect]\`, \`(round)\`, \`([stadium])\`, \`[[subroutine]]\`, \`[(cylinder)]\`, \`((circle))\`, \`{diamond}\`, \`{{hexagon}}\`, \`>asymmetric]\`).
+
+\`\`\`mermaid
+flowchart TD
+  N1[rect] --> N2(round)
+  N2 --> N3([stadium])
+  N3 --> N4[[subroutine]]
+  N4 --> N5[(cylinder)]
+  N5 --> N6((circle))
+  N6 --> N7{diamond}
+  N7 --> N8{{hexagon}}
+  N8 --> N9>asymmetric]
+\`\`\`
+
+All 14 link styles (\`-->\`, \`---\`, \`-.->\`, \`-.-\`, \`==>\`, \`===\`, \`<-->\`, \`<--\`, \`--o\`, \`o--o\`, \`--x\`, \`x--x\`, \`-->|label|\`, \`-- inline -->\`) and \`&\` fan-out and fan-in.
+
+\`\`\`mermaid
+flowchart TD
+  A & B --> C & D
+  D --- E
+  E -.-> F
+  F -.- G
+  G ==> H
+  H === I
+  I <--> J
+  J <-- K
+  K --o L
+  L o--o M
+  M --x N
+  N x--x O
+  O -->|label| P
+  P -- inline --> Q
+\`\`\`
+`),
+			markdown(`### 2. Sequence diagram (\`sequenceDiagram\`)
+
+\`autonumber\`, \`participant\` and \`actor\` with \`as\`, all 8 message arrows (\`->\`, \`-->\`, \`->>\`, \`-->>\`, \`-x\`, \`--x\`, \`-)\`, \`--)\`), \`+\` and \`-\` activations, \`Note left of\`, \`Note right of\`, \`Note over\`, and control blocks (\`loop\`, \`alt\`/\`else\`, \`opt\`, \`par\`/\`and\`, \`critical\`/\`option\`, \`break\`).
+
+\`\`\`mermaid
+sequenceDiagram
   autonumber
-  participant U as User
+  actor U as User
+  participant C as Client
   participant S as Server
-  U->>S: Request
-  S->>S: Validate
-  Note right of S: Local check
+  U->C: solid open
+  C-->U: dashed open
+  U->>+C: solid arrow activate
+  C-->>-U: dashed arrow deactivate
+  C-xS: solid cross
+  S--xC: dashed cross
+  C-)S: solid async
+  S--)C: dashed async
+  Note left of U: Left note
+  Note right of S: Right note
+  Note over C,S: Spanning note
   loop Retry
-    U->>S: Poll
-    S-->>U: Status
+    C->>S: poll
   end
   alt Ready
-    S-->>U: Result
-  else Waiting
-    S-->>U: Pending
+    S-->>C: 200 OK
+  else Pending
+    S-->>C: 202 Wait
   end
   opt Cache
-    S->>S: Store result
-  end`),
-			mermaid(`stateDiagram-v2
+    C->>U: cached
+  end
+  par Audit
+    S->>S: log
+  and Notify
+    S->>U: alert
+  end
+  critical Lock
+    C->>S: acquire
+  option Busy
+    S-->>C: retry
+  end
+  break Fatal
+    S--xC: halt
+  end
+\`\`\`
+`),
+			markdown(`### 3. State diagram (\`stateDiagram-v2\` and \`stateDiagram\`)
+
+\`[*]\` start and end terminals, \`state "Label" as id\`, \`id: description\`, \`<<choice>>\`, \`<<fork>>\`, \`<<join>>\`, composite state \`state Comp { ... }\`, and \`note\`.
+
+\`\`\`mermaid
+stateDiagram-v2
   [*] --> Idle
-  state decision <<choice>>
-  Idle: Waiting for a request
-  Idle --> decision: receive
-  decision --> Running: valid
-  decision --> Idle: invalid
-  Running --> [*]: complete`),
-			mermaid(`classDiagram
-  class Reader {
+  state "Idle State" as Idle
+  Idle: Waiting for request
+  state Check <<choice>>
+  state ForkNode <<fork>>
+  state JoinNode <<join>>
+  Idle --> Check: receive
+  Check --> ForkNode: valid
+  Check --> Idle: invalid
+  ForkNode --> Comp
+  state Comp {
+    Running --> Done
+  }
+  Comp --> JoinNode
+  JoinNode --> [*]
+  note right of Idle: Ready for work
+\`\`\`
+
+\`\`\`mermaid
+stateDiagram
+  [*] --> Ready
+  Ready --> [*]
+\`\`\`
+`),
+			markdown(`### 4. Class diagram (\`classDiagram\`)
+
+\`<<interface>>\`, \`+\`/\`-\`/\`#\` visibility, generics \`~T~\` (\`<T>\`), major relationship operators (\`<|--\`, \`<|..\`, \`*--\`, \`o--\`, \`-->\`, \`..>\`, \`--\`, \`..\`), and quoted cardinalities \`"1" --> "0..*"\`.
+
+\`\`\`mermaid
+classDiagram
+  class Repository~T~ {
     <<interface>>
-    +read() string
+    +String id
+    -int retries
+    #bool active
+    +find(id) T
   }
-  class File {
-    -name string
-    #open() bool
-    +read() string
+  class SqlRepo {
+    +connect() bool
   }
-  Reader <|-- File
-  File *-- Buffer
-  Folder o-- File
-  File ..> Decoder`),
-			mermaid(`erDiagram
-  CUSTOMER ||--o{ ORDER : places
-  ORDER }o--|| STORE : belongs
-  CUSTOMER {
-    int id PK
-    string name
+  Base <|-- SqlRepo
+  Repository~T~ <|.. SqlRepo
+  Order *-- LineItem
+  Team o-- Member
+  Service "1" --> "0..*" Order : manages
+  SqlRepo ..> Driver
+  Alpha -- Beta
+  Gamma .. Delta
+\`\`\`
+`),
+			markdown(`### 5. ER diagram (\`erDiagram\`)
+
+Entities with \`PK\`, \`FK\`, and \`UK\` attributes and quoted comments, single-word entity alias \`CUSTOMER[Account]\`, and identifying (\`--\`) and non-identifying (\`..\`) crow's-foot cardinalities (\`||\`, \`|o\`, \`o|\`, \`}o\`, \`o{\`, \`|{\`, \`}|\`).
+
+\`\`\`mermaid
+erDiagram
+  CUSTOMER[Account] {
+    uuid id PK "primary key"
+    string email UK "login email"
   }
   ORDER {
-    int id PK
-    int customer_id FK
+    int id PK "order key"
+    uuid customer_id FK "owner"
   }
-  STORE {
-    int id PK
-  }`),
-			markdown("The next malformed flowchart demonstrates the native syntax warning and source fallback."),
-			mermaid("flowchart LR\n  A[unclosed --> B"),
-			markdown("The next unsupported diagram stays as source. The long chain after it exceeds eighty columns and also stays as source at ordinary terminal widths."),
-			mermaid("pie\n  title Unsupported family\n  \"Examples\" : 3"),
-			mermaid(`flowchart LR
-  A[First long node] --> B[Second long node] --> C[Third long node] --> D[Fourth long node] --> E[Fifth long node] --> F[Sixth long node] --> G[Seventh long node]`),
+  CUSTOMER ||--o{ ORDER : places
+  ORDER |{--|| LINE_ITEM : contains
+  LINE_ITEM }|--|{ TAG : labels
+  TAG |o..o| PROFILE : has
+  PROFILE }o..o{ COUPON : applies
+\`\`\`
+`),
+			markdown(`### 6. Syntax warning fallbacks
+
+Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fence plus \`Mermaid diagram not rendered: ...\` warning for unclosed brackets (\`A[unclosed --> B\`), \`(((doublecircle)))\`, Mermaid v11 \`@{ shape: ... }\`, and an unreadable final line in a strict-grammar diagram.
+
+\`\`\`mermaid
+flowchart LR
+  A[unclosed --> B
+\`\`\`
+
+\`\`\`mermaid
+flowchart LR
+  A(((doublecircle))) --> B[normal]
+\`\`\`
+
+\`\`\`mermaid
+flowchart LR
+  A@{ shape: cyl, label: "Database" } --> B[Service]
+\`\`\`
+
+\`\`\`mermaid
+sequenceDiagram
+  Alice->>Bob: Hello
+  unreadable final line
+\`\`\`
+`),
+			markdown(`### 7. Source fallbacks
+
+Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning for width overflow, YAML frontmatter (\`---\`), and unsupported \`mermaid@12.2.0\` families (\`pie\`, \`gantt\`, \`xychart-beta\`, \`gitGraph\`, \`mindmap\`, \`timeline\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`).
+
+\`\`\`mermaid
+flowchart LR
+  A[First long node] --> B[Second long node] --> C[Third long node] --> D[Fourth long node] --> E[Fifth long node] --> F[Sixth long node] --> G[Seventh long node]
+\`\`\`
+
+\`\`\`mermaid
+---
+title: Frontmatter Fallback
+---
+flowchart LR
+  A --> B
+\`\`\`
+
+\`\`\`mermaid
+pie title Pets
+  "Dogs" : 45
+  "Cats" : 30
+\`\`\`
+
+\`\`\`mermaid
+gantt
+  title Release Plan
+  section Core
+  Build :a1, 2026-01-01, 5d
+\`\`\`
+
+\`\`\`mermaid
+xychart-beta
+  title "Throughput"
+  x-axis [Q1, Q2]
+  bar [12, 18]
+\`\`\`
+
+\`\`\`mermaid
+gitGraph
+  commit
+  branch feat
+  checkout feat
+  commit
+\`\`\`
+
+\`\`\`mermaid
+mindmap
+  root((Pi))
+    Extensions
+    Themes
+\`\`\`
+
+\`\`\`mermaid
+timeline
+  title Releases
+  2026 : v1.4.0
+\`\`\`
+
+\`\`\`mermaid
+journey
+  title Onboarding
+  section Start
+    Run CLI: 5: User
+\`\`\`
+
+\`\`\`mermaid
+quadrantChart
+  title Priority
+  x-axis Low --> High
+  y-axis Low --> High
+  Item A: [0.3, 0.8]
+\`\`\`
+
+\`\`\`mermaid
+sankey-beta
+  Input,Process,10
+\`\`\`
+
+\`\`\`mermaid
+requirementDiagram
+  requirement test_req {
+    id: 1
+    text: verify
+    risk: low
+    verifymethod: test
+  }
+\`\`\`
+
+\`\`\`mermaid
+C4Context
+  Person(user, "User")
+  System(sys, "Pi")
+\`\`\`
+
+\`\`\`mermaid
+kanban
+  Todo
+    [Write tests]
+\`\`\`
+
+\`\`\`mermaid
+block-beta
+  columns 2
+  a["Lexer"] b["Renderer"]
+\`\`\`
+
+\`\`\`mermaid
+packet-beta
+  0-7: "Magic"
+  8-15: "Version"
+\`\`\`
+
+\`\`\`mermaid
+architecture-beta
+  service api(server)[API]
+  service db(database)[DB]
+  api:R --> L:db
+\`\`\`
+
+\`\`\`mermaid
+radar-beta
+  axis Speed, Safety, Ergonomics
+  curve c1{80, 90, 85}
+\`\`\`
+
+\`\`\`mermaid
+treemap
+  "Root"
+    "Leaf": 10
+\`\`\`
+
+\`\`\`mermaid
+zenuml
+  Alice->Bob.greet()
+\`\`\`
+`),
 		],
 	},
 	diff: {
