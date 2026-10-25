@@ -20,7 +20,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test test/recap.test.ts test/you-should-know.test.ts test/prism.test.ts test/uv.test.ts"
+    "test": "node --test test/recap.test.ts test/you-should-know.test.ts test/prism.test.ts test/pi-built-in-render.test.ts test/uv.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
