@@ -521,8 +521,8 @@ test("9-13. retell: empty session, caching, prompt override invalidation, live s
 });
 
 test("Hovering a widget button highlights it, and only one component is highlighted at a time", async () => {
-	const { EL, h: el } = await import("../extensions/prismantis/core/jsx.ts");
-	const { PrismantisComponent } = await import("../extensions/prismantis/renderer.ts");
+	const { EL, h: el } = await import("../extensions/prism/core/jsx.ts");
+	const { PrismComponent } = await import("../extensions/prism/renderer.ts");
 	const { clearHover } = await import("../extensions/lib/pointer-hover.ts");
 	const INVERSE = "\x1b[7m";
 	const h = createHarness();
@@ -544,7 +544,7 @@ test("Hovering a widget button highlights it, and only one component is highligh
 	assert.ok(!row.render(120).join("").includes(INVERSE), "moving to empty space clears the highlight");
 
 	const tree = el(EL.Box, { flexDirection: "column" }, el(EL.Button, { variant: "secondary", label: "⧉ source", onPress: () => {} }));
-	const prism = new PrismantisComponent(() => tree);
+	const prism = new PrismComponent(() => tree);
 	prism.render(40);
 	row.handleMouse(move(x + 2, 0));
 	assert.deepEqual(prism.handleMouse(move(3, 0)), { handled: true, render: true });

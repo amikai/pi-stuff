@@ -9,17 +9,17 @@ RTL and LaTeX math rendering draws right-to-left Hebrew/Arabic prose, tables, qu
 
 ## How to get to it (user POV)
 
-- Run `/prismantis demo-rtl` or receive an assistant reply containing Hebrew/Arabic text or `$...$` / `$$...$$` math blocks.
+- Run `/prism demo-rtl` or receive an assistant reply containing Hebrew/Arabic text or `$...$` / `$$...$$` math blocks.
 
-## Driving it with control-prismantis
+## Driving it with control-prism
 
 Preconditions:
 
-- `.pi/skills/verify/scripts/control-prismantis.mjs doctor --run-id "$RUN_ID"` exits `0`.
+- `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` exits `0`.
 
-- **Render RTL showcase and LaTeX math.** Run `.pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature rtl-latex --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
+- **Render RTL showcase and LaTeX math.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature rtl-latex --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
 - **Proof.** Inspect `artifacts/verify/$RUN_ID/rtl-showcase.txt` and `artifacts/verify/$RUN_ID/latex-math.txt`. `rtl-showcase.txt` contains `עברית מימין לשמאל` and `us-east`, and `latex-math.txt` contains `x² + y² = z²` and `α + β = γ`.
 
 ## Gotchas
 
-- Graphical PNG math rendering requires `latex: true` in `prismantis.json`, `ratex-render` on `PATH`, and a Kitty/Ghostty/iTerm2 image-capable terminal; otherwise formulas render via the built-in Unicode TeX converter.
+- Graphical PNG math rendering requires `latex: true` in `prism.json`, `ratex-render` on `PATH`, and a Kitty/Ghostty/iTerm2 image-capable terminal; otherwise formulas render via the built-in Unicode TeX converter.

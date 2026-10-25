@@ -90,10 +90,10 @@ import {
 import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./core/rtl.ts";
 import { DEFAULT_THEME, isColor, resolveStyle, TOKENS, type Style, type Theme } from "./core/theme.ts";
 import { clearHover, watchPointerLeave } from "../lib/pointer-hover.ts";
-import { PrismantisComponent, renderNode } from "./renderer.ts";
+import { PrismComponent, renderNode } from "./renderer.ts";
 
-const CUSTOM_MESSAGE_TYPE = "prismantis-output";
-const TURN_ENTRY_TYPE = "prismantis-turn";
+const CUSTOM_MESSAGE_TYPE = "prism-output";
+const TURN_ENTRY_TYPE = "prism-turn";
 const TURN_WORD = "prismantis rendering";
 const PI_THEME_SYMBOL = Symbol.for("@earendil-works/pi-coding-agent:theme");
 const LATEX_HINT =
@@ -109,11 +109,11 @@ const LEGACY_OPTION_KEYS = new Set([
 	"issueHint",
 ]);
 
-export type PrismantisOptions = Record<string, unknown> & {
+export type PrismOptions = Record<string, unknown> & {
 	enabled?: boolean;
 };
 
-const DEFAULT_OPTIONS: PrismantisOptions = {
+const DEFAULT_OPTIONS: PrismOptions = {
 	enabled: true,
 	headingStyle: "banner",
 	tableStyle: "box",
@@ -166,7 +166,7 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
 	};
 }
 
-function resolvePrismantisTheme(options: PrismantisOptions, piTheme: PiTheme | undefined): Theme {
+function resolvePrismTheme(options: PrismOptions, piTheme: PiTheme | undefined): Theme {
 	const base = themeFromPiTheme(piTheme);
 	const overrides = Object.fromEntries(
 		TOKENS.filter((k) => isColor(options[`${k}Color`])).map((k) => [k, String(options[`${k}Color`]).trim()]),
@@ -178,20 +178,23 @@ function stripLegacyKeys(raw: Record<string, unknown>): Record<string, unknown> 
 	return Object.fromEntries(Object.entries(raw).filter(([k]) => !LEGACY_OPTION_KEYS.has(k)));
 }
 
-export const storePath = () => join(getAgentDir(), "prismantis.json");
+export const storePath = () => join(getAgentDir(), "prism.json");
+const legacyStorePath = () => join(getAgentDir(), "prismantis.json");
 
-export function loadOptions(): PrismantisOptions {
-	try {
-		const raw = JSON.parse(readFileSync(storePath(), "utf8"));
-		if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-			return { ...DEFAULT_OPTIONS, ...stripLegacyKeys(raw as Record<string, unknown>) };
+export function loadOptions(): PrismOptions {
+	for (const candidate of [storePath(), legacyStorePath()]) {
+		try {
+			const raw = JSON.parse(readFileSync(candidate, "utf8"));
+			if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+				return { ...DEFAULT_OPTIONS, ...stripLegacyKeys(raw as Record<string, unknown>) };
+			}
+		} catch {
 		}
-	} catch {
 	}
 	return { ...DEFAULT_OPTIONS };
 }
 
-export function saveOptions(options: PrismantisOptions): boolean {
+export function saveOptions(options: PrismOptions): boolean {
 	try {
 		const clean = stripLegacyKeys(options);
 		mkdirSync(getAgentDir(), { recursive: true });
@@ -303,7 +306,7 @@ type ActiveMessageHooks = {
 };
 
 let activeHooks: ActiveMessageHooks | null = null;
-const WRAPPED_MARK = Symbol.for("pi-stuff:prismantis-wrapped");
+const WRAPPED_MARK = Symbol.for("pi-stuff:prism-wrapped");
 
 function ensureMessagePrototypesPatched() {
 	const proto = AssistantMessageComponent.prototype as any;
@@ -429,7 +432,7 @@ class SetupPaneComponent implements Component {
 	private lastHits: { row: number; from: number; to: number; onPress: () => void }[] = [];
 	private readonly tui: TUI;
 	private readonly piTheme: PiTheme;
-	private readonly getState: () => { style: Style; options: PrismantisOptions };
+	private readonly getState: () => { style: Style; options: PrismOptions };
 	private readonly onPick: (step: SetupStep, value: string) => void;
 	private readonly drawMd: (style: Style, blocks: Block[], cols: number) => RenderElement[];
 	private readonly close: () => void;
@@ -437,7 +440,7 @@ class SetupPaneComponent implements Component {
 	constructor(
 		tui: TUI,
 		piTheme: PiTheme,
-		getState: () => { style: Style; options: PrismantisOptions },
+		getState: () => { style: Style; options: PrismOptions },
 		onPick: (step: SetupStep, value: string) => void,
 		drawMd: (style: Style, blocks: Block[], cols: number) => RenderElement[],
 		close: () => void,
@@ -560,7 +563,7 @@ class SetupPaneComponent implements Component {
 		};
 
 		return [
-			edge("╭", this.piTheme.bold("prismantis setup"), "╮"),
+			edge("╭", this.piTheme.bold("prism setup"), "╮"),
 			...bodyLines.map((l) => {
 				const cut = truncateToWidth(l, innerWidth);
 				const pad = Math.max(0, innerWidth - visibleWidth(cut));
@@ -598,7 +601,7 @@ type LoadedPicture = { png: string; width: number; height: number; alt: string }
 type PathChecks = { asked: Set<string>; found: Set<string> };
 const MAX_FOUND_PATHS = 2000;
 
-export default function prismantisExtension(pi: ExtensionAPI) {
+export default function prismExtension(pi: ExtensionAPI) {
 	ensureMessagePrototypesPatched();
 
 	let options = loadOptions();
@@ -640,7 +643,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 			lastPiColors = colorsRef;
 			style = {
 				...style,
-				theme: resolvePrismantisTheme(options, piTheme),
+				theme: resolvePrismTheme(options, piTheme),
 			};
 		}
 		return style;
@@ -751,7 +754,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 
 		const missing = maths.filter(({ key }) => !formulasStore[key]);
 		if (missing.length > 0) {
-			const dir = join(tmpdir(), `prismantis-latex-${latexSuffix}`);
+			const dir = join(tmpdir(), `prism-latex-${latexSuffix}`);
 			try {
 				mkdirSync(dir, { recursive: true });
 				const texs = missing.map((m) => m.tex);
@@ -916,8 +919,8 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 	activeHooks = {
 		isEnabled: () => options.enabled !== false,
 		renderAssistantText: (text, isFirstOfReply, messageId, outputPad) => {
-			let comp: PrismantisComponent | undefined;
-			comp = new PrismantisComponent((columns) => {
+			let comp: PrismComponent | undefined;
+			comp = new PrismComponent((columns) => {
 				syncThemeFromPi();
 				const blocks = parseCached(text);
 				if (blocks.length === 0) return h(EL.Text, {}, text);
@@ -940,7 +943,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		},
 		renderUserText: (text, messageId, outputPad) => {
 			if (style.promptStyle === "off" && style.clock === "off") return null;
-			return new PrismantisComponent((columns) => {
+			return new PrismComponent((columns) => {
 				syncThemeFromPi();
 				const at = style.clock === "off" ? undefined : sentAt(sentRecords, text, firstDrawn(messageId));
 				const time = at === undefined ? undefined : clockText(at, Date.now(), style.clock);
@@ -981,9 +984,9 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		return out;
 	});
 
-	function buildPrismantisOutputComponent(rawText: string, outputPad: number | undefined, piTheme: PiTheme): PrismantisComponent {
-		let comp: PrismantisComponent | undefined;
-		comp = new PrismantisComponent((columns) => {
+	function buildPrismOutputComponent(rawText: string, outputPad: number | undefined, piTheme: PiTheme): PrismComponent {
+		let comp: PrismComponent | undefined;
+		comp = new PrismComponent((columns) => {
 			syncThemeFromPi(piTheme);
 			const found = findSetup(rawText);
 			if (found) {
@@ -1005,7 +1008,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 
 	pi.registerEntryRenderer<{ text: string }>(CUSTOM_MESSAGE_TYPE, (entry, _renderOptions, piTheme) => {
 		const rawText = typeof entry.data?.text === "string" ? entry.data.text : "";
-		return buildPrismantisOutputComponent(rawText, 1, piTheme);
+		return buildPrismOutputComponent(rawText, 1, piTheme);
 	});
 
 	pi.registerMessageRenderer<{ text: string }>(CUSTOM_MESSAGE_TYPE, (message, renderOptions, piTheme) => {
@@ -1015,7 +1018,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 				: typeof message.content === "string"
 					? message.content
 					: "";
-		const comp = buildPrismantisOutputComponent(rawText, renderOptions.outputPad, piTheme);
+		const comp = buildPrismOutputComponent(rawText, renderOptions.outputPad, piTheme);
 		const container = new Container();
 		container.addChild(new Spacer(1));
 		container.addChild(comp);
@@ -1026,7 +1029,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		if (options.enabled === false) return undefined;
 		const durationMs = entry.data?.durationMs ?? 0;
 		const recordedAt = entry.data?.at ?? Date.now();
-		return new PrismantisComponent(() => {
+		return new PrismComponent(() => {
 			syncThemeFromPi(piTheme);
 			const time = style.clock === "off" ? undefined : clockText(recordedAt, Date.now(), style.clock);
 			return renderTurnDuration(EL, style, TURN_WORD, durationMs, time);
@@ -1041,7 +1044,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		void Promise.resolve().then(() => ensureMessagePrototypesPatched());
 		refreshFromDisk(ctx.cwd);
 		if (ctx.mode === "tui") {
-			ctx.ui.setWidget("prismantis-hover", (t) => {
+			ctx.ui.setWidget("prism-hover", (t) => {
 				screenTui = t;
 				watchPointerLeave(t);
 				return { render: () => [], invalidate: () => {} };
@@ -1117,7 +1120,7 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		return `${step.title} set to ${value}.`;
 	}
 
-	function sendPrismantisOutput(text: string): void {
+	function sendPrismOutput(text: string): void {
 		if (mirrored(style) && hasRtl(text) && opensLatin(text)) {
 			text = ROW_MARK_TEXT + text;
 		}
@@ -1140,8 +1143,8 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 		return undefined;
 	}
 
-	pi.registerCommand("prismantis", {
-		description: "Pick prismantis styles from samples, copy the last reply, or show the demo",
+	pi.registerCommand("prism", {
+		description: "Pick prism styles from samples, copy the last reply, or show the demo",
 		getArgumentCompletions(prefix: string) {
 			const subcommands = ["setup", "copy", "demo", "demo-rtl"];
 			const trimmed = prefix.trim();
@@ -1173,12 +1176,12 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 
 			if (sub === "demo") {
 				const locale = name ?? process.env.LC_ALL ?? process.env.LANG ?? "";
-				sendPrismantisOutput(showcaseText() + languageShowcase(locale));
+				sendPrismOutput(showcaseText() + languageShowcase(locale));
 				return;
 			}
 
 			if (sub === "demo-rtl") {
-				sendPrismantisOutput(rtlShowcaseText());
+				sendPrismOutput(rtlShowcaseText());
 				return;
 			}
 
@@ -1237,33 +1240,33 @@ export default function prismantisExtension(pi: ExtensionAPI) {
 				const at = name ? SETUP_STEPS.findIndex((s) => s.name === name) : 0;
 				const step = SETUP_STEPS[at];
 				if (!step) {
-					sendPrismantisOutput(`Unknown setup step "${name}". Steps: ${SETUP_STEPS.map((s) => s.name).join(", ")}`);
+					sendPrismOutput(`Unknown setup step "${name}". Steps: ${SETUP_STEPS.map((s) => s.name).join(", ")}`);
 					return;
 				}
 				if (!third) {
-					sendPrismantisOutput(setupText(setupParts(at)));
+					sendPrismOutput(setupText(setupParts(at)));
 					return;
 				}
 				const choices = step.options;
 				const value = /^\d+$/.test(third) ? step.options[Number(third) - 1] : third;
 				if (!value || !choices.includes(value)) {
-					sendPrismantisOutput(
+					sendPrismOutput(
 						`Unknown ${step.name} pick "${third}". Pick 1-${step.options.length} or one of: ${choices.join(", ")}`,
 					);
 					return;
 				}
 				const saved = saveSetupOption(step, value, ctx);
 				if (saved.startsWith("Could not")) {
-					sendPrismantisOutput(saved);
+					sendPrismOutput(saved);
 					return;
 				}
-				sendPrismantisOutput(
+				sendPrismOutput(
 					`${saved}\n\n${at + 1 < SETUP_STEPS.length ? setupText(setupParts(at + 1)) : SETUP_DONE}`,
 				);
 				return;
 			}
 
-			sendPrismantisOutput(helpText());
+			sendPrismOutput(helpText());
 		},
 	});
 }

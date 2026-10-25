@@ -62,14 +62,14 @@ function runDirFor(runId) {
 	if (!runId || !/^[A-Za-z0-9._-]+$/.test(runId)) {
 		throw new Error(`Invalid or missing --run-id: ${runId}`);
 	}
-	return join(tmpdir(), `prismantis-verify-${runId}`);
+	return join(tmpdir(), `prism-verify-${runId}`);
 }
 
 async function createRuntime(runDir) {
 	process.env.PI_CODING_AGENT_DIR = runDir;
 	initTheme("dark");
-	const { default: prismantisExtension, themeFromPiTheme } = await import(
-		pathToFileURL(join(repoRoot, "extensions/prismantis/index.ts")).href
+	const { default: prismExtension, themeFromPiTheme } = await import(
+		pathToFileURL(join(repoRoot, "extensions/prism/index.ts")).href
 	);
 
 	const handlers = new Map();
@@ -137,7 +137,7 @@ async function createRuntime(runDir) {
 		appendEntry: (customType, data) => appendedEntries.push({ customType, data }),
 	};
 
-	prismantisExtension(pi);
+	prismExtension(pi);
 
 	const emit = async (event, payload = {}) => {
 		let last;
@@ -186,7 +186,7 @@ if (cmd === "launch") {
 	mkdirSync(join(runDir, "sessions"), { recursive: true });
 	if (args.config) {
 		const parsed = JSON.parse(args.config);
-		writeFileSync(join(runDir, "prismantis.json"), `${JSON.stringify(parsed, null, 2)}\n`);
+		writeFileSync(join(runDir, "prism.json"), `${JSON.stringify(parsed, null, 2)}\n`);
 	}
 	writeFileSync(
 		join(runDir, "instance.json"),
@@ -199,8 +199,8 @@ if (cmd === "launch") {
 if (cmd === "doctor") {
 	const runDir = runDirFor(args["run-id"]);
 	const instancePath = join(runDir, "instance.json");
-	const extPath = join(repoRoot, "extensions/prismantis/index.ts");
-	const rendererPath = join(repoRoot, "extensions/prismantis/renderer.ts");
+	const extPath = join(repoRoot, "extensions/prism/index.ts");
+	const rendererPath = join(repoRoot, "extensions/prism/renderer.ts");
 	const ok = existsSync(instancePath) && existsSync(extPath) && existsSync(rendererPath);
 	const report = {
 		ok,
@@ -357,7 +357,7 @@ if (cmd === "drive") {
 	}
 
 	if (feature === "setup-commands") {
-		const cmdHandler = rt.commands.get("prismantis");
+		const cmdHandler = rt.commands.get("prism");
 		void cmdHandler.handler("setup", rt.ctx);
 		const overlay = rt.getOverlay();
 		assert.ok(overlay, "setup overlay opened");
@@ -373,23 +373,23 @@ if (cmd === "drive") {
 		overlay.handleInput("\x1b");
 		assert.equal(rt.getOverlay(), null, "overlay closed on Escape");
 
-		const savedConfig = JSON.parse(readFileSync(join(runDir, "prismantis.json"), "utf8"));
-		assert.equal(savedConfig.tableStyle, "rules", "tableStyle saved to prismantis.json");
-		assert.equal(savedConfig.theme, undefined, "no theme key written to prismantis.json");
-		assert.equal(savedConfig.syncPiTheme, undefined, "no syncPiTheme key written to prismantis.json");
-		assert.equal(savedConfig.toolRows, undefined, "no toolRows key written to prismantis.json");
+		const savedConfig = JSON.parse(readFileSync(join(runDir, "prism.json"), "utf8"));
+		assert.equal(savedConfig.tableStyle, "rules", "tableStyle saved to prism.json");
+		assert.equal(savedConfig.theme, undefined, "no theme key written to prism.json");
+		assert.equal(savedConfig.syncPiTheme, undefined, "no syncPiTheme key written to prism.json");
+		assert.equal(savedConfig.toolRows, undefined, "no toolRows key written to prism.json");
 
 		await cmdHandler.handler("", rt.ctx);
-		assert.equal(rt.sentCustomMessages.length, 0, "/prismantis never calls pi.sendMessage");
-		assert.equal(rt.appendedEntries.at(-1)?.customType, "prismantis-output", "/prismantis appends display-only custom entry");
-		const helpRenderer = rt.entryRenderers.get("prismantis-output");
+		assert.equal(rt.sentCustomMessages.length, 0, "/prism never calls pi.sendMessage");
+		assert.equal(rt.appendedEntries.at(-1)?.customType, "prism-output", "/prism appends display-only custom entry");
+		const helpRenderer = rt.entryRenderers.get("prism-output");
 		const helpLines = helpRenderer(rt.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme).render(width);
 		const helpPlain = helpLines.map(stripAnsi).join("\n");
 		assert.ok(!helpPlain.includes("Claude"), "help contains zero Claude references");
 
-		const turnRenderer = rt.entryRenderers.get("prismantis-turn");
+		const turnRenderer = rt.entryRenderers.get("prism-turn");
 		const turnLines = turnRenderer(
-			{ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } },
+			{ type: "custom", customType: "prism-turn", data: { durationMs: 125000, at: Date.now() } },
 			{ expanded: false },
 			activePiGlobalTheme,
 		).render(width);
@@ -409,10 +409,10 @@ if (cmd === "drive") {
 	}
 
 	if (feature === "rtl-latex") {
-		const cmdHandler = rt.commands.get("prismantis");
+		const cmdHandler = rt.commands.get("prism");
 		await cmdHandler.handler("demo-rtl", rt.ctx);
 		const rtlEntry = rt.appendedEntries.at(-1);
-		const outputRenderer = rt.entryRenderers.get("prismantis-output");
+		const outputRenderer = rt.entryRenderers.get("prism-output");
 		const rtlLines = outputRenderer(rtlEntry, { expanded: false }, activePiGlobalTheme).render(width);
 		const rtlPlain = rtlLines.map(stripAnsi).join("\n");
 		assert.ok(rtlPlain.includes("עברית מימין לשמאל"), "renders Hebrew RTL heading");
@@ -483,5 +483,5 @@ if (cmd === "drive") {
 	throw new Error(`Unknown --feature: ${feature}`);
 }
 
-console.error("Usage: control-prismantis.mjs <launch|doctor|drive|cleanup> --run-id <id> [...]");
+console.error("Usage: control-prism.mjs <launch|doctor|drive|cleanup> --run-id <id> [...]");
 process.exit(1);

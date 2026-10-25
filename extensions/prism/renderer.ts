@@ -952,7 +952,7 @@ function currentPiThemeColors(): unknown {
 	return (globalThis as Record<symbol, { colors?: unknown } | undefined>)[PI_THEME_SYMBOL]?.colors;
 }
 
-export class PrismantisComponent implements Component {
+export class PrismComponent implements Component {
 	private readonly buildTree: (width: number) => RenderNode;
 	private readonly paddingX: number;
 	private cachedWidth?: number;

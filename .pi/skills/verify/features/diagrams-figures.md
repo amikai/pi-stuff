@@ -11,15 +11,15 @@ Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, 
 
 ## How to get to it (user POV)
 
-- Receive an assistant reply or run `/prismantis demo` with fenced ` ```mermaid ` or ` ```figure ` blocks that fit within the terminal column width.
+- Receive an assistant reply or run `/prism demo` with fenced ` ```mermaid ` or ` ```figure ` blocks that fit within the terminal column width.
 
-## Driving it with control-prismantis
+## Driving it with control-prism
 
 Preconditions:
 
-- `.pi/skills/verify/scripts/control-prismantis.mjs doctor --run-id "$RUN_ID"` exits `0`.
+- `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` exits `0`.
 
-- **Render all diagram types.** Run `.pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature diagrams-figures --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
+- **Render all diagram types.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature diagrams-figures --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
 - **Proof.** Inspect `artifacts/verify/$RUN_ID/diagrams-figures.txt` and `artifacts/verify/$RUN_ID/diagrams-figures.ansi`. The plain text contains the rendered flowchart boxes (`Request`, `Parse`, `Render`), `Throughput` chart, `Share` pie (`70%`), `Sprint` Gantt schedule, and `┌─ pipeline ─┐` figure box.
 
 ## Gotchas

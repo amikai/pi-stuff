@@ -1,5 +1,5 @@
 export const HINT = [
-	"Replies in this session are drawn by prismantis inside Pi (not a command or tool to call: when asked to show something with prismantis, write it as markdown in the reply).",
+	"Replies in this session are drawn by prism inside Pi (not a command or tool to call: when asked to show something with prism, write it as markdown in the reply).",
 	"Markdown tables, GitHub alerts (> [!WARNING], > [!NOTE]), fenced code with a language tag, and ```mermaid blocks render as colored terminal graphics:",
 	'flowcharts, sequence diagrams, xychart-beta bar or line charts (name each series for the legend: line "east" [..]), pie charts and gantt schedules.',
 	"When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
@@ -8,38 +8,38 @@ export const HINT = [
 ].join(" ");
 
 export const showcaseText = (): string => `
-# prismantis
+# prism
 
 Colored markdown for Pi replies: **bold**, *italic*, ~~struck~~, \`inline code\`, a [link](https://buildwithpi.ai) and a bare URL https://github.com/amikai/pi-stuff, both clickable, numbers like 99.9% and 250ms, paths like ~/src/app.ts.
 
-Paths like ~/src/app.ts, ./README.md and /tmp/app.ts open on click in a terminal that draws hyperlinks, and so does a local link that shows its own path, like [/tmp/notes.md](file:///tmp/notes.md), while slash commands like /prismantis stay text. A local link with any other name, like [notes](file:///tmp/notes.md), draws as its name and target, so it cannot hide where a click goes.
+Paths like ~/src/app.ts, ./README.md and /tmp/app.ts open on click in a terminal that draws hyperlinks, and so does a local link that shows its own path, like [/tmp/notes.md](file:///tmp/notes.md), while slash commands like /prism stay text. A local link with any other name, like [notes](file:///tmp/notes.md), draws as its name and target, so it cannot hide where a click goes.
 
 Paths written without ./, like docs/guide/ or src/app.ts:42, and Windows paths like C:\\work\\plan.md link too, once a check finds them on disk; prose like and/or stays text.
 
 Programs and launchers stay plain text, so a click never runs one: ./install.sh, ~/Desktop/setup.command and /Applications/Calculator.app keep the path color without a link.
 
-Code-shaped prose stays as written: f(*args, **kwargs), a link with parentheses [Foo_(bar)](https://en.wikipedia.org/wiki/Foo_(bar)), a file link [\`index.ts\`](https://github.com/amikai/pi-stuff/blob/main/extensions/prismantis/index.ts) and **bold with *italic* inside**.
+Code-shaped prose stays as written: f(*args, **kwargs), a link with parentheses [Foo_(bar)](https://en.wikipedia.org/wiki/Foo_(bar)), a file link [\`index.ts\`](https://github.com/amikai/pi-stuff/blob/main/extensions/prism/index.ts) and **bold with *italic* inside**.
 
 ## Commands
 
 | Command | Does |
 |---------|------|
-| \`/prismantis\` | Help screen |
-| \`/prismantis copy\` | Copy the last reply, or \`copy code\` for its last code block |
-| \`/prismantis setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
-| \`/prismantis demo\` | This screen |
-| \`/prismantis demo-rtl\` | Hebrew right-to-left showcase |
+| \`/prism\` | Help screen |
+| \`/prism copy\` | Copy the last reply, or \`copy code\` for its last code block |
+| \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
+| \`/prism demo\` | This screen |
+| \`/prism demo-rtl\` | Hebrew right-to-left showcase |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 
 > [!TIP]
-> Any color slot can be overridden in \`~/.pi/agent/prismantis.json\`, such as \`headingColor\` or \`numberColor\`.
+> Any color slot can be overridden in \`~/.pi/agent/prism.json\`, such as \`headingColor\` or \`numberColor\`.
 
 ## Everything it draws
 
 ### Copy tables
 
-Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatted table. \`⧉ html\` shows in a local macOS, Linux or Windows terminal and writes HTML and tab-separated plain text together; Linux needs CopyQ running. Pasted into Slack it makes a native table; Slack keeps cell text but drops bold, links and alignment. If that fails, it copies the plain text alone. Set \`copyButtonStyle\` to \`hover\` in \`~/.pi/agent/prismantis.json\` and each block shows a dim ⧉ instead: point at it for its buttons.
+Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatted table. \`⧉ html\` shows in a local macOS, Linux or Windows terminal and writes HTML and tab-separated plain text together; Linux needs CopyQ running. Pasted into Slack it makes a native table; Slack keeps cell text but drops bold, links and alignment. If that fails, it copies the plain text alone. Set \`copyButtonStyle\` to \`hover\` in \`~/.pi/agent/prism.json\` and each block shows a dim ⧉ instead: point at it for its buttons.
 
 | Item | Quantity[^count] | Status |
 |:-----|---------:|:------:|
@@ -65,7 +65,7 @@ Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatt
 
 ### Your prompts
 
-Scroll up: what you typed draws in a bubble. \`promptStyle\` switches to \`wide\`, \`bar\`, \`chevron\` or \`off\` in \`~/.pi/agent/prismantis.json\`. Set \`clock\` to \`24h\` or \`12h\` and each prompt shows when you sent it, and each turn's last line when it finished.
+Scroll up: what you typed draws in a bubble. \`promptStyle\` switches to \`wide\`, \`bar\`, \`chevron\` or \`off\` in \`~/.pi/agent/prism.json\`. Set \`clock\` to \`24h\` or \`12h\` and each prompt shows when you sent it, and each turn's last line when it finished.
 
 ### Quotes and rules
 
@@ -134,7 +134,7 @@ $$
 
 #### Images
 
-In kitty and Ghostty a PNG on a line of its own draws as a picture: a local path, \`~/\`, \`file://\` or a \`data:\` URL. Web images stay links, prismantis downloads nothing. Other terminals show the alt text in link color.
+In kitty and Ghostty a PNG on a line of its own draws as a picture: a local path, \`~/\`, \`file://\` or a \`data:\` URL. Web images stay links, prism downloads nothing. Other terminals show the alt text in link color.
 
 ![prism band](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAUAAAAAoCAIAAAAAIrR+AAACdElEQVR42u3TewcQBgAA8ZNkkkySJEmSJJOWrW3t/cyWJJlMkmQmSZIkSSaTJEmSJEmStLS0trX3smVLkiRJkiTJZCZJdrNvsP0xNu73Fc4hOBAfwyH4OA7HkTgax+J4nIiTcQpOw+k4A1/EV/FNfBtn41x8F9/DhbgY38eluBxX4mpci+vxQ/wIN+NW3I47cTfuxf14EA/jUTyOJ/EUfo3f44/4M57DC3gJr+A1vIG38A7+ir/hfXyIf/BIHsjvck/uym25KdflqlyWi3JezsoZOS3fyVfyuZyQY3JEDskB2Sd7ZJfskG2yRTbJRtkg62SNrJIVskw+kCWySBbIfJknc2SWzJQ35BV5QZ6Vp2SqPCGTZIKMkzEySkbIMBkqg2WQDPgrwAAchINxKA7DETgKx+A4nICT8Amcik/hM/g8voyv40ychXNwHs7HBbgIl+AHuAxX4Cpcg+twA27ETbgFt+EO3IV7cB8ewEN4BI/hCfwMv8Rv8TSewbN4Hi/iZbyK1/Em3sa7eA9/xwf4iD/kodyX3+RXuSO35IZckytySS7IOflFfpIf5Bs5JSfluByVw3JQ9ste2S07Zbtslc3ykXwo62WtrJaVslyWyvuyWBbKe/KuzJXZ8o68Ja/JSzJDpss0mSKTZaKMl7EyWkbKcHlchshjMvDvHvAkPo3P/TsHfIyf4Kf4xT88YABJ/rcaOGngJA2cpIGTBk7SwEkaOEkDJw2cpIGTNHDSwEkaOEkDJ2ngpIGTNHCSBk7SwEkDJ2ngJA2cNHCSBk7SwEkaOGngJA2cpIGTNHDSwEkaOEkDJw2cpIGTNHCSBk4aOMl/yZ8SRd1gPq93WQAAAABJRU5ErkJggg==)
 
@@ -161,7 +161,7 @@ flowchart LR
 sequenceDiagram
     participant U as You
     participant A as Pi
-    participant P as prismantis
+    participant P as prism
     U->>A: prompt
     A->>P: markdown
     P-->>U: colored reply
@@ -186,7 +186,7 @@ xychart-beta
     line "west" [12, 18, 25, 20, 14]
 \`\`\`
 
-A pie draws round with a legend. Set \`pieStyle\` to \`bars\` in \`~/.pi/agent/prismantis.json\` for one bar per slice:
+A pie draws round with a legend. Set \`pieStyle\` to \`bars\` in \`~/.pi/agent/prism.json\` for one bar per slice:
 
 \`\`\`mermaid
 pie showData title Time per reply stage
@@ -240,21 +240,21 @@ export const helpText = (): string => `
 
 | Command | Does |
 |---------|------|
-| \`/prismantis copy\` | Copy the last reply, or \`copy code\` for its last code block |
-| \`/prismantis setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
-| \`/prismantis demo\` | Full showcase, every element and diagram, plus a section in your language (Korean so far, or \`demo ko\`) |
-| \`/prismantis demo-rtl\` | Hebrew right-to-left showcase |
+| \`/prism copy\` | Copy the last reply, or \`copy code\` for its last code block |
+| \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
+| \`/prism demo\` | Full showcase, every element and diagram, plus a section in your language (Korean so far, or \`demo ko\`) |
+| \`/prism demo-rtl\` | Hebrew right-to-left showcase |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 
 > [!TIP]
-> Any color slot can be overridden in \`~/.pi/agent/prismantis.json\`, such as \`headingColor\` or \`numberColor\`.
+> Any color slot can be overridden in \`~/.pi/agent/prism.json\`, such as \`headingColor\` or \`numberColor\`.
 
 ### Task lists
 
 - [x] Tables, diagrams and charts drawn in the terminal
 - [x] Copy tables as Markdown, art or HTML (macOS/Linux)
-- [ ] Pick a \`taskStyle\` in \`~/.pi/agent/prismantis.json\`: checks, ticks, box or progress
+- [ ] Pick a \`taskStyle\` in \`~/.pi/agent/prism.json\`: checks, ticks, box or progress
 
 \`\`\`mermaid
 flowchart LR
@@ -315,7 +315,7 @@ flowchart LR
 const KOREAN_SHOWCASE = `
 ## 한국어
 
-**안녕하세요**, prismantis는 한국어 답변도 그대로 보여 줍니다. \`kubectl\` 같은 영문 명령어, 숫자 99.9%와 250ms, 경로 ~/src/app.ts도 함께 표시됩니다.
+**안녕하세요**, prism는 한국어 답변도 그대로 보여 줍니다. \`kubectl\` 같은 영문 명령어, 숫자 99.9%와 250ms, 경로 ~/src/app.ts도 함께 표시됩니다.
 
 - 서울 리전과 도쿄 리전에 배포
 - 색상은 Pi의 현재 테마를 따릅니다
@@ -422,7 +422,7 @@ export const setupParts = (at: number): SetupParts => {
 			value,
 			text: `### ${i + 1}. ${value}${step.sample ? `\n\n${step.sample}` : ""}`,
 		})),
-		tail: `Pick with \`/prismantis setup ${step.name} <number or name>\`.${next ? ` Skip with \`/prismantis setup ${next.name}\`.` : ""} Stop any time, \`/prismantis setup\` starts over.`,
+		tail: `Pick with \`/prism setup ${step.name} <number or name>\`.${next ? ` Skip with \`/prism setup ${next.name}\`.` : ""} Stop any time, \`/prism setup\` starts over.`,
 	};
 };
 
@@ -430,12 +430,12 @@ export const setupText = (parts: SetupParts): string =>
 	[parts.head, ...parts.options.map((o) => o.text), parts.tail].join("\n\n");
 
 export const SETUP_PANE_OPENED =
-	"Setup opened in a pane: ↑↓ or Tab moves through the styles with a preview, Enter saves it and shows the next step, Esc closes the pane. `/prismantis setup tables` walks the steps here instead.";
+	"Setup opened in a pane: ↑↓ or Tab moves through the styles with a preview, Enter saves it and shows the next step, Esc closes the pane. `/prism setup tables` walks the steps here instead.";
 
 export const SETUP_PANE_KEYS = "↑↓ or Tab moves, Enter saves and shows the next step, Esc closes.";
 
 export const SETUP_DONE =
-	"Setup done. Run `/prismantis setup` again any time, and `~/.pi/agent/prismantis.json` has every other option.";
+	"Setup done. Run `/prism setup` again any time, and `~/.pi/agent/prism.json` has every other option.";
 
 export const findSetup = (text: string): { at: number; before: string; parts: SetupParts } | undefined => {
 	for (let at = 0; at < SETUP_STEPS.length; at++) {

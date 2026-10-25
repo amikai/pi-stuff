@@ -31,12 +31,12 @@ const { setTheme, theme: activePiGlobalTheme } = await import(
 const { matchesKey, visibleWidth } = await import("@earendil-works/pi-tui");
 initTheme("dark");
 
-const { default: prismantisExtension, themeFromPiTheme } = await import("../extensions/prismantis/index.ts");
-const { EL, h } = await import("../extensions/prismantis/core/jsx.ts");
-const { PrismantisComponent } = await import("../extensions/prismantis/renderer.ts");
+const { default: prismExtension, themeFromPiTheme } = await import("../extensions/prism/index.ts");
+const { EL, h } = await import("../extensions/prism/core/jsx.ts");
+const { PrismComponent } = await import("../extensions/prism/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
-const { tableHtml, tableText } = await import("../extensions/prismantis/core/html.ts");
-const { parse } = await import("../extensions/prismantis/core/markdown.ts");
+const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
+const { parse } = await import("../extensions/prism/core/markdown.ts");
 
 const stripAnsi = (s: string) =>
 	s
@@ -45,10 +45,10 @@ const stripAnsi = (s: string) =>
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
 
 function createHarness(initialConfig?: Record<string, unknown>) {
-	const dir = mkdtempSync(join(tmpdir(), "prismantis-unit-"));
+	const dir = mkdtempSync(join(tmpdir(), "prism-unit-"));
 	process.env.PI_CODING_AGENT_DIR = dir;
 	if (initialConfig) {
-		writeFileSync(join(dir, "prismantis.json"), `${JSON.stringify(initialConfig, null, 2)}\n`);
+		writeFileSync(join(dir, "prism.json"), `${JSON.stringify(initialConfig, null, 2)}\n`);
 	}
 
 	const handlers = new Map<string, ((...args: any[]) => any)[]>();
@@ -129,7 +129,7 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 		},
 	} as any;
 
-	prismantisExtension(pi);
+	prismExtension(pi);
 
 	const emit = async (event: string, payload: any = {}) => {
 		let lastResult: any;
@@ -140,9 +140,9 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 		return lastResult;
 	};
 
-	const readConfig = () => JSON.parse(readFileSync(join(dir, "prismantis.json"), "utf8"));
+	const readConfig = () => JSON.parse(readFileSync(join(dir, "prism.json"), "utf8"));
 	const writeConfig = (data: Record<string, unknown>) =>
-		writeFileSync(join(dir, "prismantis.json"), `${JSON.stringify(data, null, 2)}\n`);
+		writeFileSync(join(dir, "prism.json"), `${JSON.stringify(data, null, 2)}\n`);
 
 	return {
 		dir,
@@ -289,23 +289,23 @@ test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles a
 	assert.ok(bubblePlain.includes("fix the failing test"), "draws prompt text");
 	assert.match(bubblePlain, /\d{2}:\d{2}/, "draws 24h clock timestamp");
 
-	await h.commands.get("prismantis")!.handler("setup prompts wide", h.ctx);
+	await h.commands.get("prism")!.handler("setup prompts wide", h.ctx);
 	userComp.rebuild();
 	const widePlain = stripAnsi(userComp.render(80).join("\n"));
 	assert.ok(widePlain.includes(`╭${"─".repeat(76)}╮`), "wide prompt spans full content width");
 
-	await h.commands.get("prismantis")!.handler("setup prompts chevron", h.ctx);
+	await h.commands.get("prism")!.handler("setup prompts chevron", h.ctx);
 	userComp.rebuild();
 	const chevronPlain = stripAnsi(userComp.render(80).join("\n"));
 	assert.ok(chevronPlain.includes("› "), "draws chevron prompt marker");
 });
 
-test("4. /prismantis commands, interactive setup pane, pi theme tracking, and turn duration entry work", async () => {
+test("4. /prism commands, interactive setup pane, pi theme tracking, and turn duration entry work", async () => {
 	setTheme("dark");
 	const h = createHarness({ clock: "24h" });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
-	assert.equal(h.getActivePiTheme(), "system", "prismantis never calls ctx.ui.setTheme");
+	assert.equal(h.getActivePiTheme(), "system", "prism never calls ctx.ui.setTheme");
 
 	const comp = new AssistantMessageComponent({
 		role: "assistant",
@@ -315,14 +315,14 @@ test("4. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	const darkRendered = comp.render(80).join("\n");
 	setTheme("light");
 	const lightRendered = comp.render(80).join("\n");
-	assert.notEqual(darkRendered, lightRendered, "switching pi theme dynamically updates prismantis colors");
+	assert.notEqual(darkRendered, lightRendered, "switching pi theme dynamically updates prism colors");
 	setTheme("dark");
 
-	const cmd = h.commands.get("prismantis")!;
+	const cmd = h.commands.get("prism")!;
 	await cmd.handler("demo ko", h.ctx);
 	assert.equal(h.sentCustomMessages.length, 0, "does not call pi.sendMessage (never enters LLM context)");
-	assert.equal(h.appendedEntries.at(-1)?.customType, "prismantis-output", "appends display-only custom entry");
-	const outputEntryRenderer = h.entryRenderers.get("prismantis-output")!;
+	assert.equal(h.appendedEntries.at(-1)?.customType, "prism-output", "appends display-only custom entry");
+	const outputEntryRenderer = h.entryRenderers.get("prism-output")!;
 	const demoComp = outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme);
 	const demoPlain = stripAnsi(demoComp.render(96).join("\n"));
 	assert.ok(demoPlain.includes("한국어"), "demo ko includes Korean showcase");
@@ -338,11 +338,11 @@ test("4. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 		type: "context",
 		messages: [
 			{ role: "user", content: "hello" },
-			{ role: "custom", customType: "prismantis-output", content: "demo" },
+			{ role: "custom", customType: "prism-output", content: "demo" },
 		],
 	};
 	const filteredCtx = await h.emit("context", ctxEvent);
-	assert.deepEqual(filteredCtx, { messages: [{ role: "user", content: "hello" }] }, "filters prismantis-output from LLM context");
+	assert.deepEqual(filteredCtx, { messages: [{ role: "user", content: "hello" }] }, "filters prism-output from LLM context");
 
 	void cmd.handler("setup", h.ctx);
 	const overlay = h.getOverlay();
@@ -351,9 +351,9 @@ test("4. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	assert.ok(initialOverlayPlain.includes("Setup 1/7: Tables"), "renders step 1 (Tables) in 7-step setup overlay");
 	overlay.handleInput("\x1b[B");
 	overlay.handleInput("\r");
-	assert.equal(h.readConfig().tableStyle, "rules", "saves selected tableStyle to prismantis.json");
-	assert.equal(h.readConfig().theme, undefined, "does not write theme to prismantis.json");
-	assert.equal(h.readConfig().syncPiTheme, undefined, "does not write syncPiTheme to prismantis.json");
+	assert.equal(h.readConfig().tableStyle, "rules", "saves selected tableStyle to prism.json");
+	assert.equal(h.readConfig().theme, undefined, "does not write theme to prism.json");
+	assert.equal(h.readConfig().syncPiTheme, undefined, "does not write syncPiTheme to prism.json");
 	const step2Plain = stripAnsi(overlay.render(90).join("\n"));
 	assert.ok(step2Plain.includes("Setup 2/7: Tasks"), "advances to step 2 (Tasks) after Enter");
 	overlay.handleInput("\x1b");
@@ -368,7 +368,7 @@ test("4. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	};
 	await h.emit("before_agent_start", startEvent);
 	assert.ok(
-		startEvent.systemPromptOptions.guidelines.some((g) => g.includes("drawn by prismantis inside Pi")),
+		startEvent.systemPromptOptions.guidelines.some((g) => g.includes("drawn by prism inside Pi")),
 		"injects Pi-native diagram hint into guidelines",
 	);
 	assert.ok(
@@ -380,9 +380,9 @@ test("4. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 		"injects figure hint into guidelines",
 	);
 
-	const entryRenderer = h.entryRenderers.get("prismantis-turn")!;
+	const entryRenderer = h.entryRenderers.get("prism-turn")!;
 	const turnComp = entryRenderer(
-		{ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } },
+		{ type: "custom", customType: "prism-turn", data: { durationMs: 125000, at: Date.now() } },
 		{ expanded: false },
 		activePiGlobalTheme,
 	);
@@ -412,7 +412,7 @@ function hoverFixture() {
 		h(EL.Text, { hover: { color: "#ff0000" }, onPress: () => {} }, "styled link"),
 		h(EL.Text, {}, "plain text"),
 	);
-	const comp = new PrismantisComponent(() => tree);
+	const comp = new PrismComponent(() => tree);
 	comp.render(40);
 	return comp;
 }

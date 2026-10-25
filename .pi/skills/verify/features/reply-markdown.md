@@ -13,13 +13,13 @@ Reply Markdown rendering draws assistant replies with styled headings, bordered 
 - Receive an assistant reply containing Markdown headings, tables, alerts, task items, inline file paths, footnotes, and a fenced code block over 30 lines.
 - Click `[ +N more lines ]` at the bottom of a folded code block to expand it, and `[ show less ]` to fold it back.
 
-## Driving it with control-prismantis
+## Driving it with control-prism
 
 Preconditions:
 
-- `.pi/skills/verify/scripts/control-prismantis.mjs doctor --run-id "$RUN_ID"` exits `0`.
+- `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` exits `0`.
 
-- **Render and unfold reply.** Run `.pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature reply-markdown --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
+- **Render and unfold reply.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature reply-markdown --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
 - **Proof.** Inspect `artifacts/verify/$RUN_ID/reply-folded.txt`, `artifacts/verify/$RUN_ID/reply-unfolded.txt`, and `artifacts/verify/$RUN_ID/reply-unfolded.json`. `reply-folded.txt` shows `┏━━━━━━━━━━━━━━━┓`, `╞═════════╪════════╡`, and `[ +15 more lines ]` without `const item35 = 35;`. `reply-unfolded.txt` shows `const item35 = 35;` and `[ show less ]`, and `reply-unfolded.json` reports `"hasHyperlink": true`.
 
 ## Gotchas
