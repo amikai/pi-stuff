@@ -35,6 +35,7 @@ Run the harness against a mapped feature in [`features/`](features/):
 ```bash
 .pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature reply-markdown --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature diagrams-figures --out "artifacts/verify/$RUN_ID"
+.pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature rtl-latex --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature setup-commands --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature theme-sync --out "artifacts/verify/$RUN_ID"
 ```

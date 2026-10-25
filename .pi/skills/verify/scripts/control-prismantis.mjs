@@ -408,6 +408,39 @@ if (cmd === "drive") {
 		process.exit(0);
 	}
 
+	if (feature === "rtl-latex") {
+		const cmdHandler = rt.commands.get("prismantis");
+		await cmdHandler.handler("demo-rtl", rt.ctx);
+		const rtlEntry = rt.appendedEntries.at(-1);
+		const outputRenderer = rt.entryRenderers.get("prismantis-output");
+		const rtlLines = outputRenderer(rtlEntry, { expanded: false }, activePiGlobalTheme).render(width);
+		const rtlPlain = rtlLines.map(stripAnsi).join("\n");
+		assert.ok(rtlPlain.includes("עברית מימין לשמאל"), "renders Hebrew RTL heading");
+		assert.ok(rtlPlain.includes("us-east"), "renders mixed LTR inside RTL table/list");
+
+		const mathMd = [
+			"Inline math $x^2 + y^2 = z^2$ and display math:",
+			"",
+			"$$",
+			"\\alpha + \\beta = \\gamma",
+			"$$",
+		].join("\n");
+		const mathComp = new AssistantMessageComponent({
+			role: "assistant",
+			content: [{ type: "text", text: mathMd }],
+			timestamp: 4000,
+		});
+		const mathLines = mathComp.render(width);
+		const mathPlain = mathLines.map(stripAnsi).join("\n");
+		assert.ok(mathPlain.includes("x² + y² = z²"), "renders inline TeX math as Unicode");
+		assert.ok(mathPlain.includes("α + β = γ"), "renders display TeX math block");
+
+		writeArtifacts(outDir, "rtl-showcase", rtlLines, { feature, section: "rtl", width });
+		writeArtifacts(outDir, "latex-math", mathLines, { feature, section: "latex", width });
+		console.log(JSON.stringify({ ok: true, feature, outDir }));
+		process.exit(0);
+	}
+
 	if (feature === "theme-sync") {
 		setTheme("dark");
 		const comp = new AssistantMessageComponent({

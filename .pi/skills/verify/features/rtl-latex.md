@@ -1,0 +1,25 @@
+# RTL and LaTeX math rendering
+
+RTL and LaTeX math rendering draws right-to-left Hebrew/Arabic prose, tables, quotes, lists, and Mermaid diagrams in display order, and renders inline `$...$` and display `$$...$$` / ` ```math ` TeX formulas.
+
+## Sub-features
+
+- `rtl-layout` reorders and right-aligns Hebrew headings, paragraphs, blockquotes, lists, tables, and Mermaid diagrams while keeping embedded LTR code and numbers intact.
+- `latex-unicode` converts inline `$x^2 + y^2 = z^2$` and display `$$...$$` TeX expressions into styled Unicode math (or PNG images when `latex: true` and `ratex-render` + terminal image protocol are active).
+
+## How to get to it (user POV)
+
+- Run `/prismantis demo-rtl` or receive an assistant reply containing Hebrew/Arabic text or `$...$` / `$$...$$` math blocks.
+
+## Driving it with control-prismantis
+
+Preconditions:
+
+- `.pi/skills/verify/scripts/control-prismantis.mjs doctor --run-id "$RUN_ID"` exits `0`.
+
+- **Render RTL showcase and LaTeX math.** Run `.pi/skills/verify/scripts/control-prismantis.mjs drive --run-id "$RUN_ID" --feature rtl-latex --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
+- **Proof.** Inspect `artifacts/verify/$RUN_ID/rtl-showcase.txt` and `artifacts/verify/$RUN_ID/latex-math.txt`. `rtl-showcase.txt` contains `עברית מימין לשמאל` and `us-east`, and `latex-math.txt` contains `x² + y² = z²` and `α + β = γ`.
+
+## Gotchas
+
+- Graphical PNG math rendering requires `latex: true` in `prismantis.json`, `ratex-render` on `PATH`, and a Kitty/Ghostty/iTerm2 image-capable terminal; otherwise formulas render via the built-in Unicode TeX converter.
