@@ -38,7 +38,8 @@ const SYNTAX_ERROR = /^ERROR(?=\r?\n|$)(?:\r?\n(\d+))?(?:\r?\n([^\r\n]*))?/
 const MESSAGE_LIMIT = 160
 
 export const plantumlCache = new Map<string, PlantUmlEntry>()
-export const inFlight = new Set<string>()
+// Pi rebuilds the component on every streamed token, so each source key keeps every caller's invalidate, not only the first.
+export const inFlight = new Map<string, Set<() => void>>()
 
 const lookup = (key: string): PlantUmlEntry | undefined => {
   const hit = plantumlCache.get(key)
@@ -174,13 +175,14 @@ const render = async (source: string, mode: PlantUmlMode, style: Style): Promise
 }
 
 const start = (key: string, source: string, style: Style, hooks: PlantUmlHooks): void => {
-  inFlight.add(key)
+  const invalidators = new Set<() => void>()
+  inFlight.set(key, invalidators)
   render(source, hooks.mode, style)
     .catch(() => failure('plantuml CLI failed'))
     .then(entry => store(key, entry))
     .finally(() => {
       inFlight.delete(key)
-      hooks.onInvalidate?.()
+      for (const invalidate of invalidators) invalidate()
       hooks.requestRender()
     })
     .catch(() => {})
@@ -203,6 +205,7 @@ export const drawPlantUml = (el: ElementTable, style: Style, blocks: Block[], co
         start(key, source, style, hooks)
       }
     }
+    if (!entry && hooks.onInvalidate) inFlight.get(key)?.add(hooks.onInvalidate)
     if (!entry) continue
     if (entry.kind === 'error') {
       drawn.set(i, { note: entry.note })
