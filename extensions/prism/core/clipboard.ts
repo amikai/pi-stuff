@@ -67,3 +67,26 @@ export const clipboardCommand = (backend: ClipboardBackend, html: string, text: 
       ? { argv: ['/usr/bin/osascript', '-l', 'JavaScript', '-e', MAC_TABLE_COPY], failure: 'macOS clipboard helper failed' }
       : { argv: ['copyq', 'eval', LINUX_TABLE_COPY, '-'], failure: 'CopyQ failed; install and start CopyQ in the graphical session' },
   }
+
+// stdin is the raw PNG bytes. TIFF goes beside PNG because older Cocoa apps paste only TIFF.
+export const MAC_PNG_COPY = `
+ObjC.import('AppKit')
+var data = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile
+var image = $.NSImage.alloc.initWithData(data)
+if (image.isNil()) throw new Error('Not a PNG image')
+var item = $.NSPasteboardItem.alloc.init
+if (!item.setDataForType(data, $.NSPasteboardTypePNG)) throw new Error('Cannot encode image')
+var tiff = image.TIFFRepresentation
+if (!tiff.isNil()) item.setDataForType(tiff, $.NSPasteboardTypeTIFF)
+var pasteboard = $.NSPasteboard.generalPasteboard
+if (!pasteboard || !pasteboard.writeObjects) throw new Error('macOS clipboard is unavailable to this session')
+pasteboard.clearContents
+if (!pasteboard.writeObjects($.NSArray.arrayWithObject(item))) throw new Error('Cannot write clipboard')
+var back = pasteboard.dataForType($.NSPasteboardTypePNG)
+if (back.isNil() || !back.isEqualToData(data)) throw new Error('Clipboard verification failed')
+`
+
+export const pngCopyCommand = (osascript: string) => ({
+  argv: [osascript, '-l', 'JavaScript', '-e', MAC_PNG_COPY],
+  failure: 'macOS clipboard helper failed',
+})
