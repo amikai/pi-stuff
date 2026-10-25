@@ -19,10 +19,10 @@ Preconditions:
 
 - `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` exits `0`.
 
-- **Render and unfold reply.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature reply-markdown --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
+- **Render and unfold reply.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature reply-markdown --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contains `"ok":true`.
 - **Proof.** Inspect `artifacts/verify/$RUN_ID/reply-folded.txt`, `artifacts/verify/$RUN_ID/reply-unfolded.txt`, and `artifacts/verify/$RUN_ID/reply-unfolded.json`. `reply-folded.txt` shows `┏━━━━━━━━━━━━━━━┓`, `╞═════════╪════════╡`, and `[ +15 more lines ]` without `const item35 = 35;`. `reply-unfolded.txt` shows `const item35 = 35;` and `[ show less ]`, and `reply-unfolded.json` reports `"hasHyperlink": true`.
 
 ## Gotchas
 
 - Terminal hyperlinks require either a terminal that supports OSC-8 or `FORCE_HYPERLINK=1`.
-- Executable scripts (`.sh`, `.command`, `.app`) are intentionally styled in path color without a clickable `file://` link.
+- Launchers and scripts (such as `.sh`, `.command`, `.app`, `.js`, `.py`, `.exe`; the full list is `LAUNCHERS` in `extensions/prism/core/render.ts`) are intentionally styled in path color without a clickable `file://` link.

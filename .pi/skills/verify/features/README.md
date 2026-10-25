@@ -6,7 +6,7 @@ This directory is the maintained source for verifying the user-facing rendering 
 
 - Initialize an isolated run directory with `.pi/skills/verify/scripts/control-prism.mjs launch --run-id "$RUN_ID"`.
 - Run `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` and require `"ok": true` and exit code `0`.
-- Never drive against `~/.pi/agent`; every run uses `/tmp/prism-verify-$RUN_ID`.
+- Never drive against `~/.pi/agent`; every run uses `$TMPDIR/prism-verify-$RUN_ID` (Node's `os.tmpdir()`, under `/var/folders` on macOS).
 
 ## Driving conventions
 
@@ -36,3 +36,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [RTL and LaTeX math rendering](./rtl-latex.md) covers Hebrew right-to-left prose, tables, and diagrams plus inline and display TeX math rendering.
 - [Setup overlay and commands](./setup-commands.md) covers `/prism setup` 7-step style navigation, `prism.json` persistence, `✻ prismantis rendering for ...` turn duration, and `/prism` display-only custom entries that never leak into LLM context.
 - [Pi theme synchronization](./theme-sync.md) covers deriving `prism`'s 20 color slots from Pi's active theme and dynamically repainting when Pi switches between `dark` and `light`.
+- [PlantUML diagrams](./plantuml.md) covers tagged, untagged, and unfenced PlantUML blocks drawn as box art or PNG, the sandboxed include note, and the async redraw in a live TUI, with and without a prior `/prism setup` close.

@@ -19,9 +19,10 @@ Preconditions:
 
 - `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` exits `0`.
 
-- **Render all diagram types.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature diagrams-figures --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contain `"ok": true`.
+- **Render all diagram types.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature diagrams-figures --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contains `"ok":true`.
 - **Proof.** Inspect `artifacts/verify/$RUN_ID/diagrams-figures.txt` and `artifacts/verify/$RUN_ID/diagrams-figures.ansi`. The plain text contains the rendered flowchart boxes (`Request`, `Parse`, `Render`), `Throughput` chart, `Share` pie (`70%`), `Sprint` Gantt schedule, and `┌─ pipeline ─┐` figure box.
 
 ## Gotchas
 
 - A Mermaid diagram wider than the current terminal width intentionally stays as source code with a dim note `diagram is <N> cols, terminal is <M>` above the fence so lines do not wrap and corrupt the box art.
+- A Mermaid kind outside the supported set stays as source with the note `<kind> diagrams draw as source for now`.
