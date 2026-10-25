@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync, inflateRawSync } from "node:zlib";
 
 import type { Desktop } from "../extensions/prism/desktop.ts";
@@ -47,7 +47,10 @@ const {
 const { setTheme, theme: activePiGlobalTheme } = await import(
 	pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
 );
-const { getCellDimensions, matchesKey, resetCapabilitiesCache, setCapabilities, setCellDimensions, visibleWidth } = await import("@earendil-works/pi-tui");
+const { Container, getCellDimensions, matchesKey, resetCapabilitiesCache, ScrollView, setCapabilities, setCellDimensions, Text, visibleWidth } = await import("@earendil-works/pi-tui");
+const { renderLayoutFrame } = await import(
+	pathToFileURL(resolve(dirname(realpathSync(fileURLToPath(import.meta.resolve("@earendil-works/pi-tui", parentURL)))), "layout.js")).href
+);
 initTheme("dark");
 
 const { default: prismExtension, themeFromPiTheme } = await import("../extensions/prism/index.ts");
@@ -1405,4 +1408,38 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	assert.deepEqual(missing.at("warning"), ["Quick Look helper could not be built (swiftc not found), using qlmanage"], "a missing swiftc warns and falls back");
 	assert.deepEqual(missing.at("error"), ["Quick Look is unavailable"], "a missing qlmanage after that reports a failure");
 	assert.equal(systemDesktop({ pictures: false }).pictures, false, "pictures follows the option");
+});
+
+test("26. a plantuml image stays drawn while its top rows are scrolled above pi's fullscreen viewport", async () => {
+	const fake = plantumlFixture({ images: "kitty", png: pngOf(320, 600) });
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(diagram("scroll"));
+	comp.render(100);
+	await until(() => inFlight.size === 0);
+	const lines = comp.render(100);
+	const at = lines.findIndex((line) => line.includes(KITTY_IMAGE));
+	assert.ok(at >= 0, "the diagram is drawn as an image");
+	const rows = Number(/[,;]r=(\d+)/.exec(lines[at]!)?.[1]);
+	assert.ok(rows > 2, `the image spans ${rows} rows`);
+
+	const body = new Container();
+	body.addChild(new Text("Before the reply", 0, 0));
+	body.addChild(comp);
+	for (let i = 0; i < rows + 10; i++) body.addChild(new Text(`After the reply ${i}`, 0, 0));
+	const view = new ScrollView(body);
+	const height = rows + 2;
+	renderLayoutFrame(view, 100, height, () => {});
+	const scrolledAway = Array.from({ length: rows - 1 }, (_, i) => i + 1);
+	const topRows = scrolledAway.map((k) => {
+		view.scrollTo(1 + at + k);
+		const top = renderLayoutFrame(view, 100, height, () => {}).lines[0];
+		return top.includes(KITTY_IMAGE) ? `${k} away: image, ${/[,;]r=(\d+)/.exec(top)?.[1]} rows` : `${k} away: ${JSON.stringify(stripAnsi(top))}`;
+	});
+	assert.deepEqual(topRows, scrolledAway.map((k) => `${k} away: image, ${rows - k} rows`), "the top row draws the image cropped to the rows still in view");
 });
