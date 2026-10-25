@@ -211,7 +211,10 @@ export const drawPlantUml = (el: ElementTable, style: Style, blocks: Block[], co
       drawn.set(i, { note: entry.note })
     } else if (entry.kind === 'image') {
       const fit = fitImage(entry, columns)
-      drawn.set(i, { element: h(el.Image!, { key: `b${i}`, source: { png: entry.png }, columns: fit.columns, rows: fit.rows, alt: 'plantuml diagram' }) })
+      drawn.set(i, {
+        element: h(el.Image!, { key: `b${i}`, source: { png: entry.png }, columns: fit.columns, rows: fit.rows, alt: 'plantuml diagram' }),
+        png: entry.png,
+      })
     } else {
       const wide = Math.max(...entry.text.split('\n').map(width))
       drawn.set(i, wide > columns - 2 ? { note: `diagram is ${wide} cols, terminal is ${columns}` } : { element: boxArt(el, style, entry.text, `b${i}`), art: entry.text })

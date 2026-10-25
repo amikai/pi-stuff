@@ -86,11 +86,13 @@ import {
 	renderUserPrompt,
 	type CopyButton,
 	type Fold,
+	type PictureButtons,
 	type TerminalEnv,
 } from "./core/render.ts";
 import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./core/rtl.ts";
 import { DEFAULT_THEME, isColor, resolveStyle, TOKENS, type Style, type Theme } from "./core/theme.ts";
 import { clearHover, watchPointerLeave } from "../lib/pointer-hover.ts";
+import { systemDesktop, type Desktop } from "./desktop.ts";
 import { PrismComponent, renderNode, type ImageStore } from "./renderer.ts";
 
 const CUSTOM_MESSAGE_TYPE = "prism-output";
@@ -608,7 +610,10 @@ type LoadedPicture = { png: string; width: number; height: number; alt: string }
 type PathChecks = { asked: Set<string>; found: Set<string> };
 const MAX_FOUND_PATHS = 2000;
 
-export default function prismExtension(pi: ExtensionAPI) {
+export default function prismExtension(
+	pi: ExtensionAPI,
+	desktop: Desktop = systemDesktop({ pictures: detectHtmlClipboardBackend() === "macos" }),
+) {
 	ensureMessagePrototypesPatched();
 
 	let options = loadOptions();
@@ -751,6 +756,31 @@ export default function prismExtension(pi: ExtensionAPI) {
 		};
 	}
 
+	function makePictureButtons(): PictureButtons {
+		return (png, b) => {
+			if (!style.copyButtons || !desktop.pictures) return [];
+			const bytes = () => Buffer.from(png, "base64");
+			return [
+				h(EL.Button, {
+					key: `image${b}`,
+					variant: "primary",
+					label: "⧉ image",
+					onPress: () => {
+						const failure = desktop.copyPng(bytes());
+						if (failure === null) toast("Copied image", "info");
+						else toast(`Image copy failed (${failure})`, "error");
+					},
+				}),
+				h(EL.Button, {
+					key: `preview${b}`,
+					variant: "secondary",
+					label: "preview",
+					onPress: () => desktop.previewPng(bytes(), (reason) => toast(reason, "error")),
+				}),
+			];
+		};
+	}
+
 	function typesetFormulasSync(blocks: Block[]): Map<number, TypesetFormula> {
 		if (!style.latex || !getCapabilities().images) return new Map();
 		const color = ratexColor(style.theme.diagramText ?? style.theme.codeText ?? "#808080");
@@ -874,6 +904,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 		},
 	): RenderElement[] {
 		const copy = makeCopyButton();
+		const picture = makePictureButtons();
 		const fold = makeFolder(options?.onInvalidate);
 		const drawn = drawDiagrams(EL, activeStyle, blocks, columns - markerRoom(activeStyle));
 		if (activeStyle.plantuml) {
@@ -926,6 +957,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 			copy,
 			fold,
 			tip,
+			picture,
 		);
 		const replyBtn = options?.replyText === undefined ? null : copy(options.replyText, "reply", "⧉ copy reply");
 		if (!replyBtn) return elements;
