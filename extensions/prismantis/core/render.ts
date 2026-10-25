@@ -1132,7 +1132,7 @@ const noteTip = (blocks, toast) => {
 };
 
 const NUMBER_AT = 10;
-const NUMBER_MAX = 400;
+const NUMBER_MAX = Infinity;
 const FOLD_AT = 30;
 const FOLD_SHOW = 20;
 
@@ -1429,8 +1429,8 @@ const renderShellResult = (el, style, output) => {
 };
 
 const DIFF_LINES = 20;
-const DIFF_MAX = 400;
-const DIFF_EXTRA = 5000;
+const DIFF_MAX = Infinity;
+const DIFF_EXTRA = Infinity;
 
 
 

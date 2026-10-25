@@ -3,11 +3,10 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 dir=$(mktemp -d "${TMPDIR:-/tmp}/prismantis-test.XXXXXX")
-mkdir -p "$dir/work" "$dir/themes"
-cp "$repo"/themes/prismantis-*.json "$dir/themes/"
+mkdir -p "$dir/work"
 
 echo "config: $dir/prismantis.json"
-echo "try:    /prismantis demo | /prismantis setup | /prismantis theme dracula"
+echo "try:    /prismantis demo | /prismantis setup"
 
 cd "$dir/work"
 PI_CODING_AGENT_DIR="$dir" \

@@ -71,9 +71,6 @@ Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatt
 > Terminals that copy on select (Warp) can turn a click on a copy button into a selection. Use the keyboard shortcut.
 > Selecting a typeset formula copies blank cells. Its copy button copies the LaTeX.
 
-> [!CAUTION]
-> Claude Code refuses trees over 20000 nodes. A code block past about 500 highlighted lines falls back to plain text.
-
 ### Task lists
 
 - [x] Parse the reply
@@ -305,8 +302,6 @@ xychart-beta
     bar [7, 3, 2, 6, 2]
 \`\`\`
 
-> [!CAUTION]
-> Claude Code refuses trees over 20000 nodes. A code block past about 500 highlighted lines falls back to plain text.
 `
 
 export const rtlShowcaseText = (): string => `

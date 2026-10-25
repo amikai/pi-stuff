@@ -25,13 +25,13 @@ const {
 	SessionManager,
 	UserMessageComponent,
 } = await import("@earendil-works/pi-coding-agent");
-const { loadThemeFromPath } = await import(
+const { setTheme, theme: activePiGlobalTheme } = await import(
 	pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
 );
 const { matchesKey, visibleWidth } = await import("@earendil-works/pi-tui");
-initTheme();
+initTheme("dark");
 
-const { default: prismantisExtension } = await import("../extensions/prismantis/index.ts");
+const { default: prismantisExtension, themeFromPiTheme } = await import("../extensions/prismantis/index.ts");
 const { EL, h } = await import("../extensions/prismantis/core/jsx.ts");
 const { PrismantisComponent } = await import("../extensions/prismantis/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
@@ -83,9 +83,6 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 	} as any;
 
 	const sm = SessionManager.inMemory("/tmp");
-	const allThemes = readdirSync(join(repoRoot, "themes"))
-		.filter((f) => f.endsWith(".json"))
-		.map((f) => ({ name: f.replace(/\.json$/, ""), path: join(repoRoot, "themes", f) }));
 
 	const ctx = {
 		mode: "tui",
@@ -93,10 +90,12 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 		cwd: "/tmp/project",
 		sessionManager: sm,
 		ui: {
+			get theme() {
+				return activePiGlobalTheme;
+			},
 			notify: (text: string, level = "info") => {
 				notifications.push({ text, level });
 			},
-			getAllThemes: () => allThemes,
 			setTheme: (name: string) => {
 				activePiTheme = name;
 				return { success: true };
@@ -105,7 +104,7 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 			setWidget: () => {},
 			custom: async (factory: any) => {
 				return new Promise<void>((resolveDone) => {
-					overlayComponent = factory(fakeTui, mockPiTheme, { matches: matchesKey }, () => {
+					overlayComponent = factory(fakeTui, activePiGlobalTheme, { matches: matchesKey }, () => {
 						overlayComponent = null;
 						resolveDone();
 					});
@@ -146,9 +145,12 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 	prismantisExtension(pi);
 
 	const emit = async (event: string, payload: any = {}) => {
+		let lastResult: any;
 		for (const h of handlers.get(event) ?? []) {
-			await h(payload, ctx);
+			const res = await h(payload, ctx);
+			if (res !== undefined) lastResult = res;
 		}
+		return lastResult;
 	};
 
 	const readConfig = () => JSON.parse(readFileSync(join(dir, "prismantis.json"), "utf8"));
@@ -184,15 +186,19 @@ afterEach(() => {
 	cleanupFn?.();
 });
 
-test("1. all 17 generated prismantis themes load and validate in pi, and core matches upstream snapshots", () => {
-	const themesDir = join(repoRoot, "themes");
-	const files = readdirSync(themesDir).filter((f) => f.startsWith("prismantis-") && f.endsWith(".json"));
-	assert.equal(files.length, 17);
-	assert.ok(files.includes("prismantis-neon.json"));
-	for (const file of files) {
-		const loaded = loadThemeFromPath(join(themesDir, file));
-		assert.equal(loaded.name, file.replace(/\.json$/, ""));
-	}
+test("1. prismantis derives its palette from pi's active theme without mutating global theme, and core matches upstream snapshots", async () => {
+	setTheme("dark");
+	const darkPalette = themeFromPiTheme(activePiGlobalTheme);
+	assert.match(darkPalette.accent ?? "", /^#[0-9a-f]{6}$/);
+	assert.match(darkPalette.heading ?? "", /^#[0-9a-f]{6}$/);
+	assert.match(darkPalette.diffAdded ?? "", /^#[0-9a-f]{6}$/);
+	assert.match(darkPalette.diffRemoved ?? "", /^#[0-9a-f]{6}$/);
+
+	setTheme("light");
+	const lightPalette = themeFromPiTheme(activePiGlobalTheme);
+	assert.notEqual(lightPalette.codeText, darkPalette.codeText, "light and dark pi themes produce distinct codeText colors");
+	assert.notEqual(lightPalette.accent, darkPalette.accent, "light and dark pi themes produce distinct accent colors");
+	setTheme("dark");
 
 	const upstreamPrismantis = resolve(repoRoot, "../prismantis");
 	if (existsSync(join(upstreamPrismantis, "docs/demo.md"))) {
@@ -376,8 +382,8 @@ test("4. Tool renderer draws quiet tool rows and clickable diff cards for edit a
 	assert.equal(resultComp.render(80).length, 0, "quiet mode hides read-only tool output");
 
 	const editRenderers = resolver("edit", () => undefined);
-	const patchLines = Array.from({ length: 25 }, (_, i) => `+const line${i + 1} = ${i + 1};`);
-	const patch = `@@ -1,1 +1,25 @@\n-const old = 0;\n${patchLines.join("\n")}`;
+	const patchLines = Array.from({ length: 450 }, (_, i) => `+const line${i + 1} = ${i + 1};`);
+	const patch = `@@ -1,1 +1,450 @@\n-const old = 0;\n${patchLines.join("\n")}`;
 	const editCtx = {
 		...bashCtx,
 		toolCallId: "tc-edit-1",
@@ -391,43 +397,71 @@ test("4. Tool renderer draws quiet tool rows and clickable diff cards for edit a
 	);
 	const diffLines = diffComp.render(80);
 	const diffPlain = stripAnsi(diffLines.join("\n"));
-	assert.ok(diffPlain.includes("+25 −1"), "draws diff header counts");
-	assert.ok(diffPlain.includes("[ +6 more lines ]"), "folds diff card past 20 lines");
+	assert.ok(diffPlain.includes("+450 −1"), "draws diff header counts");
+	assert.ok(diffPlain.includes("[ +431 more lines ]"), "folds diff card past 20 lines");
 
 	diffComp.handleMouse({ type: "press", button: "left", x: 10, y: 2 } as any);
 	diffComp.handleMouse({ type: "click", button: "left", x: 10, y: 2 } as any);
 	const unfoldedDiffPlain = stripAnsi(diffComp.render(80).join("\n"));
-	assert.ok(unfoldedDiffPlain.includes("const line25 = 25;"), "clicking diff card unfolds all lines");
+	assert.ok(unfoldedDiffPlain.includes("const line450 = 450;"), "clicking diff card unfolds all 450 lines without 400-line cap");
 });
 
-test("5. /prismantis commands, interactive setup pane, system prompt hints, and turn duration entry work", async () => {
-	const h = createHarness({ theme: "catppuccin-mocha", clock: "24h" });
+test("5. /prismantis commands, interactive setup pane, pi theme tracking, and turn duration entry work", async () => {
+	setTheme("dark");
+	const h = createHarness({ clock: "24h" });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
-	assert.equal(h.getActivePiTheme(), "prismantis-catppuccin-mocha");
+	assert.equal(h.getActivePiTheme(), "system", "prismantis never calls ctx.ui.setTheme");
+
+	const comp = new AssistantMessageComponent({
+		role: "assistant",
+		content: [{ type: "text", text: "# Heading" }],
+		timestamp: 1500,
+	} as any);
+	const darkRendered = comp.render(80).join("\n");
+	setTheme("light");
+	const lightRendered = comp.render(80).join("\n");
+	assert.notEqual(darkRendered, lightRendered, "switching pi theme dynamically updates prismantis colors");
+	setTheme("dark");
 
 	const cmd = h.commands.get("prismantis")!;
-	await cmd.handler("nord", h.ctx);
-	assert.equal(h.getActivePiTheme(), "prismantis-nord");
-	assert.equal(h.readConfig().theme, "nord");
-
 	await cmd.handler("demo ko", h.ctx);
-	assert.equal(h.sentCustomMessages.at(-1)?.customType, "prismantis-output");
-	const msgRenderer = h.messageRenderers.get("prismantis-output")!;
-	const demoComp = msgRenderer(h.sentCustomMessages.at(-1), { expanded: false, outputPad: 1 }, mockPiTheme);
+	assert.equal(h.sentCustomMessages.length, 0, "does not call pi.sendMessage (never enters LLM context)");
+	assert.equal(h.appendedEntries.at(-1)?.customType, "prismantis-output", "appends display-only custom entry");
+	const outputEntryRenderer = h.entryRenderers.get("prismantis-output")!;
+	const demoComp = outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme);
 	const demoPlain = stripAnsi(demoComp.render(96).join("\n"));
 	assert.ok(demoPlain.includes("한국어"), "demo ko includes Korean showcase");
 	assert.ok(demoPlain.includes("Parse"), "demo renders mermaid diagrams and pie charts");
+
+	await cmd.handler("", h.ctx);
+	const helpComp = outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme);
+	const helpPlain = stripAnsi(helpComp.render(96).join("\n"));
+	assert.ok(!helpPlain.includes("20000 nodes"), "help omits Claude Code 20000-node caution");
+	assert.ok(!helpPlain.includes("17 themes"), "help omits 17 themes section");
+
+	const ctxEvent = {
+		type: "context",
+		messages: [
+			{ role: "user", content: "hello" },
+			{ role: "custom", customType: "prismantis-output", content: "demo" },
+		],
+	};
+	const filteredCtx = await h.emit("context", ctxEvent);
+	assert.deepEqual(filteredCtx, { messages: [{ role: "user", content: "hello" }] }, "filters prismantis-output from LLM context");
 
 	void cmd.handler("setup", h.ctx);
 	const overlay = h.getOverlay();
 	assert.ok(overlay, "opens interactive setup overlay in TUI mode");
 	const initialOverlayPlain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(initialOverlayPlain.includes("Setup 1/11: Theme"), "renders step 1 in setup overlay");
+	assert.ok(initialOverlayPlain.includes("Setup 1/10: Tables"), "renders step 1 (Tables) in setup overlay");
 	overlay.handleInput("\x1b[B");
 	overlay.handleInput("\r");
+	assert.equal(h.readConfig().tableStyle, "rules", "saves selected tableStyle to prismantis.json");
+	assert.equal(h.readConfig().theme, undefined, "does not write theme to prismantis.json");
+	assert.equal(h.readConfig().syncPiTheme, undefined, "does not write syncPiTheme to prismantis.json");
 	const step2Plain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(step2Plain.includes("Setup 2/11: Tables"), "advances to step 2 after Enter");
+	assert.ok(step2Plain.includes("Setup 2/10: Tasks"), "advances to step 2 (Tasks) after Enter");
 	overlay.handleInput("\x1b");
 	assert.equal(h.getOverlay(), null, "Escape closes setup overlay");
 
@@ -449,7 +483,7 @@ test("5. /prismantis commands, interactive setup pane, system prompt hints, and 
 	);
 
 	const entryRenderer = h.entryRenderers.get("prismantis-turn")!;
-	const turnComp = entryRenderer({ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } }, { expanded: false }, mockPiTheme);
+	const turnComp = entryRenderer({ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } }, { expanded: false }, activePiGlobalTheme);
 	const turnPlain = stripAnsi(turnComp.render(80).join("\n"));
 	assert.ok(turnPlain.includes("✻ Baked for 2m 5s"), `expected Baked duration footer, got: ${turnPlain}`);
 
@@ -514,10 +548,10 @@ test("8. Only one element is highlighted across components, and leaving them all
 	assert.equal(clearHover(), false, "nothing left to clear");
 });
 
-test("9. neon theme, table <br> line breaks, and probed loose path hyperlinks work", async () => {
+test("9. color slot overrides, table <br> line breaks, and probed loose path hyperlinks work", async () => {
 	const prevForce = process.env.FORCE_HYPERLINK;
 	process.env.FORCE_HYPERLINK = "1";
-	const h = createHarness({ theme: "catppuccin-mocha" });
+	const h = createHarness({ headingColor: "#ff00ff" });
 	const projectDir = join(h.dir, "workspace");
 	mkdirSync(join(projectDir, "docs", "guide"), { recursive: true });
 	mkdirSync(join(projectDir, "src"), { recursive: true });
@@ -534,11 +568,6 @@ test("9. neon theme, table <br> line breaks, and probed loose path hyperlinks wo
 
 	await h.emit("session_start");
 
-	const cmd = h.commands.get("prismantis")!;
-	await cmd.handler("neon", h.ctx);
-	assert.equal(h.getActivePiTheme(), "prismantis-neon");
-	assert.equal(h.readConfig().theme, "neon");
-
 	const tableMd = [
 		"| Cell | Code |",
 		"|:-----|:-----|",
@@ -552,6 +581,8 @@ test("9. neon theme, table <br> line breaks, and probed loose path hyperlinks wo
 	assert.ok(tableText(tableBlock).includes('"a\nb\nc\nd"\tx<br>y'));
 
 	const reply = [
+		"# Custom Heading",
+		"",
 		tableMd,
 		"",
 		"See docs/guide/, src/app.ts:42, `src/app.ts`, notes.md, missing.ts, later.ts, and/or run.sh.",
@@ -564,6 +595,7 @@ test("9. neon theme, table <br> line breaks, and probed loose path hyperlinks wo
 	} as any);
 
 	const rawRendered = comp.render(100).join("\n");
+	assert.ok(rawRendered.includes("38;2;255;0;255"), "applies headingColor override from prismantis.json");
 	const plainRendered = stripAnsi(rawRendered);
 	assert.ok(plainRendered.includes("x<br>y"), "keeps <br> literal inside inline code");
 	for (const linePart of ["│ a", "│ b", "│ c", "│ d"]) {

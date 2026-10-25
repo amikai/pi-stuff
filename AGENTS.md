@@ -10,4 +10,4 @@ Test-only code lives in `./test` and is never listed in the `pi` manifest. `test
 
 Run `npm test` for the automated test suites (`test/recap.test.ts`, `test/you-should-know.test.ts`, `test/prismantis.test.ts`, and `test/uv.test.ts`). Use `test/recap.sh`, `test/you-should-know.sh`, or `test/prismantis.sh` to drive each extension in a real pi TUI against the faux provider. Each uses its own temp agent dir, so the personal store, log and sessions under `~/.pi/agent` are never touched. See `extensions/recap/README.md`, `extensions/you-should-know/README.md`, and `extensions/prismantis/README.md` for what to check.
 
-To refresh the upstream prismantis core modules and generated pi themes from a local `../prismantis` checkout, run `npm run sync:prismantis`.
+To refresh the upstream prismantis core modules from a local `../prismantis` checkout, run `npm run sync:prismantis`.

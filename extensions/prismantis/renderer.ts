@@ -952,10 +952,17 @@ export function renderNode(node: RenderNode, maxWidth: number): RenderedBox {
 	}
 }
 
+const PI_THEME_SYMBOL = Symbol.for("@earendil-works/pi-coding-agent:theme");
+
+function currentPiThemeColors(): unknown {
+	return (globalThis as Record<symbol, { colors?: unknown } | undefined>)[PI_THEME_SYMBOL]?.colors;
+}
+
 export class PrismantisComponent implements Component {
 	private readonly buildTree: (width: number) => RenderNode;
 	private readonly paddingX: number;
 	private cachedWidth?: number;
+	private cachedThemeColors?: unknown;
 	private cachedLines?: string[];
 	private cachedHits: MouseHit[] = [];
 	private tree?: { width: number; node: RenderNode };
@@ -977,6 +984,11 @@ export class PrismantisComponent implements Component {
 	}
 
 	render(width: number): string[] {
+		const themeColors = currentPiThemeColors();
+		if (themeColors !== this.cachedThemeColors) {
+			this.invalidate();
+			this.cachedThemeColors = themeColors;
+		}
 		if (this.cachedLines && this.cachedWidth === width) {
 			return this.cachedLines;
 		}
