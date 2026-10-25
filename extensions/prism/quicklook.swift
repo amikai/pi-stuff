@@ -50,6 +50,7 @@ enum ZoomSegment: Int, CaseIterable {
 class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
   let urls: [URL]
   private weak var panel: QLPreviewPanel?
+  private var closeObserver: NSObjectProtocol?
 
   init(paths: [String]) {
     self.urls = paths.compactMap { path -> URL? in
@@ -89,10 +90,6 @@ class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource
 
   func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
     return urls[index] as QLPreviewItem
-  }
-
-  @objc private func panelWillClose(_ notification: Notification) {
-    NSApp.terminate(nil)
   }
 
   private func findView(in root: NSView, className: String) -> NSView? {
@@ -212,18 +209,6 @@ class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource
     sendCommandShortcut(segment.shortcut)
   }
 
-  func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
-    guard event.type == .keyDown else { return false }
-    switch event.keyCode {
-    case 49, 53:
-      panel.close()
-      NSApp.terminate(nil)
-      return true
-    default:
-      return false
-    }
-  }
-
   func run() {
     guard !urls.isEmpty else {
       exit(1)
@@ -240,12 +225,13 @@ class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource
     panel.level = .floating
     panel.hidesOnDeactivate = false
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(panelWillClose(_:)),
-      name: NSWindow.willCloseNotification,
-      object: panel
-    )
+    // Observe through a token, not self: endPreviewPanelControl clears the panel's delegate before the close, and
+    // NSWindow then drops its old delegate's window notifications, which would leave the process running.
+    closeObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification,
+      object: panel,
+      queue: .main
+    ) { _ in NSApp.terminate(nil) }
     panel.makeKeyAndOrderFront(nil)
 
     // activate() from macOS 14 only takes focus when the frontmost app yields it, so the panel would open behind the terminal.
