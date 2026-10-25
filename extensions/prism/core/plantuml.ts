@@ -133,6 +133,7 @@ const viaCli = async (source: string, mode: PlantUmlMode, isDark: boolean): Prom
   if (typeof result === 'string') return result
   const syntax = SYNTAX_ERROR.exec(result.out.subarray(0, 1024).toString('utf8'))
   if (syntax) {
+    // PlantUML reports a 0-based line, and counts the @startuml line it adds when the source has none.
     const synthesized = /^@start/im.test(source) ? 0 : 1
     const place = syntax[1] === undefined ? '' : ` (line ${Math.max(1, Number(syntax[1]) + 1 - synthesized)})`
     const message = (syntax[2] ?? '').trim().slice(0, MESSAGE_LIMIT)
@@ -173,6 +174,7 @@ const render = async (source: string, mode: PlantUmlMode, style: Style): Promise
   return failure(cli === 'missing' ? 'plantuml CLI is not installed' : 'plantuml CLI failed')
 }
 
+// Unlike the spawnSync LaTeX path, this runs in the background, because JVM startup and the server fallback would stall the frame.
 const start = (key: string, source: string, style: Style, hooks: PlantUmlHooks): void => {
   inFlight.add(key)
   render(source, hooks.mode, style)
