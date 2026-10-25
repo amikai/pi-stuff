@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
 const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
@@ -37,25 +37,12 @@ const { PrismantisComponent } = await import("../extensions/prismantis/renderer.
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
 const { tableHtml, tableText } = await import("../extensions/prismantis/core/html.ts");
 const { parse } = await import("../extensions/prismantis/core/markdown.ts");
-const { drawDiagrams } = await import("../extensions/prismantis/core/mermaid.ts");
-const { renderBlocks } = await import("../extensions/prismantis/core/render.ts");
-const { resolveStyle } = await import("../extensions/prismantis/core/theme.ts");
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const stripAnsi = (s: string) =>
 	s
 		.replace(/\x1b\[[0-9;]*m/g, "")
 		.replace(/\x1b\]8;;.*?(?:\x07|\x1b\\)/g, "")
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
-
-const mockPiTheme = {
-	fg: (_color: string, text: string) => text,
-	bg: (_color: string, text: string) => text,
-	bold: (text: string) => text,
-	italic: (text: string) => text,
-	underline: (text: string) => text,
-	strikethrough: (text: string) => text,
-} as any;
 
 function createHarness(initialConfig?: Record<string, unknown>) {
 	const dir = mkdtempSync(join(tmpdir(), "prismantis-unit-"));
@@ -186,7 +173,7 @@ afterEach(() => {
 	cleanupFn?.();
 });
 
-test("1. prismantis derives its palette from pi's active theme without mutating global theme, and core matches upstream snapshots", async () => {
+test("1. prismantis derives its palette from pi's active theme without mutating global theme or registering tool renderers", () => {
 	setTheme("dark");
 	const darkPalette = themeFromPiTheme(activePiGlobalTheme);
 	assert.match(darkPalette.accent ?? "", /^#[0-9a-f]{6}$/);
@@ -200,46 +187,13 @@ test("1. prismantis derives its palette from pi's active theme without mutating 
 	assert.notEqual(lightPalette.accent, darkPalette.accent, "light and dark pi themes produce distinct accent colors");
 	setTheme("dark");
 
-	const upstreamPrismantis = resolve(repoRoot, "../prismantis");
-	if (existsSync(join(upstreamPrismantis, "docs/demo.md"))) {
-		const demo = readFileSync(join(upstreamPrismantis, "docs/demo.md"), "utf8");
-		const flags = (p: any) => ["bold", "italic", "underline", "strikethrough", "dim", "inverse"].filter((k) => p?.[k]).join(",");
-		const walk = (node: any, depth: number, out: string[]) => {
-			if (node === null || node === undefined || node === false) return;
-			if (Array.isArray(node)) return node.forEach((n) => walk(n, depth, out));
-			if (typeof node !== "object") return void out.push(`${"  ".repeat(depth)}"${node}"`);
-			const { type, props: p, children = [] } = node;
-			const props = p ?? {};
-			const attrs = [
-				props.color && `color=${props.color}`,
-				props.backgroundColor && `bg=${props.backgroundColor}`,
-				flags(props),
-				props.flexDirection === "row" && "row",
-				props.borderStyle && `border=${props.borderStyle}`,
-			]
-				.filter(Boolean)
-				.join(" ");
-			out.push(`${"  ".repeat(depth)}<${type}${attrs ? ` ${attrs}` : ""}>`);
-			walk(children, depth + 1, out);
-		};
-		for (const [theme, rtl, name] of [
-			["catppuccin-mocha", "warp", "catppuccin-mocha"],
-			["github-light", "warp", "github-light"],
-			["mono", "warp", "mono"],
-			["catppuccin-mocha", "kitty", "kitty"],
-		] as const) {
-			const style = resolveStyle({ theme, rtl });
-			const blocks = parse(demo, { numbers: style.highlightNumbers, paths: style.highlightPaths });
-			const out: string[] = [];
-			walk(renderBlocks(EL, style, blocks, 100, drawDiagrams(EL, style, blocks, 100), () => null), 0, out);
-			const expected = readFileSync(join(upstreamPrismantis, `tests/snapshots/demo-${name}.txt`), "utf8");
-			assert.equal(`${out.join("\n")}\n`, expected);
-		}
-	}
+	const h = createHarness();
+	cleanupFn = h.cleanup;
+	assert.equal(h.toolRenderers.length, 0, "does not register a tool renderer");
 });
 
 test("2. AssistantMessageComponent renders tables, headings, code folding, diagrams, figures, alerts, and footnotes", async () => {
-	const h = createHarness({ theme: "catppuccin-mocha", headingStyle: "banner", tableStyle: "box" });
+	const h = createHarness({ headingStyle: "banner", tableStyle: "box" });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
 
@@ -346,67 +300,7 @@ test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles a
 	assert.ok(chevronPlain.includes("› "), "draws chevron prompt marker");
 });
 
-test("4. Tool renderer draws quiet tool rows and clickable diff cards for edit and write", async () => {
-	const h = createHarness({ toolStyle: "tree-dim", toolOutput: "quiet", diffStyle: "card" });
-	cleanupFn = h.cleanup;
-	await h.emit("session_start");
-
-	const resolver = h.toolRenderers[0]!;
-	const bashRenderers = resolver("bash", () => undefined);
-	assert.equal(bashRenderers.renderShell, "self");
-
-	const bashCtx = {
-		args: { command: 'rg "TODO" src/' },
-		toolCallId: "tc-bash-1",
-		invalidate: () => {},
-		state: {},
-		cwd: "/tmp/project",
-		executionStarted: true,
-		argsComplete: true,
-		isPartial: false,
-		expanded: false,
-		showImages: true,
-		isError: false,
-		outputPad: 1,
-	};
-	const callComp = bashRenderers.renderCall(bashCtx.args, mockPiTheme, bashCtx);
-	const callPlain = stripAnsi(callComp.render(80).join("\n"));
-	assert.ok(callPlain.includes('Searched src/ for "TODO"'), `expected quiet shell description, got: ${callPlain}`);
-
-	const resultComp = bashRenderers.renderResult(
-		{ content: [{ type: "text", text: "src/a.ts:1: // TODO" }] },
-		{ expanded: false, isPartial: false },
-		mockPiTheme,
-		bashCtx,
-	);
-	assert.equal(resultComp.render(80).length, 0, "quiet mode hides read-only tool output");
-
-	const editRenderers = resolver("edit", () => undefined);
-	const patchLines = Array.from({ length: 450 }, (_, i) => `+const line${i + 1} = ${i + 1};`);
-	const patch = `@@ -1,1 +1,450 @@\n-const old = 0;\n${patchLines.join("\n")}`;
-	const editCtx = {
-		...bashCtx,
-		toolCallId: "tc-edit-1",
-		args: { path: "/tmp/project/src/config.ts", edits: [] },
-	};
-	const diffComp = editRenderers.renderResult(
-		{ content: [{ type: "text", text: "Edited" }], details: { patch } },
-		{ expanded: false, isPartial: false },
-		mockPiTheme,
-		editCtx,
-	);
-	const diffLines = diffComp.render(80);
-	const diffPlain = stripAnsi(diffLines.join("\n"));
-	assert.ok(diffPlain.includes("+450 −1"), "draws diff header counts");
-	assert.ok(diffPlain.includes("[ +431 more lines ]"), "folds diff card past 20 lines");
-
-	diffComp.handleMouse({ type: "press", button: "left", x: 10, y: 2 } as any);
-	diffComp.handleMouse({ type: "click", button: "left", x: 10, y: 2 } as any);
-	const unfoldedDiffPlain = stripAnsi(diffComp.render(80).join("\n"));
-	assert.ok(unfoldedDiffPlain.includes("const line450 = 450;"), "clicking diff card unfolds all 450 lines without 400-line cap");
-});
-
-test("5. /prismantis commands, interactive setup pane, pi theme tracking, and turn duration entry work", async () => {
+test("4. /prismantis commands, interactive setup pane, pi theme tracking, and turn duration entry work", async () => {
 	setTheme("dark");
 	const h = createHarness({ clock: "24h" });
 	cleanupFn = h.cleanup;
@@ -433,12 +327,12 @@ test("5. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	const demoPlain = stripAnsi(demoComp.render(96).join("\n"));
 	assert.ok(demoPlain.includes("한국어"), "demo ko includes Korean showcase");
 	assert.ok(demoPlain.includes("Parse"), "demo renders mermaid diagrams and pie charts");
+	assert.ok(!demoPlain.includes("Claude Code"), "demo contains zero Claude Code references");
 
 	await cmd.handler("", h.ctx);
 	const helpComp = outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme);
 	const helpPlain = stripAnsi(helpComp.render(96).join("\n"));
-	assert.ok(!helpPlain.includes("20000 nodes"), "help omits Claude Code 20000-node caution");
-	assert.ok(!helpPlain.includes("17 themes"), "help omits 17 themes section");
+	assert.ok(!helpPlain.includes("Claude Code"), "help contains zero Claude Code references");
 
 	const ctxEvent = {
 		type: "context",
@@ -454,14 +348,14 @@ test("5. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	const overlay = h.getOverlay();
 	assert.ok(overlay, "opens interactive setup overlay in TUI mode");
 	const initialOverlayPlain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(initialOverlayPlain.includes("Setup 1/10: Tables"), "renders step 1 (Tables) in setup overlay");
+	assert.ok(initialOverlayPlain.includes("Setup 1/7: Tables"), "renders step 1 (Tables) in 7-step setup overlay");
 	overlay.handleInput("\x1b[B");
 	overlay.handleInput("\r");
 	assert.equal(h.readConfig().tableStyle, "rules", "saves selected tableStyle to prismantis.json");
 	assert.equal(h.readConfig().theme, undefined, "does not write theme to prismantis.json");
 	assert.equal(h.readConfig().syncPiTheme, undefined, "does not write syncPiTheme to prismantis.json");
 	const step2Plain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(step2Plain.includes("Setup 2/10: Tasks"), "advances to step 2 (Tasks) after Enter");
+	assert.ok(step2Plain.includes("Setup 2/7: Tasks"), "advances to step 2 (Tasks) after Enter");
 	overlay.handleInput("\x1b");
 	assert.equal(h.getOverlay(), null, "Escape closes setup overlay");
 
@@ -474,8 +368,12 @@ test("5. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	};
 	await h.emit("before_agent_start", startEvent);
 	assert.ok(
-		startEvent.systemPromptOptions.guidelines.some((g) => g.includes("xychart-beta")),
-		"injects diagram hint into guidelines",
+		startEvent.systemPromptOptions.guidelines.some((g) => g.includes("drawn by prismantis inside Pi")),
+		"injects Pi-native diagram hint into guidelines",
+	);
+	assert.ok(
+		startEvent.systemPromptOptions.guidelines.every((g) => !g.includes("Claude")),
+		"system prompt guidelines contain zero Claude references",
 	);
 	assert.ok(
 		startEvent.systemPromptOptions.guidelines.some((g) => g.includes("```figure")),
@@ -483,9 +381,16 @@ test("5. /prismantis commands, interactive setup pane, pi theme tracking, and tu
 	);
 
 	const entryRenderer = h.entryRenderers.get("prismantis-turn")!;
-	const turnComp = entryRenderer({ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } }, { expanded: false }, activePiGlobalTheme);
+	const turnComp = entryRenderer(
+		{ type: "custom", customType: "prismantis-turn", data: { durationMs: 125000, at: Date.now() } },
+		{ expanded: false },
+		activePiGlobalTheme,
+	);
 	const turnPlain = stripAnsi(turnComp.render(80).join("\n"));
-	assert.ok(turnPlain.includes("✻ Baked for 2m 5s"), `expected Baked duration footer, got: ${turnPlain}`);
+	assert.ok(
+		turnPlain.includes("✻ prismantis rendering for 2m 5s"),
+		`expected prismantis rendering duration footer, got: ${turnPlain}`,
+	);
 
 	const transformer = h.markdownTransformers[0]!;
 	const transformed = transformer("```figure\n{ok:✓ healthy}\n```", {
@@ -512,7 +417,7 @@ function hoverFixture() {
 	return comp;
 }
 
-test("6. Hovering a button highlights it and moving off clears it", () => {
+test("5. Hovering a button highlights it and moving off clears it", () => {
 	const comp = hoverFixture();
 	assert.ok(!comp.render(40).join("").includes(INVERSE), "no highlight before any pointer move");
 
@@ -525,7 +430,7 @@ test("6. Hovering a button highlights it and moving off clears it", () => {
 	assert.ok(!comp.render(40).join("").includes(INVERSE), "moving to plain text clears the highlight");
 });
 
-test("7. A hover prop replaces the default inverse highlight", () => {
+test("6. A hover prop replaces the default inverse highlight", () => {
 	const comp = hoverFixture();
 	comp.handleMouse(move(2, 1));
 	const lines = comp.render(40);
@@ -533,7 +438,7 @@ test("7. A hover prop replaces the default inverse highlight", () => {
 	assert.ok(!lines[1]!.includes(INVERSE), "does not fall back to inverse");
 });
 
-test("8. Only one element is highlighted across components, and leaving them all clears it", () => {
+test("7. Only one element is highlighted across components, and leaving them all clears it", () => {
 	const a = hoverFixture();
 	const b = hoverFixture();
 	a.handleMouse(move(3, 0));
@@ -548,7 +453,7 @@ test("8. Only one element is highlighted across components, and leaving them all
 	assert.equal(clearHover(), false, "nothing left to clear");
 });
 
-test("9. color slot overrides, table <br> line breaks, and probed loose path hyperlinks work", async () => {
+test("8. color slot overrides, table <br> line breaks, and probed loose path hyperlinks work", async () => {
 	const prevForce = process.env.FORCE_HYPERLINK;
 	process.env.FORCE_HYPERLINK = "1";
 	const h = createHarness({ headingColor: "#ff00ff" });
@@ -577,7 +482,7 @@ test("9. color slot overrides, table <br> line breaks, and probed loose path hyp
 	const tableBlock = tableBlocks[0];
 	assert.equal(tableBlock?.kind, "table");
 	assert.ok(tableHtml(tableBlock).includes("a<br>b<br>c<br>d"));
-	assert.ok(tableHtml(tableBlock).includes("<code style=\"white-space: pre-wrap\">x&lt;br&gt;y</code>"));
+	assert.ok(tableHtml(tableBlock).includes('<code style="white-space: pre-wrap">x&lt;br&gt;y</code>'));
 	assert.ok(tableText(tableBlock).includes('"a\nb\nc\nd"\tx<br>y'));
 
 	const reply = [
@@ -620,4 +525,3 @@ test("9. color slot overrides, table <br> line breaks, and probed loose path hyp
 	const rawAfterTool = comp.render(100).join("\n");
 	assert.ok(rawAfterTool.includes(`file://${projectDir}/later.ts`), "links file created after tool_result resets unfound probes");
 });
-

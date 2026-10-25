@@ -3,7 +3,6 @@ export type TextHoverProps = {
 	color?: string;
 	backgroundColor?: string;
 	inverse?: boolean;
-	display?: "flex" | "none";
 };
 
 export type RenderElement = {
@@ -13,12 +12,6 @@ export type RenderElement = {
 };
 
 export type RenderNode = RenderElement | string | number | boolean | null | undefined | RenderNode[];
-
-export type RenderSurface = "terminal" | "desktop" | "mobile";
-
-export type PromptOrigin = {
-	kind: "composer" | "bridge" | "plugin" | "unclassified";
-};
 
 export type PluginOptions = Record<string, unknown>;
 
@@ -30,7 +23,6 @@ export type ElementTable = {
 	Button: ElementComponent;
 	Link: ElementComponent;
 	Image?: ElementComponent;
-	Code?: ElementComponent;
 };
 
 export const EL: ElementTable = {
@@ -39,7 +31,6 @@ export const EL: ElementTable = {
 	Button: "Button",
 	Link: "Link",
 	Image: "Image",
-	Code: "Code",
 };
 
 export const Fragment = "Fragment";

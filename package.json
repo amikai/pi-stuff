@@ -20,8 +20,7 @@
     ]
   },
   "scripts": {
-    "test": "node --test test/recap.test.ts test/you-should-know.test.ts test/prismantis.test.ts test/uv.test.ts",
-    "sync:prismantis": "node scripts/sync-prismantis.mjs"
+    "test": "node --test test/recap.test.ts test/you-should-know.test.ts test/prismantis.test.ts test/uv.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

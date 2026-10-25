@@ -175,7 +175,7 @@ function mergeStyle(base: TextStyle, props: Record<string, unknown>): TextStyle 
 					: base.dimColor,
 		inverse: props.inverse === true ? true : props.inverse === false ? false : base.inverse,
 		href: typeof props.href === "string" ? props.href : base.href,
-		onPress: pressable ? () => (props.onPress as (e: { surface: "terminal" }) => void)({ surface: "terminal" }) : base.onPress,
+		onPress: pressable ? () => (props.onPress as () => void)() : base.onPress,
 		pressKey: pressable ? props.onPress : base.pressKey,
 		hover: hoverProps(props) ?? (pressable ? undefined : base.hover),
 	};
@@ -210,7 +210,7 @@ function collectInlineSpans(node: RenderNode, style: TextStyle, out: InlineSpan[
 	if (node.type === "Button") {
 		const onPress =
 			typeof node.props.onPress === "function"
-				? () => (node.props.onPress as (e: { surface: "terminal" }) => void)({ surface: "terminal" })
+				? () => (node.props.onPress as () => void)()
 				: style.onPress;
 		const pressable = typeof node.props.onPress === "function";
 		const press = {
@@ -385,7 +385,7 @@ function renderTextElement(node: RenderElement, maxWidth: number): RenderedBox {
 function renderButtonElement(node: RenderElement, maxWidth: number): RenderedBox {
 	const onPress =
 		typeof node.props.onPress === "function"
-			? () => (node.props.onPress as (e: { surface: "terminal" }) => void)({ surface: "terminal" })
+			? () => (node.props.onPress as () => void)()
 			: undefined;
 
 	if (node.props.plain === true && node.children.length > 0) {
@@ -941,12 +941,6 @@ export function renderNode(node: RenderNode, maxWidth: number): RenderedBox {
 			return renderTextElement({ type: "Text", props: {}, children: [node] }, maxWidth);
 		case "Image":
 			return renderImageElement(node, maxWidth);
-		case "Code": {
-			const src = typeof node.props.source === "string" ? node.props.source : "";
-			const lines = src.split("\n");
-			const w = Math.max(0, ...lines.map((l) => visibleWidth(l)));
-			return { lines, width: w, intrinsicWidth: w, hits: [] };
-		}
 		default:
 			return renderBoxElement(node, maxWidth);
 	}
