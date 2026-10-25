@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,8 +15,7 @@ export type Desktop = {
 	/** Puts the PNG on the pasteboard. Returns null on success, else a short reason. Blocks up to 5 s. */
 	copyPng(png: Uint8Array): string | null;
 	/**
-	 * Shows the PNG in Quick Look and returns at once. One panel at a time: the same PNG
-	 * while its panel is open does nothing, another PNG replaces the panel.
+	 * Shows the PNG in Quick Look and returns at once. Every call opens its own panel.
 	 * Notices and later failures go to report.
 	 */
 	previewPng(png: Uint8Array, report: Report): void;
@@ -44,7 +43,6 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 		helperDir = join(getAgentDir(), "prism"),
 		dir = join(tmpdir(), "prism-plantuml"),
 	} = options;
-	let panel: { child: ChildProcess; file: string } | null = null;
 	let helper: Promise<string | null> | null = null;
 	let building = false;
 
@@ -70,21 +68,10 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 	};
 
 	const open = (file: string, bin: string | null, report: Report) => {
-		if (panel?.file === file) return;
-		panel?.child.kill();
 		const [command, args] = bin === null ? [qlmanage, ["-p", file]] : [bin, [file]];
 		const child = spawn(command, args, { detached: true, stdio: "ignore" });
-		const current = { child, file };
-		panel = current;
-		const closed = () => {
-			if (panel === current) panel = null;
-		};
-		child.once("error", () => {
-			closed();
-			report("Quick Look is unavailable", "error");
-		});
+		child.once("error", () => report("Quick Look is unavailable", "error"));
 		child.once("exit", (code, signal) => {
-			closed();
 			if (signal === null && code !== 0) report("Quick Look failed", "error");
 		});
 		child.unref();
@@ -111,7 +98,6 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 				report("Cannot write preview image", "error");
 				return;
 			}
-			if (panel?.file === file) return;
 			quickLookHelper(report)
 				.then((bin) => open(file, bin, report))
 				.catch(() => report("Quick Look is unavailable", "error"));
