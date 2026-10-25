@@ -1074,3 +1074,22 @@ test("21. an image drawn before the terminal reports its cell size lays out like
 		cleanupFn = undefined;
 	}
 });
+
+test("22. a plantuml diagram replaces its source after a streaming update that arrived while it rendered", async () => {
+	const fake = plantumlFixture({ png: pngOf(320, 280) });
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const message = { role: "assistant", content: [{ type: "text", text: [diagram("streamed"), "", "After"].join("\n") }], timestamp: 1000 } as any;
+	const comp = new AssistantMessageComponent(message);
+	comp.render(100);
+	assert.equal(inFlight.size, 1, "the first frame starts the render");
+	comp.updateContent(message);
+	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("Alice -> Bob : hi"), "the rebuilt frame still shows the source while it renders");
+	await until(() => inFlight.size === 0);
+	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the image");
+});
