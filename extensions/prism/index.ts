@@ -107,6 +107,8 @@ const LEGACY_OPTION_KEYS = new Set([
 	"diffStyle",
 	"toolRows",
 	"issueHint",
+	"diffAddedColor",
+	"diffRemovedColor",
 ]);
 
 export type PrismOptions = Record<string, unknown> & {
@@ -161,8 +163,6 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
 		bullet: hex("mdListBullet"),
 		diagram: hex("border"),
 		diagramText: hex("text"),
-		diffAdded: hex("toolDiffAdded"),
-		diffRemoved: hex("toolDiffRemoved"),
 	};
 }
 

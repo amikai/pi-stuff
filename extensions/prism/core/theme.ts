@@ -23,8 +23,6 @@ export const TOKENS = [
 	"bullet",
 	"diagram",
 	"diagramText",
-	"diffAdded",
-	"diffRemoved",
 ] as const;
 
 export type Theme = Partial<Record<(typeof TOKENS)[number], string>>;
@@ -50,8 +48,6 @@ export const DEFAULT_THEME: Theme = {
 	bullet: "#cba6f7",
 	diagram: "#89b4fa",
 	diagramText: "#cdd6f4",
-	diffAdded: "#a6e3a1",
-	diffRemoved: "#f38ba8",
 };
 
 export type Clock = "off" | "24h" | "12h";

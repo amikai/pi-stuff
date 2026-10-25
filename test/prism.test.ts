@@ -173,13 +173,13 @@ afterEach(() => {
 	cleanupFn?.();
 });
 
-test("1. prismantis derives its palette from pi's active theme without mutating global theme or registering tool renderers", () => {
+test("1. prism derives its palette from pi's active theme without mutating global theme or registering tool renderers", () => {
 	setTheme("dark");
 	const darkPalette = themeFromPiTheme(activePiGlobalTheme);
 	assert.match(darkPalette.accent ?? "", /^#[0-9a-f]{6}$/);
 	assert.match(darkPalette.heading ?? "", /^#[0-9a-f]{6}$/);
-	assert.match(darkPalette.diffAdded ?? "", /^#[0-9a-f]{6}$/);
-	assert.match(darkPalette.diffRemoved ?? "", /^#[0-9a-f]{6}$/);
+	assert.match(darkPalette.diagram ?? "", /^#[0-9a-f]{6}$/);
+	assert.match(darkPalette.codeString ?? "", /^#[0-9a-f]{6}$/);
 
 	setTheme("light");
 	const lightPalette = themeFromPiTheme(activePiGlobalTheme);

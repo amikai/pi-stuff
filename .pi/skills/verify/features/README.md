@@ -35,4 +35,4 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 - [Diagrams and figures](./diagrams-figures.md) covers Mermaid flowcharts, `xychart-beta`, pie charts, Gantt charts, and ` ```figure ` alignment and role coloring.
 - [RTL and LaTeX math rendering](./rtl-latex.md) covers Hebrew right-to-left prose, tables, and diagrams plus inline and display TeX math rendering.
 - [Setup overlay and commands](./setup-commands.md) covers `/prism setup` 7-step style navigation, `prism.json` persistence, `✻ prismantis rendering for ...` turn duration, and `/prism` display-only custom entries that never leak into LLM context.
-- [Pi theme synchronization](./theme-sync.md) covers deriving `prism`'s 22 color slots from Pi's active theme and dynamically repainting when Pi switches between `dark` and `light`.
+- [Pi theme synchronization](./theme-sync.md) covers deriving `prism`'s 20 color slots from Pi's active theme and dynamically repainting when Pi switches between `dark` and `light`.

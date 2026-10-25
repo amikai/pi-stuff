@@ -1,10 +1,10 @@
 # Pi theme synchronization
 
-Pi theme synchronization derives `prism`'s 22 semantic color slots directly from Pi's active `ctx.ui.theme.colors` and repaints rendered components when Pi switches themes, without `prism` ever mutating Pi's global theme setting.
+Pi theme synchronization derives `prism`'s 20 semantic color slots directly from Pi's active `ctx.ui.theme.colors` and repaints rendered components when Pi switches themes, without `prism` ever mutating Pi's global theme setting.
 
 ## Sub-features
 
-- `theme-derive` maps Pi's `Theme.colors` tokens (`accent`, `mdHeading`, `mdCode`, `syntax*`, `toolDiff*`, etc.) into `prism`'s 22 color slots.
+- `theme-derive` maps Pi's `Theme.colors` tokens (`accent`, `mdHeading`, `mdCode`, `syntax*`, etc.) into `prism`'s 20 color slots.
 - `theme-live-repaint` invalidates `PrismComponent` caches when `theme.colors` changes reference so switching between `dark` and `light` in Pi repaints immediately.
 - `theme-no-global-mutation` never calls `ctx.ui.setTheme`.
 
