@@ -8,34 +8,16 @@ struct KeyShortcut {
   let keyCode: UInt16
 }
 
-enum ZoomResetMode {
-  case actualSize
-  case fitToWindow
-
-  var shortcut: KeyShortcut {
-    switch self {
-    case .actualSize: return KeyShortcut(characters: "0", keyCode: 29)
-    case .fitToWindow: return KeyShortcut(characters: "9", keyCode: 25)
-    }
-  }
-
-  var next: ZoomResetMode {
-    switch self {
-    case .actualSize: return .fitToWindow
-    case .fitToWindow: return .actualSize
-    }
-  }
-}
-
+// The segments of Preview's zoom_and_actual toolbar item, in its order and with its symbols and tooltips.
 enum ZoomSegment: Int, CaseIterable {
   case zoomOut = 0
-  case reset = 1
+  case actualSize = 1
   case zoomIn = 2
 
   var symbolName: String {
     switch self {
     case .zoomOut: return "minus.magnifyingglass"
-    case .reset: return "1.magnifyingglass"
+    case .actualSize: return "1.magnifyingglass"
     case .zoomIn: return "plus.magnifyingglass"
     }
   }
@@ -43,8 +25,24 @@ enum ZoomSegment: Int, CaseIterable {
   var accessibilityLabel: String {
     switch self {
     case .zoomOut: return "Zoom Out"
-    case .reset: return "Actual Size"
+    case .actualSize: return "Actual Size"
     case .zoomIn: return "Zoom In"
+    }
+  }
+
+  var toolTip: String {
+    switch self {
+    case .zoomOut: return "Scale document down"
+    case .actualSize: return "Display at actual size"
+    case .zoomIn: return "Scale document up"
+    }
+  }
+
+  var shortcut: KeyShortcut {
+    switch self {
+    case .zoomOut: return KeyShortcut(characters: "-", keyCode: 27)
+    case .actualSize: return KeyShortcut(characters: "0", keyCode: 29)
+    case .zoomIn: return KeyShortcut(characters: "=", keyCode: 24)
     }
   }
 }
@@ -52,7 +50,6 @@ enum ZoomSegment: Int, CaseIterable {
 class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
   let urls: [URL]
   private weak var panel: QLPreviewPanel?
-  private var zoomResetMode: ZoomResetMode = .actualSize
 
   init(paths: [String]) {
     self.urls = paths.compactMap { path -> URL? in
@@ -179,6 +176,7 @@ class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource
         tag: segment.rawValue,
         action: #selector(zoomSegmentClicked(_:))
       )
+      btn.toolTip = segment.toolTip
       NSLayoutConstraint.activate([
         btn.widthAnchor.constraint(equalToConstant: 28),
         btn.heightAnchor.constraint(equalToConstant: pillHeight),
@@ -211,17 +209,7 @@ class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource
 
   @objc private func zoomSegmentClicked(_ sender: NSButton) {
     guard let segment = ZoomSegment(rawValue: sender.tag) else { return }
-    switch segment {
-    case .zoomOut:
-      zoomResetMode = .actualSize
-      sendCommandShortcut(KeyShortcut(characters: "-", keyCode: 27))
-    case .reset:
-      sendCommandShortcut(zoomResetMode.shortcut)
-      zoomResetMode = zoomResetMode.next
-    case .zoomIn:
-      zoomResetMode = .actualSize
-      sendCommandShortcut(KeyShortcut(characters: "=", keyCode: 24))
-    }
+    sendCommandShortcut(segment.shortcut)
   }
 
   func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
