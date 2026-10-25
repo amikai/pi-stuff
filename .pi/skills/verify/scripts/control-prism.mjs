@@ -656,6 +656,30 @@ if (cmd === "drive") {
 		process.exit(0);
 	}
 
+	if (feature === "quicklook") {
+		assert.equal(process.platform, "darwin", "the Quick Look preview exists only on macOS");
+		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "over SSH the panel opens on a screen nobody watches");
+		for (const bin of ["/usr/bin/swiftc", "/usr/bin/clang"]) {
+			assert.ok(existsSync(bin), `${bin} must exist; install the Xcode command line tools`);
+		}
+		assert.ok(existsSync(runDir), `run launch --run-id ${args["run-id"]} first`);
+		mkdirSync(outDir, { recursive: true });
+		// The tests build the helper and the probe under TMPDIR, so cleanup removes them with the run directory.
+		const run = spawnSync(process.execPath, ["--test", "--test-reporter=spec", join(repoRoot, "test/prism-quicklook.test.ts")], {
+			cwd: repoRoot,
+			env: { ...process.env, TMPDIR: runDir, QLF_EVIDENCE_DIR: outDir },
+			encoding: "utf8",
+		});
+		const log = stripAnsi(`${run.stdout}${run.stderr}`);
+		writeFileSync(join(outDir, "quicklook-tests.txt"), log);
+		const count = (key) => Number(log.match(new RegExp(`ℹ ${key} (\\d+)`))?.[1] ?? Number.NaN);
+		const tests = { pass: count("pass"), fail: count("fail"), skipped: count("skipped") };
+		// A skipped test proves nothing; the zoom test skips when the terminal may not record the screen.
+		const ok = run.status === 0 && tests.pass > 0 && tests.fail === 0 && tests.skipped === 0;
+		console.log(JSON.stringify({ ok, feature, outDir, ...tests }));
+		process.exit(ok ? 0 : 1);
+	}
+
 	throw new Error(`Unknown --feature: ${feature}`);
 }
 

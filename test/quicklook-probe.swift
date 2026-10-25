@@ -1,5 +1,6 @@
 // Loaded into the Quick Look helper with DYLD_INSERT_LIBRARIES by test/prism-quicklook.test.ts.
 // It runs the JSON steps in QLF_PROBE_STEPS against the open panel, writes what it saw to QLF_PROBE_OUT and exits.
+// With QLF_PROBE_SHOTS set to a directory, each named layout or scale step also saves the panel there as <name>.png.
 
 import Cocoa
 import QuickLookUI
@@ -10,6 +11,7 @@ struct ProbeStep: Decodable {
   let label: String?
   let seconds: Double?
   let key: String?
+  let name: String?
 }
 
 final class Probe {
@@ -58,6 +60,7 @@ final class Probe {
     switch step.op {
     case "layout":
       results.append(layout())
+      if let name = step.name, let dir = env["QLF_PROBE_SHOTS"] { _ = capture(to: "\(dir)/\(name).png") }
       next(0)
     case "drag", "resize":
       // A user's drag stops at minSize; setFrame does not, so "resize" reaches below it.
@@ -74,7 +77,7 @@ final class Probe {
       button.performClick(nil)
       next(step.seconds ?? 1)
     case "scale":
-      results.append(scale())
+      results.append(scale(name: step.name))
       next(0)
     case "enterFullscreen":
       panel.enterFullScreenMode(nil, withOptions: nil)
@@ -143,21 +146,15 @@ final class Probe {
   }
 
   // Screenshots the panel and measures how wide the preview draws the image's 10 px stripes, in points per image pixel.
-  private func scale() -> [String: Any] {
+  private func scale(name: String?) -> [String: Any] {
     guard CGPreflightScreenCaptureAccess() else { return ["op": "scale", "error": "screen capture is not allowed"] }
     guard let panel = panel, let root = panel.contentView?.superview,
           let content = find(in: root, where: { NSStringFromClass(type(of: $0)).contains("QLPreviewContainerView") }) else {
       return ["op": "scale", "error": "no preview view"]
     }
-    let file = NSTemporaryDirectory() + "qlf-probe-\(getpid())-\(results.count).png"
-    let capture = Process()
-    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    capture.arguments = ["-o", "-x", "-l", "\(panel.windowNumber)", file]
-    try? capture.run()
-    capture.waitUntilExit()
-    guard let data = FileManager.default.contents(atPath: file), let image = NSBitmapImageRep(data: data) else {
-      return ["op": "scale", "error": "screencapture failed"]
-    }
+    let shots = name.flatMap { name in env["QLF_PROBE_SHOTS"].map { "\($0)/\(name).png" } }
+    let file = shots ?? NSTemporaryDirectory() + "qlf-probe-\(getpid())-\(results.count).png"
+    guard let image = capture(to: file) else { return ["op": "scale", "error": "screencapture failed"] }
     let pixelsPerPoint = CGFloat(image.pixelsWide) / panel.frame.width
     let box = content.convert(content.bounds, to: nil)
     let row = Int((panel.frame.height - box.midY) * pixelsPerPoint)
@@ -181,9 +178,20 @@ final class Probe {
     let whole = runs.count > 2 ? Array(runs.dropFirst().dropLast()) : runs
     // Keep the capture when it shows no stripes, so the failure can be looked at.
     guard !whole.isEmpty else { return ["op": "scale", "error": "no stripes on screen in \(file)"] }
-    try? FileManager.default.removeItem(atPath: file)
+    if shots == nil { try? FileManager.default.removeItem(atPath: file) }
     let mean = CGFloat(whole.reduce(0, +)) / CGFloat(whole.count)
     return ["op": "scale", "scale": mean / pixelsPerPoint / 10]
+  }
+
+  private func capture(to file: String) -> NSBitmapImageRep? {
+    guard let panel = panel else { return nil }
+    let screencapture = Process()
+    screencapture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    screencapture.arguments = ["-o", "-x", "-l", "\(panel.windowNumber)", file]
+    try? screencapture.run()
+    screencapture.waitUntilExit()
+    guard let data = FileManager.default.contents(atPath: file) else { return nil }
+    return NSBitmapImageRep(data: data)
   }
 
   private func kind(of view: NSView) -> String {
