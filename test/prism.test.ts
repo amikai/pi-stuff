@@ -1253,7 +1253,7 @@ test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, 
 	}
 });
 
-test("25. the system desktop sends the PNG to osascript on stdin, builds the Quick Look helper once without waiting, and keeps one panel at a time", async () => {
+test("25. the system desktop sends the PNG to osascript on stdin, builds the Quick Look helper once without waiting, and opens a panel on every press", async () => {
 	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
 	const dir = mkdtempSync(join(tmpdir(), "prism-desktop-"));
 	const log = join(dir, "ql.log");
@@ -1286,8 +1286,7 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	cleanupFn = () => {
 		for (const line of opens()) {
 			try {
-				// SIGTERM would run the panel's trap, which appends to the log while rmSync empties the directory.
-				process.kill(Number(line.split(" ")[1]), "SIGKILL");
+				process.kill(Number(line.split(" ")[1]));
 			} catch {}
 		}
 		rmSync(dir, { recursive: true, force: true });
@@ -1301,12 +1300,9 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 		fakeBin(
 			name,
 			[
-				`sleep 5 &`,
-				`panel=$!`,
-				`trap 'kill $panel; echo "killed $$ ${fileArg}" >> "${log}"; exit 0' TERM`,
 				`cp "${fileArg}" "${dir}/seen-$$.png"`,
 				`echo "open $$ ${fileArg} $0 $*" >> "${log}"`,
-				`wait $panel`,
+				`exec sleep 5`,
 			].join("\n"),
 		);
 	const fakeSwiftc = (name: string, helper: string, seconds = 0) =>
@@ -1358,34 +1354,32 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	assert.deepEqual(readFileSync(join(dir, `seen-${firstPid}.png`)), first, "the file Quick Look opened holds the PNG");
 
 	desktop.previewPng(first, session.report);
-	await sleep(300);
-	assert.equal(opens().length, 1, "a repeat on the same PNG spawns nothing");
-	assert.ok(alive(Number(firstPid)), "a repeat on the same PNG leaves the panel open");
+	await until(() => opens().length === 2);
+	const { pid: repeatPid, argv: repeatArgv } = opened(1);
+	assert.deepEqual(repeatArgv, [helper, firstFile], "a repeat on the same PNG opens another panel on the same file");
 
 	desktop.previewPng(second, session.report);
-	await until(() => opens().length === 2);
-	const { pid: secondPid, file: secondFile, argv: secondArgv } = opened(1);
-	await until(() => readFileSync(log, "utf8").includes(`killed ${firstPid} ${firstFile}`));
-	await until(() => !alive(Number(firstPid)));
+	await until(() => opens().length === 3);
+	const { pid: secondPid, file: secondFile, argv: secondArgv } = opened(2);
 	assert.equal(builds("swiftc").length, 1, "a second PNG reuses the built helper");
 	assert.deepEqual(secondArgv, [helper, secondFile], "the second panel is the same helper on the second file");
 	assert.notEqual(secondFile, firstFile, "the different PNG opens its own file");
 	assert.deepEqual(readFileSync(join(dir, `seen-${secondPid}.png`)), second, "the second panel shows the second PNG");
-	assert.ok(alive(Number(secondPid)), "the second panel is open");
-	assert.deepEqual(session.reports, [[building, "info"]], "a ready helper and a replaced panel report nothing more");
+	assert.ok([firstPid, repeatPid, secondPid].every((pid) => alive(Number(pid))), "a new panel closes none of the open ones");
+	assert.deepEqual(session.reports, [[building, "info"]], "a ready helper reports nothing more");
 
 	const nextSession = recorder();
 	systemDesktop(options).previewPng(first, nextSession.report);
-	await until(() => opens().length === 3);
+	await until(() => opens().length === 4);
 	assert.equal(builds("swiftc").length, 1, "a new desktop reuses the helper already in the helper directory");
-	assert.equal(opened(2).argv[0], helper, "the new desktop opens the same helper");
+	assert.equal(opened(3).argv[0], helper, "the new desktop opens the same helper");
 	assert.deepEqual(nextSession.reports, [], "a reused helper reports nothing");
 
 	writeFileSync(helperSource, "// helper v2\n");
 	systemDesktop(options).previewPng(second, recorder().report);
-	await until(() => opens().length === 4);
+	await until(() => opens().length === 5);
 	assert.equal(builds("swiftc").length, 2, "a changed helper source builds again");
-	assert.notEqual(opened(3).argv[0], helper, "the changed source gets its own helper binary");
+	assert.notEqual(opened(4).argv[0], helper, "the changed source gets its own helper binary");
 
 	const exits = recorder();
 	const exitsAtOnce = { ...options, swiftc: fakeSwiftc("swiftc-exits", fakeBin("helper-exits", "exit 1")), helperDir: join(dir, "helpers-exits") };
@@ -1396,11 +1390,11 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	const fallback = recorder();
 	const noHelper = systemDesktop({ ...options, swiftc: fakeBin("swiftc-fails", `echo "error: no SDK found" >&2\nexit 1`), helperDir: join(dir, "helpers-fails") });
 	noHelper.previewPng(first, fallback.report);
-	await until(() => opens().length === 5);
-	assert.deepEqual(opened(4).argv, [qlmanage, "-p", opened(4).file], "a failed build falls back to qlmanage -p on the file");
-	noHelper.previewPng(second, fallback.report);
 	await until(() => opens().length === 6);
-	assert.deepEqual(opened(5).argv, [qlmanage, "-p", opened(5).file], "the next press goes straight to qlmanage");
+	assert.deepEqual(opened(5).argv, [qlmanage, "-p", opened(5).file], "a failed build falls back to qlmanage -p on the file");
+	noHelper.previewPng(second, fallback.report);
+	await until(() => opens().length === 7);
+	assert.deepEqual(opened(6).argv, [qlmanage, "-p", opened(6).file], "the next press goes straight to qlmanage");
 	assert.deepEqual(fallback.at("warning"), ["Quick Look helper could not be built (error: no SDK found), using qlmanage"], "two presses after a failed build warn once, with the reason");
 	assert.deepEqual(fallback.at("error"), [], "the qlmanage fallback reports no failure");
 
