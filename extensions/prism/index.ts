@@ -773,9 +773,9 @@ export default function prismExtension(
 				}),
 				h(EL.Button, {
 					key: `preview${b}`,
-					variant: "secondary",
-					label: "preview",
-					onPress: () => desktop.previewPng(bytes(), (reason) => toast(reason, "error")),
+					variant: "primary",
+					label: "⧉ preview",
+					onPress: () => desktop.previewPng(bytes(), toast),
 				}),
 			];
 		};
