@@ -91,7 +91,7 @@ import {
 import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./core/rtl.ts";
 import { DEFAULT_THEME, isColor, resolveStyle, TOKENS, type Style, type Theme } from "./core/theme.ts";
 import { clearHover, watchPointerLeave } from "../lib/pointer-hover.ts";
-import { PrismComponent, renderNode } from "./renderer.ts";
+import { PrismComponent, renderNode, type ImageStore } from "./renderer.ts";
 
 const CUSTOM_MESSAGE_TYPE = "prism-output";
 const TURN_ENTRY_TYPE = "prism-turn";
@@ -305,12 +305,13 @@ function codeSpan(line: string): string {
 
 type ActiveMessageHooks = {
 	isEnabled: () => boolean;
-	renderAssistantText: (text: string, isFirstOfReply: boolean, messageId: string, outputPad: number) => Component;
+	renderAssistantText: (text: string, isFirstOfReply: boolean, messageId: string, outputPad: number, images: ImageStore) => Component;
 	renderUserText: (text: string, messageId: string, outputPad: number) => Component | null;
 };
 
 let activeHooks: ActiveMessageHooks | null = null;
 const WRAPPED_MARK = Symbol.for("pi-stuff:prism-wrapped");
+const IMAGE_STORES = Symbol.for("pi-stuff:prism-images");
 
 function ensureMessagePrototypesPatched() {
 	const proto = AssistantMessageComponent.prototype as any;
@@ -326,11 +327,13 @@ function ensureMessagePrototypesPatched() {
 
 			const baseId = String(message.timestamp ?? "msg");
 			let textIdx = 0;
+			// Each update rebuilds the children, so the message keeps the image components, one store per text block.
+			const stores: ImageStore[] = (this[IMAGE_STORES] ??= []);
 			const children: Component[] = this.contentContainer.children;
 			for (let i = 0; i < children.length && textIdx < textBlocks.length; i++) {
 				if (children[i] instanceof Markdown) {
 					const text = textBlocks[textIdx]!.text.trim();
-					children[i] = activeHooks.renderAssistantText(text, textIdx === 0, `${baseId}:${textIdx}`, this.outputPad ?? 1);
+					children[i] = activeHooks.renderAssistantText(text, textIdx === 0, `${baseId}:${textIdx}`, this.outputPad ?? 1, (stores[textIdx] ??= new Map()));
 					textIdx++;
 				}
 			}
@@ -931,7 +934,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 
 	activeHooks = {
 		isEnabled: () => options.enabled !== false,
-		renderAssistantText: (text, isFirstOfReply, messageId, outputPad) => {
+		renderAssistantText: (text, isFirstOfReply, messageId, outputPad, images) => {
 			let comp: PrismComponent | undefined;
 			comp = new PrismComponent((columns) => {
 				syncThemeFromPi();
@@ -951,7 +954,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 					h(EL.Box, { flexDirection: "column", rowGap: 1, flexGrow: 1 }, ...elements),
 					corner ? h(EL.Box, { width: MARK, flexShrink: 0 }) : null,
 				);
-			}, outputPad);
+			}, outputPad, images);
 			return comp;
 		},
 		renderUserText: (text, messageId, outputPad) => {

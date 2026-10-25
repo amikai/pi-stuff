@@ -1,5 +1,5 @@
-import { getCapabilities, hyperlink, renderImage, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { getCapabilities, getCellDimensions, hyperlink, Image, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { CellDimensions, Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { hoveredKey, pointerMoved } from "../lib/pointer-hover.ts";
 import type { RenderElement, RenderNode } from "./core/jsx.ts";
 import { graphemes, width as measureTextWidth } from "./core/render.ts";
@@ -395,7 +395,7 @@ function renderButtonElement(node: RenderElement, maxWidth: number): RenderedBox
 			const hits: MouseHit[] = [...inner.hits];
 			if (onPress) {
 				for (let r = 0; r < inner.lines.length; r++) {
-					const w = Math.max(inner.width, visibleWidth(inner.lines[r]!));
+					const w = Math.max(inner.width, lineWidth(inner.lines[r]!));
 					hits.push({ row: r, from: 0, to: w, onPress, key: node.props.onPress });
 				}
 			}
@@ -408,6 +408,29 @@ function renderButtonElement(node: RenderElement, maxWidth: number): RenderedBox
 	return box;
 }
 
+type ImageSlot = { png: string; columns: number; rows: number; cell: CellDimensions; image: Image };
+
+/** Image components by element key, kept by the owner of a message so one drawn image keeps one Kitty image id across rebuilds. */
+export type ImageStore = Map<string, ImageSlot>;
+
+const IMAGE_THEME = { fallbackColor: (text: string) => text };
+let images: ImageStore | undefined;
+
+function imageFor(key: string, png: string, columns: number, rows: number): Image {
+	const slot = images?.get(key);
+	const cell = getCellDimensions();
+	if (slot?.png === png && slot.columns === columns && slot.rows === rows) {
+		if (slot.cell !== cell) {
+			slot.cell = cell;
+			slot.image.invalidate();
+		}
+		return slot.image;
+	}
+	const image = new Image(png, "image/png", IMAGE_THEME, { maxWidthCells: columns, maxHeightCells: rows });
+	images?.set(key, { png, columns, rows, cell, image });
+	return image;
+}
+
 function renderImageElement(node: RenderElement, maxWidth: number): RenderedBox {
 	const source = node.props.source as { png?: string } | undefined;
 	const png = source?.png;
@@ -416,19 +439,9 @@ function renderImageElement(node: RenderElement, maxWidth: number): RenderedBox 
 	const alt = typeof node.props.alt === "string" ? node.props.alt : "image";
 
 	if (png && getCapabilities().images) {
-		const rendered = renderImage(
-			png,
-			{ widthPx: cols * 10, heightPx: rows * 20 },
-			{ maxWidthCells: cols, maxHeightCells: rows, preserveAspectRatio: true },
-		);
-		if (rendered?.sequence) {
-			return {
-				lines: [rendered.sequence],
-				width: rendered.columns,
-				intrinsicWidth: rendered.columns,
-				hits: [],
-			};
-		}
+		// Image caps its width at width - 2.
+		const lines = imageFor(String(node.props.key ?? ""), png, cols, rows).render(cols + 2);
+		return { lines, width: cols, intrinsicWidth: cols, hits: [] };
 	}
 
 	const fallback = `${fgSgr("#89b4fa")}[${alt}]\x1b[0m`;
@@ -436,8 +449,13 @@ function renderImageElement(node: RenderElement, maxWidth: number): RenderedBox 
 	return { lines: [fallback], width: w, intrinsicWidth: w, hits: [] };
 }
 
+// pi-tui's visibleWidth reads the cursor-up prefix on an iTerm2 image line as text and counts the payload.
+function lineWidth(line: string): number {
+	return line.includes("\x1b_G") || line.includes("\x1b]1337;File=") ? 0 : visibleWidth(line);
+}
+
 function padLineRight(line: string, targetWidth: number, bgAnsi = ""): string {
-	const vis = visibleWidth(line);
+	const vis = lineWidth(line);
 	const pad = Math.max(0, targetWidth - vis);
 	const body = pad > 0 ? line + " ".repeat(pad) : line;
 	if (!bgAnsi) return body;
@@ -532,7 +550,7 @@ function renderRowBox(node: RenderElement, innerMaxWidth: number, fixedInnerWidt
 		if (justify === "flex-end" || justify === "center") {
 			const targetW = fixedInnerWidth ?? rendered.width;
 			const alignedLines = rendered.lines.map((line) => {
-				const w = visibleWidth(line);
+				const w = lineWidth(line);
 				const spare = Math.max(0, targetW - w);
 				const left = justify === "flex-end" ? spare : Math.floor(spare / 2);
 				return " ".repeat(left) + line;
@@ -690,13 +708,13 @@ function renderRowBox(node: RenderElement, innerMaxWidth: number, fixedInnerWidt
 			if (s.fixedW !== undefined && s.box.width < s.fixedW) {
 				const justify = isRenderElement(s.child) ? s.child.props.justifyContent : undefined;
 				const paddedLines = s.box.lines.map((line) => {
-					const vis = visibleWidth(line);
+					const vis = lineWidth(line);
 					const spare = Math.max(0, s.fixedW! - vis);
 					const left = justify === "flex-end" ? spare : justify === "center" ? Math.floor(spare / 2) : 0;
 					return " ".repeat(left) + line + " ".repeat(spare - left);
 				});
 				const shiftedHits = s.box.hits.map((hit) => {
-					const lineVis = visibleWidth(s.box!.lines[hit.row] ?? "");
+					const lineVis = lineWidth(s.box!.lines[hit.row] ?? "");
 					const spare = Math.max(0, s.fixedW! - lineVis);
 					const left = justify === "flex-end" ? spare : justify === "center" ? Math.floor(spare / 2) : 0;
 					return { ...hit, from: hit.from + left, to: hit.to + left };
@@ -955,15 +973,17 @@ function currentPiThemeColors(): unknown {
 export class PrismComponent implements Component {
 	private readonly buildTree: (width: number) => RenderNode;
 	private readonly paddingX: number;
+	private readonly images: ImageStore;
 	private cachedWidth?: number;
 	private cachedThemeColors?: unknown;
 	private cachedLines?: string[];
 	private cachedHits: MouseHit[] = [];
 	private tree?: { width: number; node: RenderNode };
 
-	constructor(buildTree: (width: number) => RenderNode, paddingX = 0) {
+	constructor(buildTree: (width: number) => RenderNode, paddingX = 0, images: ImageStore = new Map()) {
 		this.buildTree = buildTree;
 		this.paddingX = paddingX;
+		this.images = images;
 	}
 
 	invalidate(): void {
@@ -991,11 +1011,13 @@ export class PrismComponent implements Component {
 			this.tree = { width: contentWidth, node: this.buildTree(contentWidth) };
 		}
 		litKey = hoveredKey(this);
+		images = this.images;
 		let rendered: RenderedBox;
 		try {
 			rendered = renderNode(this.tree.node, contentWidth);
 		} finally {
 			litKey = undefined;
+			images = undefined;
 		}
 		const pad = this.paddingX > 0 ? " ".repeat(this.paddingX) : "";
 		this.cachedWidth = width;
@@ -1005,7 +1027,7 @@ export class PrismComponent implements Component {
 			to: h.to + this.paddingX,
 		}));
 		this.cachedLines = rendered.lines.map((line) =>
-			visibleWidth(pad + line) > width ? truncateToWidth(pad + line, width) : pad + line,
+			lineWidth(pad + line) > width ? truncateToWidth(pad + line, width) : pad + line,
 		);
 		return this.cachedLines;
 	}
