@@ -67,7 +67,7 @@ import {
 	renderedOf,
 	type Formula,
 } from "./core/latex.ts";
-import { nestedBlocks, parse, type Block } from "./core/markdown.ts";
+import { parse, type Block } from "./core/markdown.ts";
 import { drawDiagrams } from "./core/mermaid.ts";
 import {
 	drawMath,
@@ -1127,26 +1127,10 @@ export default function prismExtension(pi: ExtensionAPI) {
 		pi.appendEntry(CUSTOM_MESSAGE_TYPE, { text });
 	}
 
-	function lastAssistantReplyText(ctx: ExtensionContext): string | undefined {
-		const entries = ctx.sessionManager.getBranch();
-		for (let i = entries.length - 1; i >= 0; i--) {
-			const entry = entries[i] as { type?: string; message?: { role?: string; content?: unknown } };
-			if (entry.type === "message" && entry.message?.role === "assistant" && Array.isArray(entry.message.content)) {
-				const text = entry.message.content
-					.filter((c: any) => c?.type === "text" && typeof c.text === "string")
-					.map((c: any) => c.text)
-					.join("\n")
-					.trim();
-				if (text) return text;
-			}
-		}
-		return undefined;
-	}
-
 	pi.registerCommand("prism", {
-		description: "Pick prism styles from samples, copy the last reply, or show the demo",
+		description: "Pick prism styles from samples, or show the demo",
 		getArgumentCompletions(prefix: string) {
-			const subcommands = ["setup", "copy", "demo", "demo-rtl"];
+			const subcommands = ["setup", "demo", "demo-rtl"];
 			const trimmed = prefix.trim();
 			if (!trimmed.includes(" ")) {
 				return subcommands
@@ -1154,12 +1138,6 @@ export default function prismExtension(pi: ExtensionAPI) {
 					.map((value) => ({ value, label: value }));
 			}
 			const [first, second = ""] = trimmed.split(/\s+/);
-			if (first === "copy") {
-				return ["code"].filter((c) => c.startsWith(second)).map((c) => ({
-					value: `copy ${c}`,
-					label: c,
-				}));
-			}
 			if (first === "setup") {
 				const steps = SETUP_STEPS.map((s) => s.name);
 				return steps.filter((s) => s.startsWith(second)).map((s) => ({
@@ -1182,28 +1160,6 @@ export default function prismExtension(pi: ExtensionAPI) {
 
 			if (sub === "demo-rtl") {
 				sendPrismOutput(rtlShowcaseText());
-				return;
-			}
-
-			if (sub === "copy") {
-				const reply = lastAssistantReplyText(ctx);
-				if (!reply) {
-					notify("Nothing to copy yet.", "warning");
-					return;
-				}
-				const codeBlock =
-					name === "code" ? nestedBlocks(parseCached(reply)).findLast((b) => b.kind === "code") : undefined;
-				if (name === "code" && codeBlock?.kind !== "code") {
-					notify("The last reply has no code block.", "warning");
-					return;
-				}
-				const targetText = codeBlock?.kind === "code" ? codeBlock.lines.join("\n") : reply;
-				try {
-					copyToClipboard(targetText);
-					toast(`Copied the last ${codeBlock ? "code block" : "reply"}.`, "info");
-				} catch {
-					toast("Copy failed.", "error");
-				}
 				return;
 			}
 

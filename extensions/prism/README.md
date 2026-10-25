@@ -27,7 +27,6 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 |---|---|
 | `/prism` | Display the help screen |
 | `/prism setup` | Open the interactive 7-step style picker overlay in TUI mode, or step through options with `/prism setup <step> <pick>` |
-| `/prism copy` | Copy the last assistant reply, or `/prism copy code` for its last code block |
 | `/prism demo` | Render the full showcase (`demo ko` appends the Korean section) |
 | `/prism demo-rtl` | Render the Hebrew right-to-left showcase |
 

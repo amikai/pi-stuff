@@ -25,7 +25,6 @@ Code-shaped prose stays as written: f(*args, **kwargs), a link with parentheses 
 | Command | Does |
 |---------|------|
 | \`/prism\` | Help screen |
-| \`/prism copy\` | Copy the last reply, or \`copy code\` for its last code block |
 | \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
 | \`/prism demo\` | This screen |
 | \`/prism demo-rtl\` | Hebrew right-to-left showcase |
@@ -240,7 +239,6 @@ export const helpText = (): string => `
 
 | Command | Does |
 |---------|------|
-| \`/prism copy\` | Copy the last reply, or \`copy code\` for its last code block |
 | \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
 | \`/prism demo\` | Full showcase, every element and diagram, plus a section in your language (Korean so far, or \`demo ko\`) |
 | \`/prism demo-rtl\` | Hebrew right-to-left showcase |
