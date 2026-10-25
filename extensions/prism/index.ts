@@ -69,6 +69,7 @@ import {
 } from "./core/latex.ts";
 import { parse, type Block } from "./core/markdown.ts";
 import { drawDiagrams } from "./core/mermaid.ts";
+import { drawPlantUml, PLANTUML_HINT } from "./core/plantuml.ts";
 import {
 	drawMath,
 	drawsHyperlinks,
@@ -132,6 +133,7 @@ const DEFAULT_OPTIONS: PrismOptions = {
 	copyButtonStyle: "inline",
 	diagramHints: true,
 	latex: false,
+	plantuml: true,
 };
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
@@ -165,6 +167,8 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
 		diagramText: hex("text"),
 	};
 }
+
+const isDarkTheme = (piTheme: PiTheme | undefined): boolean => (piTheme?.appearance ?? "dark") !== "light";
 
 function resolvePrismTheme(options: PrismOptions, piTheme: PiTheme | undefined): Theme {
 	const base = themeFromPiTheme(piTheme);
@@ -644,6 +648,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 			style = {
 				...style,
 				theme: resolvePrismTheme(options, piTheme),
+				isDark: isDarkTheme(piTheme),
 			};
 		}
 		return style;
@@ -653,7 +658,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 		options = loadOptions();
 		const piTheme = getActivePiTheme();
 		lastPiColors = piTheme?.colors;
-		style = resolveStyle(options, themeFromPiTheme(piTheme));
+		style = { ...resolveStyle(options, themeFromPiTheme(piTheme)), isDark: isDarkTheme(piTheme) };
 		applyTerminalCapabilities(style, cwd ?? uiCtx?.cwd ?? process.cwd());
 	}
 
@@ -682,7 +687,7 @@ export default function prismExtension(pi: ExtensionAPI) {
 	}
 
 	function requestRender(): void {
-		tuiInstance?.requestRender();
+		(tuiInstance ?? screenTui)?.requestRender();
 	}
 
 	function makeFolder(onInvalidate?: () => void): Fold {
@@ -868,6 +873,14 @@ export default function prismExtension(pi: ExtensionAPI) {
 		const copy = makeCopyButton();
 		const fold = makeFolder(options?.onInvalidate);
 		const drawn = drawDiagrams(EL, activeStyle, blocks, columns - markerRoom(activeStyle));
+		if (activeStyle.plantuml) {
+			const plantuml = drawPlantUml(EL, activeStyle, blocks, columns - markerRoom(activeStyle), {
+				mode: getCapabilities().images ? "png" : "utxt",
+				requestRender,
+				onInvalidate: options?.onInvalidate,
+			});
+			for (const [i, item] of plantuml) drawn.set(i, item);
+		}
 		const math = typesetFormulasSync(blocks);
 		const pictures = loadPicturesSync(blocks);
 
@@ -1090,7 +1103,12 @@ export default function prismExtension(pi: ExtensionAPI) {
 		if (options.enabled === false || event.messageType !== "user") return;
 
 		const hints: string[] = style.diagramHints
-			? [HINT, FIGURE_HINT, ...(style.latex && getCapabilities().images ? [LATEX_HINT] : [])]
+			? [
+					HINT,
+					FIGURE_HINT,
+					...(style.latex && getCapabilities().images ? [LATEX_HINT] : []),
+					...(style.plantuml ? [PLANTUML_HINT] : []),
+				]
 			: [];
 		if (hints.length > 0) {
 			event.systemPromptOptions.guidelines = [
@@ -1184,7 +1202,10 @@ export default function prismExtension(pi: ExtensionAPI) {
 									notify(msg, msg.startsWith("Could not") ? "error" : "info");
 								},
 								(s, b, cols) => drawMarkdownElements(s, b, cols),
-								() => done(),
+								() => {
+									tuiInstance = undefined;
+									done();
+								},
 							);
 						},
 						{ overlay: true, overlayOptions: overlayOpts },
