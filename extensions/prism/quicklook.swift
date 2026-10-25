@@ -3,7 +3,7 @@
 import Cocoa
 import QuickLookUI
 
-class FloatingPreview: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+class FloatingPreview: NSObject, NSApplicationDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
   let urls: [URL]
 
   init(paths: [String]) {
@@ -15,6 +15,20 @@ class FloatingPreview: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegat
       return url
     }
     super.init()
+  }
+
+  override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+    return true
+  }
+
+  override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+    panel.dataSource = self
+    panel.delegate = self
+  }
+
+  override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+    panel.dataSource = nil
+    panel.delegate = nil
   }
 
   func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
@@ -47,12 +61,11 @@ class FloatingPreview: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegat
 
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
+    app.delegate = self
 
     guard let panel = QLPreviewPanel.shared() else {
       exit(1)
     }
-    panel.dataSource = self
-    panel.delegate = self
     panel.level = .floating  // This makes it float above full-screen apps
     panel.hidesOnDeactivate = false
     panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
@@ -64,6 +77,7 @@ class FloatingPreview: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegat
     )
     panel.makeKeyAndOrderFront(nil)
 
+    // activate() from macOS 14 only takes focus when the frontmost app yields it, so the panel would open behind the terminal.
     app.activate(ignoringOtherApps: true)
     app.run()
   }
