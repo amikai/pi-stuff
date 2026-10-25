@@ -225,6 +225,19 @@ export const texText = (tex: string): string =>
 export const inlineText = (inline: Inline[]): string =>
   inline.map(n => ('children' in n ? inlineText(n.children) : n.text)).join('')
 
+export const PLANTUML_KINDS = 'uml|mindmap|wbs|json|yaml|gantt|ditaa|salt|regex|ebnf|chronology'
+const PLANTUML_START = new RegExp(`^\\s*@start(${PLANTUML_KINDS})\\b`, 'i')
+
+const plantumlAt = (lines: string[], start: number): { lines: string[]; end: number } | null => {
+  const kind = PLANTUML_START.exec(lines[start] ?? '')?.[1]
+  if (kind === undefined) return null
+  const closer = new RegExp(`^\\s*@end${kind}\\b`, 'i')
+  for (let end = start + 1; end < lines.length; end++) {
+    if (closer.test(lines[end] ?? '')) return { lines: lines.slice(start, end + 1), end }
+  }
+  return null
+}
+
 const mathAt = (lines: string[], start: number): { lines: string[]; end: number } | null => {
   const trimmed = (n: number) => (lines[n] ?? '').trim()
   const first = trimmed(start)
@@ -348,6 +361,13 @@ const parseBlocks = (source: string, hl: Highlight, depth = 0): Block[] => {
       i++
       while (i < lines.length && !closer.test(at(i))) body.push(at(i++))
       add({ kind: 'code', lang: fence[2] ?? '', lines: body, ...(i < lines.length ? {} : { isOpen: true as const }) }, start, i + 1)
+      continue
+    }
+    const uml = depth === 0 ? plantumlAt(lines, i) : null
+    if (uml) {
+      flush(i)
+      add({ kind: 'code', lang: 'plantuml', lines: uml.lines }, i, uml.end + 1)
+      i = uml.end
       continue
     }
     const math = mathAt(lines, i)

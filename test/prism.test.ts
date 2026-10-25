@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { registerHooks } from "node:module";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { inflateRawSync } from "node:zlib";
 
 const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
 const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
@@ -28,7 +31,7 @@ const {
 const { setTheme, theme: activePiGlobalTheme } = await import(
 	pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
 );
-const { matchesKey, visibleWidth } = await import("@earendil-works/pi-tui");
+const { matchesKey, resetCapabilitiesCache, setCapabilities, visibleWidth } = await import("@earendil-works/pi-tui");
 initTheme("dark");
 
 const { default: prismExtension, themeFromPiTheme } = await import("../extensions/prism/index.ts");
@@ -37,6 +40,8 @@ const { PrismComponent } = await import("../extensions/prism/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
 const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
 const { parse } = await import("../extensions/prism/core/markdown.ts");
+const { inFlight, isSequenceDiagram, plantumlCache } = await import("../extensions/prism/core/plantuml.ts");
+const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 
 const stripAnsi = (s: string) =>
 	s
@@ -64,9 +69,18 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 	let activePiTheme = "system";
 	let overlayComponent: any = null;
 
-	const fakeTui = {
+	const renders = { screen: 0, overlay: 0 };
+	const overlayTui = {
 		terminal: { columns: 100, rows: 40 },
-		requestRender: () => {},
+		requestRender: () => {
+			renders.overlay++;
+		},
+	} as any;
+	const screenTui = {
+		terminal: { columns: 100, rows: 40 },
+		requestRender: () => {
+			renders.screen++;
+		},
 	} as any;
 
 	const sm = SessionManager.inMemory("/tmp");
@@ -88,10 +102,12 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 				return { success: true };
 			},
 			setWorkingIndicator: () => {},
-			setWidget: () => {},
+			setWidget: (_key: string, factory: unknown) => {
+				if (typeof factory === "function") factory(screenTui);
+			},
 			custom: async (factory: any) => {
 				return new Promise<void>((resolveDone) => {
-					overlayComponent = factory(fakeTui, activePiGlobalTheme, { matches: matchesKey }, () => {
+					overlayComponent = factory(overlayTui, activePiGlobalTheme, { matches: matchesKey }, () => {
 						overlayComponent = null;
 						resolveDone();
 					});
@@ -159,6 +175,7 @@ function createHarness(initialConfig?: Record<string, unknown>) {
 		appendedEntries,
 		getActivePiTheme: () => activePiTheme,
 		getOverlay: () => overlayComponent,
+		renders,
 		readConfig,
 		writeConfig,
 		cleanup: () => rmSync(dir, { recursive: true, force: true }),
@@ -524,4 +541,421 @@ test("8. color slot overrides, table <br> line breaks, and probed loose path hyp
 	comp.invalidate();
 	const rawAfterTool = comp.render(100).join("\n");
 	assert.ok(rawAfterTool.includes(`file://${projectDir}/later.ts`), "links file created after tool_result resets unfound probes");
+});
+
+const PNG_1X1 = Buffer.from(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+	"base64",
+);
+
+const FAKE_PLANTUML = `#!/bin/sh
+src=$(cat)
+printf '%s\\n' "$src" > "$FAKE_PLANTUML_DIR/stdin"
+printf 'args=%s profile=%s jto=%s jo=%s jdk=%s\\n' "$*" "\${PLANTUML_SECURITY_PROFILE-unset}" "\${JAVA_TOOL_OPTIONS-unset}" "\${_JAVA_OPTIONS-unset}" "\${JDK_JAVA_OPTIONS-unset}" >> "$FAKE_PLANTUML_DIR/calls.log"
+case "$src" in
+  *fake:sleep*) exec sleep 30 ;;
+  *fake:fail*) exit 1 ;;
+  *fake:syntax*) printf 'ERROR\\n3\\nSyntax Error?\\n'; exit 200 ;;
+  *fake:include*) printf 'ERROR\\n2\\ncannot include /tmp/prism/local.txt\\n'; exit 200 ;;
+  *fake:wide*) printf '%0200d\\n' 0 | tr 0 x; exit 0 ;;
+esac
+case "$*" in
+  *-tutxt*) cat <<'ART'
+┌─────┐ ┌───┐
+│Alice│ │Bob│
+└──┬──┘ └─┬─┘
+   │  hi  │
+   │─────►│
+ART
+  ;;
+  *) cat "$FAKE_PLANTUML_DIR/diagram.png" ;;
+esac
+`;
+
+const JAVA_VARS = ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"];
+const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+async function until(condition: () => boolean, ms = 3000) {
+	for (let waited = 0; !condition() && waited < ms; waited += 10) await sleep(10);
+	assert.ok(condition(), "condition was not met in time");
+}
+
+let diagramCount = 0;
+const diagram = (tag = "", body = "Alice -> Bob : hi") =>
+	["```plantuml", "@startuml", `' ${tag} #${++diagramCount}`, body, "@enduml", "```"].join("\n");
+
+const reply = (text: string) =>
+	new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any);
+
+function plantumlFixture(options: { images?: "kitty" | null; installed?: boolean } = {}) {
+	const dir = mkdtempSync(join(tmpdir(), "prism-plantuml-"));
+	const bin = join(dir, "bin");
+	mkdirSync(bin);
+	writeFileSync(join(dir, "diagram.png"), PNG_1X1);
+	writeFileSync(join(bin, "plantuml"), FAKE_PLANTUML, { mode: 0o755 });
+	const saved = Object.fromEntries(["PATH", "FAKE_PLANTUML_DIR", ...JAVA_VARS].map((k) => [k, process.env[k]]));
+	process.env.FAKE_PLANTUML_DIR = dir;
+	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
+	for (const name of JAVA_VARS) process.env[name] = "-DPLANTUML_SECURITY_PROFILE=INSECURE";
+	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
+	plantumlCache.clear();
+	inFlight.clear();
+	return {
+		calls: () => {
+			try {
+				return readFileSync(join(dir, "calls.log"), "utf8").trim().split("\n").filter(Boolean);
+			} catch {
+				return [];
+			}
+		},
+		stdin: () => readFileSync(join(dir, "stdin"), "utf8"),
+		restore: () => {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			resetCapabilitiesCache();
+			plantumlCache.clear();
+			inFlight.clear();
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
+async function plantumlServer(respond: (url: string, res: ServerResponse) => void) {
+	const urls: string[] = [];
+	const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+		urls.push(req.url ?? "");
+		respond(req.url ?? "", res);
+	});
+	await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
+	return {
+		urls,
+		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+		close: () => new Promise<void>((done) => server.close(() => done())),
+	};
+}
+
+const ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
+const decodeSource = (encoded: string) => {
+	const values = [...encoded].map((c) => ALPHABET.indexOf(c));
+	const bytes: number[] = [];
+	for (let i = 0; i < values.length; i += 4) {
+		const [a, b, c, d] = values.slice(i, i + 4) as [number, number, number, number];
+		bytes.push((a << 2) | (b >> 4), ((b & 15) << 4) | (c >> 2), ((c & 3) << 6) | d);
+	}
+	return inflateRawSync(Buffer.from(bytes)).toString("utf8");
+};
+
+const sendPng = (res: ServerResponse) => {
+	res.writeHead(200, { "content-type": "image/png" });
+	res.end(PNG_1X1);
+};
+
+const KITTY_IMAGE = "\x1b_G";
+
+test("9. plantuml CLI success in png mode draws source first, then an image, sandboxed, and redraws the screen", async () => {
+	const fake = plantumlFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(["Intro", "", "  @startuml", "' png", "Alice -> Bob : hi", "  @enduml"].join("\n"));
+	const first = stripAnsi(comp.render(100).join("\n"));
+	assert.ok(first.includes("Alice -> Bob : hi"), "first frame draws the source");
+	assert.equal(inFlight.size, 1, "render starts one background job");
+
+	await until(() => inFlight.size === 0);
+	assert.ok(h.renders.screen > 0, "falls back to the screen TUI for the redraw");
+	assert.equal(h.renders.overlay, 0, "no setup overlay is open");
+	const drawn = comp.render(100).join("\n");
+	assert.ok(drawn.includes(KITTY_IMAGE), "second frame draws the PNG");
+	assert.ok(!stripAnsi(drawn).includes("Alice -> Bob : hi"), "source is gone once the image is drawn");
+
+	const [call, ...rest] = fake.calls();
+	assert.equal(rest.length, 0, "spawns plantuml once");
+	assert.match(call!, /^args=-pipe -pipeNoStderr -tpng -darkmode /, "dark pi theme asks for dark mode");
+	assert.match(call!, /profile=SANDBOX jto=unset jo=unset jdk=unset$/, "child gets SANDBOX and no Java option variables");
+	assert.equal(process.env.JAVA_TOOL_OPTIONS, "-DPLANTUML_SECURITY_PROFILE=INSECURE", "parent environment is untouched");
+	assert.equal(fake.stdin(), "@startuml\n' png\nAlice -> Bob : hi\n@enduml\n", "markers are trimmed to column zero");
+
+	comp.invalidate();
+	comp.render(100);
+	assert.equal(fake.calls().length, 1, "later frames hit the cache");
+});
+
+test("10. plantuml CLI success in utxt mode draws sequence art, skips a class diagram unspawned, and notes art wider than the terminal", async () => {
+	const fake = plantumlFixture({ images: null });
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(diagram("art"));
+	comp.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("│Alice│ │Bob│"), "draws the text art");
+	assert.match(fake.calls()[0]!, /^args=-pipe -pipeNoStderr -tutxt profile=SANDBOX/, "asks for -tutxt without -darkmode");
+
+	const klass = reply(diagram("class", "class Foo {\n}\nFoo --> Bar"));
+	const note = stripAnsi(klass.render(100).join("\n"));
+	assert.ok(note.includes("plantuml non-sequence diagrams require an image-capable terminal"), "explains the refusal on the first frame");
+	assert.equal(inFlight.size, 0, "does not start a job");
+	assert.equal(fake.calls().length, 1, "does not spawn for a class diagram");
+
+	const wide = reply(diagram("fake:wide"));
+	wide.render(100);
+	await until(() => inFlight.size === 0);
+	const wideDrawn = stripAnsi(wide.render(100).join("\n"));
+	assert.match(wideDrawn, /diagram is 200 cols, terminal is \d+/, "notes the width");
+	assert.ok(wideDrawn.includes("Alice -> Bob : hi"), "keeps the source");
+});
+
+test("11. plantuml CLI timeout, non-zero exit, and a missing CLI cache a note and release the in-flight key", async () => {
+	const slow = plantumlFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		slow.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(diagram("fake:sleep"));
+	comp.render(100);
+	assert.equal(inFlight.size, 1);
+	await until(() => inFlight.size === 0, 8000);
+	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml CLI failed"), "reports the timeout");
+	comp.render(100);
+	assert.equal(slow.calls().length, 1, "does not retry a cached failure");
+
+	const failing = reply(diagram("fake:fail"));
+	failing.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(stripAnsi(failing.render(100).join("\n")).includes("plantuml CLI failed"), "reports a non-zero exit");
+
+	slow.restore();
+	const missing = plantumlFixture({ installed: false });
+	cleanupFn = () => {
+		missing.restore();
+		h.cleanup();
+	};
+	const gone = reply(diagram("enoent"));
+	gone.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(stripAnsi(gone.render(100).join("\n")).includes("plantuml CLI is not installed"), "reports ENOENT");
+	assert.equal(inFlight.size, 0);
+});
+
+test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/ with the source encoded", async () => {
+	const fake = plantumlFixture({ installed: false });
+	const server = await plantumlServer((url, res) => {
+		if (url.startsWith("/txt/")) {
+			res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+			res.end("┌─────┐\n│Alice│\n└─────┘\n");
+		} else sendPng(res);
+	});
+	const h = createHarness({ plantumlServer: server.url });
+	cleanupFn = () => {
+		fake.restore();
+		void server.close();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const text = diagram("remote png");
+	const comp = reply(text);
+	comp.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "draws the server PNG");
+	const [path, encoded] = server.urls[0]!.slice(1).split("/") as [string, string];
+	assert.equal(path, "dpng", "dark theme uses /dpng/");
+	assert.equal(decodeSource(encoded), `${text.split("\n").slice(1, -1).join("\n")}\n`, "sends the deflated, 6-bit encoded source");
+
+	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+	const art = reply(diagram("remote txt"));
+	art.render(100);
+	await until(() => inFlight.size === 0);
+	assert.equal(server.urls[1]!.split("/")[1], "txt", "utxt mode uses /txt/");
+	assert.ok(stripAnsi(art.render(100).join("\n")).includes("│Alice│"), "draws the server art");
+});
+
+test("13. plantumlServer HTTP 400, HTTP 5xx, and a refused connection cache a note and release the in-flight key", async () => {
+	const fake = plantumlFixture({ installed: false });
+	const server = await plantumlServer((_url, res) => {
+		res.writeHead(server.urls.length === 1 ? 400 : 503);
+		res.end();
+	});
+	const h = createHarness({ plantumlServer: server.url });
+	cleanupFn = () => {
+		fake.restore();
+		void server.close();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const noteFor = async (tag: string) => {
+		const comp = reply(diagram(tag));
+		comp.render(100);
+		assert.equal(inFlight.size, 1);
+		await until(() => inFlight.size === 0);
+		return stripAnsi(comp.render(100).join("\n"));
+	};
+	assert.ok((await noteFor("bad")).includes("diagram failed to render"), "HTTP 400");
+	assert.ok((await noteFor("down")).includes("plantumlServer request failed"), "HTTP 503");
+	assert.equal(server.urls.length, 2, "one request each, no retries");
+	assert.equal(plantumlCache.size, 2, "both failures are cached");
+
+	const rendersBefore = h.renders.screen;
+	await server.close();
+	assert.ok((await noteFor("refused")).includes("plantumlServer request failed"), "connection refused");
+	assert.ok(h.renders.screen > rendersBefore, "a failure still requests a redraw");
+	assert.equal(inFlight.size, 0, "no key is left in flight");
+});
+
+test("14. a plantuml syntax error reports the source line and never reaches plantumlServer", async () => {
+	const fake = plantumlFixture();
+	const server = await plantumlServer((_url, res) => sendPng(res));
+	const h = createHarness({ plantumlServer: server.url });
+	cleanupFn = () => {
+		fake.restore();
+		void server.close();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(diagram("fake:syntax"));
+	comp.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml error (line 4): Syntax Error?"), "ERROR then 3 is line 4 with markers present");
+	assert.equal(server.urls.length, 0, "the server sees no request");
+
+	const bare = reply(["```plantuml", "' fake:syntax bare", "Alice -> Bob", "```"].join("\n"));
+	bare.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(stripAnsi(bare.render(100).join("\n")).includes("plantuml error (line 3): Syntax Error?"), "subtracts the line PlantUML synthesizes");
+
+	const blocked = reply(diagram("fake:include"));
+	blocked.render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(
+		stripAnsi(blocked.render(100).join("\n")).includes("plantuml error (line 3): cannot include /tmp/prism/local.txt"),
+		"shows PlantUML's reason for a blocked include",
+	);
+	assert.equal(server.urls.length, 0, "a blocked include never reaches plantumlServer");
+});
+
+test("15. plantuml detection covers fences and unfenced blocks, and leaves unclosed and nested ones as text", async () => {
+	const hl = { numbers: false, paths: false };
+	const kinds = (md: string) => parse(md, hl).map((b) => (b.kind === "code" ? b.lang : b.kind));
+	assert.deepEqual(kinds("@startuml\nA -> B\n@enduml"), ["plantuml"], "closed unfenced block");
+	assert.deepEqual(kinds("text\n  @startmindmap\n* root\n  @endmindmap\nmore"), ["paragraph", "plantuml", "paragraph"], "indented marker");
+	assert.deepEqual(kinds("@startuml\nA -> B"), ["paragraph"], "unclosed @startuml stays paragraph text");
+	assert.deepEqual(kinds("@startuml\nA -> B\n@endmindmap"), ["paragraph"], "mismatched end stays paragraph text");
+	assert.deepEqual(kinds("@startfoo\nA\n@endfoo"), ["paragraph"], "unknown kind is not plantuml");
+	assert.deepEqual(kinds("> @startuml\n> A -> B\n> @enduml"), ["quote"], "a quoted block is not detected");
+	assert.deepEqual(kinds("```puml\nA -> B\n```"), ["puml"]);
+
+	const fake = plantumlFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+	const untagged = reply("```\n@startuml\n' untagged\nA -> B\n@enduml\n```");
+	untagged.render(100);
+	assert.equal(inFlight.size, 1, "an untagged fence opening with @start renders");
+	await until(() => inFlight.size === 0);
+	const plain = reply("```\nA -> B\n```");
+	plain.render(100);
+	assert.equal(inFlight.size, 0, "an untagged fence without @start is plain code");
+
+	const startEvent = {
+		type: "before_agent_start",
+		messageType: "user",
+		prompt: "x",
+		systemPrompt: "",
+		systemPromptOptions: { guidelines: [] as string[] },
+	};
+	await h.emit("before_agent_start", startEvent);
+	assert.ok(startEvent.systemPromptOptions.guidelines.some((g) => g.includes("!include")), "hints PlantUML when enabled");
+});
+
+test("16. plantuml:false renders PlantUML blocks as ordinary code, never spawns, and drops the hint", async () => {
+	const fake = plantumlFixture();
+	const h = createHarness({ plantuml: false });
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply([diagram("off"), "", "@startuml", "' bare off", "A -> B", "@enduml"].join("\n"));
+	const plain = stripAnsi(comp.render(100).join("\n"));
+	assert.ok(plain.includes("Alice -> Bob : hi") && plain.includes("A -> B"), "draws both blocks as code");
+	await sleep(100);
+	assert.equal(inFlight.size, 0);
+	assert.equal(fake.calls().length, 0, "never spawns");
+
+	const startEvent = {
+		type: "before_agent_start",
+		messageType: "user",
+		prompt: "x",
+		systemPrompt: "",
+		systemPromptOptions: { guidelines: [] as string[] },
+	};
+	await h.emit("before_agent_start", startEvent);
+	assert.ok(startEvent.systemPromptOptions.guidelines.every((g) => !g.includes("!include")), "no PlantUML hint");
+});
+
+test("17. plantuml utxt sequence rule accepts sequence diagrams and rejects others, and plantumlServer is validated", () => {
+	assert.equal(isSequenceDiagram("@startuml\nparticipant A\nA -> B : hi\n@enduml\n"), true, "participants and arrows");
+	assert.equal(isSequenceDiagram("@startuml\nA -> B : hi\n@enduml\n"), true, "arrow alone");
+	assert.equal(isSequenceDiagram("@startuml\nclass Foo\nFoo --> Bar\n@enduml\n"), false, "class diagram");
+	assert.equal(isSequenceDiagram("@startuml\n[*] --> Idle\nIdle -> Busy\n@enduml\n"), false, "state diagram");
+	assert.equal(isSequenceDiagram("@startuml\n:Read;\n@enduml\n"), false, "activity diagram");
+	assert.equal(isSequenceDiagram("@startuml\nA -> B\n' class Foo\n/' state X '/\nB -> A : \"stop\"\n@enduml\n"), true, "comments and strings are ignored");
+	assert.equal(isSequenceDiagram("@startmindmap\n* root\n** leaf\n@endmindmap\n"), false, "no sequence keyword or arrow");
+
+	const server = (value: unknown) => resolveStyle({ plantumlServer: value }).plantumlServer;
+	assert.equal(server("https://plantuml.example.com/"), "https://plantuml.example.com");
+	assert.equal(server("http://localhost:8080"), "http://localhost:8080");
+	assert.equal(server("http://127.0.0.1:8080"), "http://127.0.0.1:8080");
+	assert.equal(server("http://[::1]:8080"), "http://[::1]:8080");
+	assert.equal(server("http://plantuml.example.com"), null, "plain http to a remote host");
+	assert.equal(server("ftp://plantuml.example.com"), null);
+	assert.equal(server("not a url"), null);
+	assert.equal(server(undefined), null);
+	assert.equal(resolveStyle({}).plantuml, true);
+	assert.equal(resolveStyle({ plantuml: false }).plantuml, false);
+});
+
+test("18. closing the setup overlay stops plantuml redraws from going to the stale overlay TUI", async () => {
+	const fake = plantumlFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	void h.commands.get("prism")!.handler("setup", h.ctx);
+	assert.ok(h.getOverlay(), "setup overlay is open");
+	reply(diagram("overlay open")).render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(h.renders.overlay > 0, "redraw goes to the open overlay");
+	assert.equal(h.renders.screen, 0);
+
+	h.getOverlay().handleInput("\x1b");
+	assert.equal(h.getOverlay(), null, "Escape closes the overlay");
+	const overlayRenders = h.renders.overlay;
+	reply(diagram("overlay closed")).render(100);
+	await until(() => inFlight.size === 0);
+	assert.ok(h.renders.screen > 0, "redraw goes to the screen TUI");
+	assert.equal(h.renders.overlay, overlayRenders, "stale overlay handle is not used");
 });

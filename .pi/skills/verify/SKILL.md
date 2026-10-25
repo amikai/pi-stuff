@@ -5,7 +5,7 @@ description: Drive and verify the prism Pi TUI extension across assistant replie
 
 # Verify prism
 
-This skill drives `extensions/prism/index.ts` inside the real Pi TUI component and extension runtime using an isolated `PI_CODING_AGENT_DIR` (`/tmp/prism-verify-$RUN_ID`) so `~/.pi/agent` is never touched. Read [`features/README.md`](features/README.md) before driving a feature.
+This skill drives `extensions/prism/index.ts` inside the real Pi TUI component and extension runtime using an isolated `PI_CODING_AGENT_DIR` (`$TMPDIR/prism-verify-$RUN_ID`, from Node's `os.tmpdir()`, under `/var/folders` on macOS) so `~/.pi/agent` is never touched. Read [`features/README.md`](features/README.md) before driving a feature.
 
 ## Launch
 
@@ -16,7 +16,7 @@ RUN_ID="run-$(date +%s)"
 .pi/skills/verify/scripts/control-prism.mjs launch --run-id "$RUN_ID"
 ```
 
-When ready, `launch` prints `{"status":"ready","runId":"...","runDir":"/tmp/prism-verify-..."}` and exits `0` after creating `work/`, `sessions/`, and `instance.json` inside `/tmp/prism-verify-$RUN_ID`.
+When ready, `launch` prints `{"status":"ready","runId":"...","runDir":"<tmpdir>/prism-verify-..."}` and exits `0` after creating `work/`, `sessions/`, and `instance.json` inside `$TMPDIR/prism-verify-$RUN_ID`.
 
 ## Doctor
 
@@ -38,6 +38,8 @@ Run the harness against a mapped feature in [`features/`](features/):
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature rtl-latex --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature setup-commands --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature theme-sync --out "artifacts/verify/$RUN_ID"
+.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature plantuml --out "artifacts/verify/$RUN_ID"
+.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature plantuml-live --out "artifacts/verify/$RUN_ID"
 ```
 
 For manual interactive TUI inspection against the scripted faux provider in an isolated temp agent dir, run `test/prism.sh`.
@@ -58,7 +60,7 @@ Proof standards:
 
 ## Cleanup
 
-Remove the disposable `/tmp/prism-verify-$RUN_ID` directory while preserving `artifacts/verify/$RUN_ID/`:
+Remove the disposable `$TMPDIR/prism-verify-$RUN_ID` directory while preserving `artifacts/verify/$RUN_ID/`:
 
 ```bash
 .pi/skills/verify/scripts/control-prism.mjs cleanup --run-id "$RUN_ID"
@@ -69,3 +71,4 @@ Always confirm that `artifacts/verify/$RUN_ID/` still exists after `cleanup`.
 ## Helpers
 
 - `.pi/skills/verify/scripts/control-prism.mjs` — executable Node harness supporting `launch`, `doctor`, `drive`, and `cleanup`.
+- The `plantuml` and `plantuml-live` features need `plantuml` on `PATH`. `plantuml-live` also needs `tmux`, and runs `test/prism.sh` in a tmux server on its own socket, which it stops before it exits.

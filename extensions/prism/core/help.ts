@@ -1,6 +1,6 @@
 export const HINT = [
 	"Replies in this session are drawn by prism inside Pi (not a command or tool to call: when asked to show something with prism, write it as markdown in the reply).",
-	"Markdown tables, GitHub alerts (> [!WARNING], > [!NOTE]), fenced code with a language tag, and ```mermaid blocks render as colored terminal graphics:",
+	"Markdown tables, GitHub alerts (> [!WARNING], > [!NOTE]), fenced code with a language tag, and ```mermaid or ```plantuml blocks render as colored terminal graphics:",
 	'flowcharts, sequence diagrams, xychart-beta bar or line charts (name each series for the legend: line "east" [..]), pie charts and gantt schedules.',
 	"When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
 	"Skip diagrams and pictures for short or simple answers.",
@@ -206,6 +206,15 @@ gantt
     Release  :milestone, 2026-10-12, 0d
 \`\`\`
 
+PlantUML draws from a fenced \`plantuml\` block with the local \`plantuml\` command: as an image in kitty and Ghostty, as text art for sequence diagrams elsewhere. \`plantuml: false\` in \`~/.pi/agent/prism.json\` leaves it as source.
+
+\`\`\`plantuml
+@startuml
+You -> prism : markdown
+prism --> You : drawn reply
+@enduml
+\`\`\`
+
 A diagram wider than the terminal stays source, with a dim line saying why:
 
 \`\`\`mermaid
@@ -244,6 +253,8 @@ export const helpText = (): string => `
 | \`/prism demo-rtl\` | Hebrew right-to-left showcase |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
+
+A fenced \`plantuml\` block draws when the \`plantuml\` command is installed. Set \`plantumlServer\` in \`~/.pi/agent/prism.json\` to use a server when the command is missing or fails.
 
 > [!TIP]
 > Any color slot can be overridden in \`~/.pi/agent/prism.json\`, such as \`headingColor\` or \`numberColor\`.

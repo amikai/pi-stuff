@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
@@ -30,7 +30,7 @@ const { AssistantMessageComponent, initTheme, SessionManager, UserMessageCompone
 const { setTheme, theme: activePiGlobalTheme } = await import(
 	pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
 );
-const { matchesKey, visibleWidth } = await import("@earendil-works/pi-tui");
+const { matchesKey, resetCapabilitiesCache, setCapabilities, visibleWidth } = await import("@earendil-works/pi-tui");
 
 const stripAnsi = (s) =>
 	s
@@ -229,6 +229,13 @@ if (cmd === "drive") {
 	const feature = args.feature;
 	const outDir = resolve(args.out ?? join(repoRoot, "artifacts/verify", args["run-id"]));
 	const width = Number(args.width ?? 96);
+	if (feature === "rtl-latex") {
+		// The proof strings are in logical order, which prism keeps only when it detects no terminal to reorder for.
+		for (const name of ["TERM_PROGRAM", "KITTY_WINDOW_ID", "ALACRITTY_WINDOW_ID", "WT_SESSION", "VTE_VERSION", "KONSOLE_VERSION"]) {
+			delete process.env[name];
+		}
+		process.env.TERM = "xterm-256color";
+	}
 	const rt = await createRuntime(runDir);
 
 	if (feature === "reply-markdown") {
@@ -477,6 +484,175 @@ if (cmd === "drive") {
 			palette: lightPalette,
 		});
 		console.log(JSON.stringify({ ok: true, feature, outDir }));
+		process.exit(0);
+	}
+
+	if (feature === "plantuml") {
+		assert.equal(spawnSync("which", ["plantuml"]).status, 0, "plantuml must be on PATH");
+		const plantuml = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/plantuml.ts")).href);
+		const waitForJobs = async () => {
+			for (let waited = 0; plantuml.inFlight.size > 0 && waited < 15000; waited += 20) {
+				await new Promise((done) => setTimeout(done, 20));
+			}
+			assert.equal(plantuml.inFlight.size, 0, "background plantuml jobs finished within 15 s");
+		};
+		const localFile = join(rt.workDir, "local.txt");
+		writeFileSync(localFile, "Alice -> Zed : LOCALFILE\n");
+		const md = [
+			"```plantuml",
+			"@startuml",
+			"Alice -> Bob : hi",
+			"Bob --> Alice : hello",
+			"@enduml",
+			"```",
+			"",
+			"@startuml",
+			"A -> B : unfenced",
+			"@enduml",
+			"",
+			"```",
+			"@startuml",
+			"Carol -> Dave : untagged",
+			"@enduml",
+			"```",
+			"",
+			"```plantuml",
+			"class Foo",
+			"Foo --> Bar",
+			"```",
+			"",
+			"```plantuml",
+			"@startuml",
+			`!include ${localFile}`,
+			"Alice -> Bob : after include",
+			"@enduml",
+			"```",
+		].join("\n");
+
+		setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+		const comp = new AssistantMessageComponent({
+			role: "assistant",
+			content: [{ type: "text", text: md }],
+			timestamp: 3000,
+		});
+		const firstPlain = comp.render(width).map(stripAnsi).join("\n");
+		assert.ok(firstPlain.includes("Alice -> Bob : hi"), "first frame shows the source while the CLI runs");
+		await waitForJobs();
+		const textLines = comp.render(width);
+		const textPlain = textLines.map(stripAnsi).join("\n");
+		assert.ok(textPlain.includes("│Alice│") && textPlain.includes("│Bob│"), "fenced sequence diagram drawn as text art");
+		assert.ok(textPlain.includes("│A│") && textPlain.includes("│B│"), "unfenced @startuml block drawn as text art");
+		assert.ok(textPlain.includes("│Carol│") && textPlain.includes("│Dave│"), "untagged fence opening with @startuml drawn as text art");
+		assert.ok(
+			textPlain.includes("plantuml non-sequence diagrams require an image-capable terminal"),
+			"class diagram refused in text mode",
+		);
+		assert.ok(textPlain.includes("plantuml error (line 2): cannot include"), "SANDBOX-blocked include shows PlantUML's reason");
+		assert.ok(!textPlain.includes("LOCALFILE"), "blocked include draws no content from the local file");
+
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
+		const png = new AssistantMessageComponent({
+			role: "assistant",
+			content: [{ type: "text", text: ["```plantuml", "@startuml", "Bob -> Carol : png", "@enduml", "```"].join("\n") }],
+			timestamp: 4000,
+		});
+		png.render(width);
+		await waitForJobs();
+		const pngLines = png.render(width);
+		assert.ok(pngLines.join("\n").includes("\x1b_G"), "png mode draws the image through the kitty protocol");
+		const pngEntry = [...plantuml.plantumlCache.entries()].find(([key]) => key.startsWith("png:true:"))?.[1];
+		assert.equal(pngEntry?.kind, "image", "png render is cached as an image under the dark-theme key");
+		resetCapabilitiesCache();
+
+		writeArtifacts(outDir, "plantuml-text", textLines, { feature, mode: "utxt", width, lineCount: textLines.length });
+		writeArtifacts(outDir, "plantuml-png", pngLines, { feature, mode: "png", width, lineCount: pngLines.length });
+		console.log(JSON.stringify({ ok: true, feature, outDir }));
+		process.exit(0);
+	}
+
+	if (feature === "plantuml-live") {
+		for (const bin of ["tmux", "plantuml"]) {
+			assert.equal(spawnSync("which", [bin]).status, 0, `${bin} must be on PATH`);
+		}
+		const socket = `prism-verify-${args["run-id"]}`;
+		const tmux = (...rest) =>
+			execFileSync("tmux", ["-L", socket, ...rest], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+		const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+		const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+		const screen = () => tmux("capture-pane", "-p", "-e", "-t", "live");
+		const waitFor = async (test, ms) => {
+			const start = Date.now();
+			for (;;) {
+				const ansi = screen();
+				if (test(stripAnsi(ansi))) return ansi;
+				if (Date.now() - start > ms) return null;
+				await sleep(100);
+			}
+		};
+		const ART = /┌───┐ *┌─────┐/;
+		const SOURCE = "You -> prism";
+		// Each case starts a fresh pi because a second /prism demo in one session hits the plantuml cache.
+		const runCase = async (name, before) => {
+			tmux(
+				"new-session", "-d", "-s", "live", "-x", "110", "-y", "60",
+				`TMPDIR=${quote(runDir)} ${quote(join(repoRoot, "test/prism.sh"))}`,
+			);
+			try {
+				assert.ok(await waitFor((s) => s.includes("escape interrupt"), 30000), `${name}: pi started`);
+				await sleep(1500);
+				await before?.();
+				tmux("send-keys", "-t", "live", "/prism demo", "Enter");
+				const start = Date.now();
+				let sourceAt = null;
+				let sourceFrame = null;
+				let artAt = null;
+				let artFrame = null;
+				while (artAt === null && Date.now() - start < 15000) {
+					const ansi = screen();
+					const plain = stripAnsi(ansi);
+					if (sourceAt === null && plain.includes(SOURCE)) {
+						sourceAt = Date.now() - start;
+						sourceFrame = ansi;
+					}
+					if (ART.test(plain)) {
+						artAt = Date.now() - start;
+						artFrame = ansi;
+					}
+					await sleep(100);
+				}
+				assert.ok(sourceAt !== null, `${name}: the first frame shows the plantuml source`);
+				assert.ok(artAt !== null, `${name}: the art replaces the source with no keypress within 15 s`);
+				assert.ok(sourceAt <= artAt, `${name}: the source shows before the art`);
+				writeArtifacts(outDir, `plantuml-live-${name}-source`, sourceFrame.split("\n"), { feature, case: name, sourceAtMs: sourceAt });
+				writeArtifacts(outDir, `plantuml-live-${name}-art`, artFrame.split("\n"), {
+					feature,
+					case: name,
+					sourceAtMs: sourceAt,
+					artAtMs: artAt,
+					keysAfterDemo: 0,
+				});
+				return { sourceAtMs: sourceAt, artAtMs: artAt };
+			} finally {
+				tmux("kill-session", "-t", "live");
+			}
+		};
+
+		try {
+			const redraw = await runCase("redraw");
+			const overlayClose = await runCase("overlay-close", async () => {
+				tmux("send-keys", "-t", "live", "/prism setup", "Enter");
+				assert.ok(await waitFor((s) => s.includes("Setup 1/7"), 10000), "overlay-close: setup overlay opened");
+				tmux("send-keys", "-t", "live", "Escape");
+				assert.ok(await waitFor((s) => !s.includes("Setup 1/7"), 10000), "overlay-close: setup overlay closed");
+			});
+			console.log(JSON.stringify({ ok: true, feature, outDir, redraw, overlayClose }));
+		} finally {
+			try {
+				tmux("kill-server");
+			} catch {
+			}
+			rmSync(join(process.env.TMUX_TMPDIR || "/tmp", `tmux-${process.getuid()}`, socket), { force: true });
+		}
 		process.exit(0);
 	}
 
