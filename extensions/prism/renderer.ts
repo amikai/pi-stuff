@@ -1026,9 +1026,10 @@ export class PrismComponent implements Component {
 			from: h.from + this.paddingX,
 			to: h.to + this.paddingX,
 		}));
-		this.cachedLines = rendered.lines.map((line) =>
-			lineWidth(pad + line) > width ? truncateToWidth(pad + line, width) : pad + line,
-		);
+		this.cachedLines = rendered.lines.map((line) => {
+			if (line.trim() === "") return "";
+			return lineWidth(pad + line) > width ? truncateToWidth(pad + line, width) : pad + line;
+		});
 		return this.cachedLines;
 	}
 
