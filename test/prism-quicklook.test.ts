@@ -9,8 +9,11 @@ import { crc32, deflateSync } from "node:zlib";
 
 // These tests open real Quick Look panels on the screen, one after another, and briefly take the screen fullscreen.
 // test/quicklook-probe.swift is injected into the helper to read the title bar and press the zoom buttons from inside.
+// With QLF_EVIDENCE_DIR set, as `control-prism.mjs drive --feature quicklook` sets it, every probe report and a
+// screenshot of every named step stay in that directory.
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const evidence = process.env.QLF_EVIDENCE_DIR;
 const previewToolbar = "/System/Applications/Preview.app/Contents/Resources/CommonToolbar.proplist";
 const skip =
 	process.platform !== "darwin"
@@ -27,7 +30,8 @@ type Item = { kind: string; frame: Box; fittingWidth: number; text?: string; ful
 type Layout = { op: "layout"; panel: Box; minSize: [number, number]; titleBar: Box; items: Item[]; openButtons: number };
 type Scale = { op: "scale"; scale?: number; error?: string };
 type Step =
-	| { op: "layout" | "scale" | "enterFullscreen" | "exitFullscreen" | "close" | "clickClose" }
+	| { op: "layout" | "scale"; name?: string }
+	| { op: "enterFullscreen" | "exitFullscreen" | "close" | "clickClose" }
 	| { op: "drag" | "resize"; width: number }
 	| { op: "press"; label: "Zoom Out" | "Actual Size" | "Zoom In" }
 	| { op: "key"; key: "space" | "escape" };
@@ -81,15 +85,24 @@ const stripes = (name: string, width: number, height: number) => {
 	return file;
 };
 
-const probeRun = (image: string, steps: Step[]): (Layout | Scale)[] => {
+const probeEnv = (out: string, steps: Step[]) => ({
+	...process.env,
+	DYLD_INSERT_LIBRARIES: probe,
+	QLF_PROBE_OUT: out,
+	QLF_PROBE_STEPS: JSON.stringify(steps),
+	...(evidence ? { QLF_PROBE_SHOTS: evidence } : {}),
+});
+
+const keep = (label: string, report: object) => {
+	if (evidence) writeFileSync(join(evidence, `quicklook-${label}.json`), `${JSON.stringify(report, null, 2)}\n`);
+};
+
+const probeRun = (label: string, image: string, steps: Step[]): (Layout | Scale)[] => {
 	const out = join(dir, `probe-${++runs}.json`);
-	const run = spawnSync(helper, [image], {
-		env: { ...process.env, DYLD_INSERT_LIBRARIES: probe, QLF_PROBE_OUT: out, QLF_PROBE_STEPS: JSON.stringify(steps) },
-		encoding: "utf8",
-		timeout: 90_000,
-	});
+	const run = spawnSync(helper, [image], { env: probeEnv(out, steps), encoding: "utf8", timeout: 90_000 });
 	assert.ok(existsSync(out), `the probe wrote no report (status ${run.status}, signal ${run.signal}): ${run.stderr}`);
 	const report = JSON.parse(readFileSync(out, "utf8")) as { results: (Layout | Scale)[]; error?: string };
+	keep(label, { image, steps, ...report });
 	assert.equal(report.error, undefined, `the probe stopped early: ${report.error}`);
 	return report.results;
 };
@@ -147,7 +160,13 @@ const assertTidy = (layout: Layout, context: string) => {
 
 test("1. The title bar keeps the file name, zoom pill and Quick Look's buttons apart at every width", { skip }, () => {
 	const [opened, dragged, forced] = layouts(
-		probeRun(stripes("small.png", 160, 160), [{ op: "layout" }, { op: "drag", width: 1 }, { op: "layout" }, { op: "resize", width: 1 }, { op: "layout" }]),
+		probeRun("widths", stripes("small.png", 160, 160), [
+			{ op: "layout", name: "quicklook-small-opened" },
+			{ op: "drag", width: 1 },
+			{ op: "layout", name: "quicklook-small-min-width" },
+			{ op: "resize", width: 1 },
+			{ op: "layout", name: "quicklook-small-forced-narrow" },
+		]),
 	);
 	assertTidy(opened!, "a small image");
 	assert.equal(dragged!.panel[2], dragged!.minSize[0], "a drag to 1 pt stops at the panel's minimum width");
@@ -155,11 +174,17 @@ test("1. The title bar keeps the file name, zoom pill and Quick Look's buttons a
 	assert.ok(forced!.panel[2] < dragged!.panel[2], "setFrame takes the panel below the minimum a drag reaches");
 	assertTidy(forced!, `the narrowest frame Auto Layout allows (${forced!.panel[2]} pt)`);
 
-	const [roomy] = layouts(probeRun(stripes("big.png", 2400, 1600), [{ op: "layout" }]));
+	const [roomy] = layouts(probeRun("roomy", stripes("big.png", 2400, 1600), [{ op: "layout", name: "quicklook-short-name-wide" }]));
 	assertTidy(roomy!, "a short name in a wide panel, where the title bar has room to spare");
 
 	const longName = "a-diagram-with-a-file-name-much-longer-than-the-title-bar-0123456789.png";
-	const [wide, narrow] = layouts(probeRun(stripes(longName, 900, 500), [{ op: "layout" }, { op: "drag", width: 1 }, { op: "layout" }]));
+	const [wide, narrow] = layouts(
+		probeRun("long-name", stripes(longName, 900, 500), [
+			{ op: "layout", name: "quicklook-long-name-wide" },
+			{ op: "drag", width: 1 },
+			{ op: "layout", name: "quicklook-long-name-min-width" },
+		]),
+	);
 	assertTidy(wide!, "a wide image with a long name");
 	assertTidy(narrow!, "a long name at the minimum width");
 	const title = narrow!.items.find((item) => item.kind === "title")!;
@@ -176,7 +201,7 @@ test("2. The zoom buttons are Preview's three zoom buttons, in its order and wit
 	const toolbar = JSON.parse(execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", previewToolbar], { encoding: "utf8" }));
 	const item = toolbar.items.find((i: { identifier: string }) => i.identifier === "zoom_and_actual");
 	const preview = item.segments.map((s: { AXDescription: string; toolTip: string }) => ({ label: s.AXDescription, toolTip: s.toolTip }));
-	const [layout] = layouts(probeRun(stripes("tooltips.png", 160, 160), [{ op: "layout" }]));
+	const [layout] = layouts(probeRun("zoom-buttons", stripes("tooltips.png", 160, 160), [{ op: "layout" }]));
 	assert.deepEqual(
 		zoomButtons(layout!).map(({ label, toolTip }) => ({ label, toolTip })),
 		preview,
@@ -194,16 +219,16 @@ test("3. The zoom buttons zoom like Preview's: out and in step the scale, Actual
 	};
 
 	const big = scales(
-		probeRun(stripes("big.png", 2400, 1600), [
-			{ op: "scale" },
+		probeRun("zoom-big", stripes("big.png", 2400, 1600), [
+			{ op: "scale", name: "quicklook-zoom-big-1-fit" },
 			{ op: "press", label: "Actual Size" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-big-2-actual-size" },
 			{ op: "press", label: "Actual Size" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-big-3-actual-size-again" },
 			{ op: "press", label: "Zoom In" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-big-4-zoom-in" },
 			{ op: "press", label: "Zoom Out" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-big-5-zoom-out" },
 		]),
 	);
 	if (!big) return t.skip("the terminal may not record the screen, so the zoom cannot be measured");
@@ -215,16 +240,16 @@ test("3. The zoom buttons zoom like Preview's: out and in step the scale, Actual
 	assert.ok(zoomedOut! < zoomedIn! - 0.1, `Zoom Out scales back down (${zoomedIn} to ${zoomedOut})`);
 
 	const [start, inOnce, inTwice, outOnce, reset] = scales(
-		probeRun(stripes("small-zoom.png", 160, 160), [
-			{ op: "scale" },
+		probeRun("zoom-small", stripes("small-zoom.png", 160, 160), [
+			{ op: "scale", name: "quicklook-zoom-small-1-opened" },
 			{ op: "press", label: "Zoom In" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-small-2-zoom-in" },
 			{ op: "press", label: "Zoom In" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-small-3-zoom-in-again" },
 			{ op: "press", label: "Zoom Out" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-small-4-zoom-out" },
 			{ op: "press", label: "Actual Size" },
-			{ op: "scale" },
+			{ op: "scale", name: "quicklook-zoom-small-5-actual-size" },
 		]),
 	)!;
 	assert.ok(near(start, 1), `an image smaller than the window opens at actual size (${start})`);
@@ -235,7 +260,12 @@ test("3. The zoom buttons zoom like Preview's: out and in step the scale, Actual
 
 test("4. The zoom pill and a tidy title bar survive a trip through fullscreen", { skip }, () => {
 	const [windowed, restored] = layouts(
-		probeRun(stripes("fullscreen.png", 160, 160), [{ op: "layout" }, { op: "enterFullscreen" }, { op: "exitFullscreen" }, { op: "layout" }]),
+		probeRun("fullscreen", stripes("fullscreen.png", 160, 160), [
+			{ op: "layout", name: "quicklook-before-fullscreen" },
+			{ op: "enterFullscreen" },
+			{ op: "exitFullscreen" },
+			{ op: "layout", name: "quicklook-after-fullscreen" },
+		]),
 	);
 	assertTidy(windowed!, "before fullscreen");
 	assertTidy(restored!, "after leaving fullscreen");
@@ -250,16 +280,17 @@ test("5. Closing the panel ends the helper, however it is closed", { skip }, () 
 		["Esc", { op: "key", key: "escape" }],
 		["Space", { op: "key", key: "space" }],
 	];
-	for (const [way, step] of ways) {
+	const closed = ways.map(([way, step]) => {
 		const out = join(dir, `close-${++runs}.json`);
-		const run = spawnSync(helper, [image], {
-			env: { ...process.env, DYLD_INSERT_LIBRARIES: probe, QLF_PROBE_OUT: out, QLF_PROBE_STEPS: JSON.stringify([step]) },
-			encoding: "utf8",
-			timeout: 10_000,
-		});
+		const started = performance.now();
+		const run = spawnSync(helper, [image], { env: probeEnv(out, [step]), encoding: "utf8", timeout: 10_000 });
 		const report = existsSync(out) ? (JSON.parse(readFileSync(out, "utf8")) as { error?: string }) : {};
-		assert.equal(report.error, undefined, `closing with ${way}: the probe stopped early: ${report.error}`);
-		assert.equal(run.signal, null, `closing with ${way} leaves the helper running in the background`);
-		assert.equal(run.status, 0, `closing with ${way} ends the helper cleanly`);
+		return { way, status: run.status, signal: run.signal, ms: Math.round(performance.now() - started), error: report.error };
+	});
+	keep("close", { closed });
+	for (const { way, status, signal, error } of closed) {
+		assert.equal(error, undefined, `closing with ${way}: the probe stopped early: ${error}`);
+		assert.equal(signal, null, `closing with ${way} leaves the helper running in the background`);
+		assert.equal(status, 0, `closing with ${way} ends the helper cleanly`);
 	}
 });
