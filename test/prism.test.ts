@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { inflateRawSync } from "node:zlib";
+import { crc32, deflateSync, inflateRawSync } from "node:zlib";
 
 const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
 const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
@@ -31,7 +31,7 @@ const {
 const { setTheme, theme: activePiGlobalTheme } = await import(
 	pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
 );
-const { matchesKey, resetCapabilitiesCache, setCapabilities, visibleWidth } = await import("@earendil-works/pi-tui");
+const { getCellDimensions, matchesKey, resetCapabilitiesCache, setCapabilities, setCellDimensions, visibleWidth } = await import("@earendil-works/pi-tui");
 initTheme("dark");
 
 const { default: prismExtension, themeFromPiTheme } = await import("../extensions/prism/index.ts");
@@ -548,6 +548,28 @@ const PNG_1X1 = Buffer.from(
 	"base64",
 );
 
+const pngOf = (width: number, height: number) => {
+	const chunk = (type: string, data: Buffer) => {
+		const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
+		const head = Buffer.alloc(4);
+		head.writeUInt32BE(data.length);
+		const tail = Buffer.alloc(4);
+		tail.writeUInt32BE(crc32(body));
+		return Buffer.concat([head, body, tail]);
+	};
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(width, 0);
+	header.writeUInt32BE(height, 4);
+	header.set([8, 0, 0, 0, 0], 8);
+	const pixels = Buffer.alloc((width + 1) * height);
+	return Buffer.concat([
+		Buffer.from("89504e470d0a1a0a", "hex"),
+		chunk("IHDR", header),
+		chunk("IDAT", deflateSync(pixels)),
+		chunk("IEND", Buffer.alloc(0)),
+	]);
+};
+
 const FAKE_PLANTUML = `#!/bin/sh
 src=$(cat)
 printf '%s\\n' "$src" > "$FAKE_PLANTUML_DIR/stdin"
@@ -587,11 +609,11 @@ const diagram = (tag = "", body = "Alice -> Bob : hi") =>
 const reply = (text: string) =>
 	new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any);
 
-function plantumlFixture(options: { images?: "kitty" | null; installed?: boolean } = {}) {
+function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "prism-plantuml-"));
 	const bin = join(dir, "bin");
 	mkdirSync(bin);
-	writeFileSync(join(dir, "diagram.png"), PNG_1X1);
+	writeFileSync(join(dir, "diagram.png"), options.png ?? PNG_1X1);
 	writeFileSync(join(bin, "plantuml"), FAKE_PLANTUML, { mode: 0o755 });
 	const saved = Object.fromEntries(["PATH", "FAKE_PLANTUML_DIR", ...JAVA_VARS].map((k) => [k, process.env[k]]));
 	process.env.FAKE_PLANTUML_DIR = dir;
@@ -653,6 +675,7 @@ const sendPng = (res: ServerResponse) => {
 };
 
 const KITTY_IMAGE = "\x1b_G";
+const ITERM2_IMAGE = "\x1b]1337;File=";
 
 test("9. plantuml CLI success in png mode draws source first, then an image, sandboxed, and redraws the screen", async () => {
 	const fake = plantumlFixture();
@@ -958,4 +981,96 @@ test("18. closing the setup overlay stops plantuml redraws from going to the sta
 	await until(() => inFlight.size === 0);
 	assert.ok(h.renders.screen > 0, "redraw goes to the screen TUI");
 	assert.equal(h.renders.overlay, overlayRenders, "stale overlay handle is not used");
+});
+
+test("19. a plantuml image reserves a line per image row, so the text after it is never drawn under it", async () => {
+	const png = pngOf(320, 280);
+	for (const images of ["kitty", "iterm2"] as const) {
+		const fake = plantumlFixture({ images, png });
+		const h = createHarness();
+		cleanupFn = () => {
+			fake.restore();
+			h.cleanup();
+		};
+		await h.emit("session_start");
+
+		const comp = reply([diagram(images), "", "After the diagram"].join("\n"));
+		comp.render(100);
+		await until(() => inFlight.size === 0);
+		const lines = comp.render(100);
+		const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
+		assert.ok(at >= 0, `${images}: the diagram is drawn as an image`);
+		// Kitty draws down from its line; iTerm2 moves up to the top row first.
+		const up = Number(/\x1b\[(\d+)A/.exec(lines[at]!)?.[1] ?? 0);
+		const rows = images === "kitty" ? Number(/[,;]r=(\d+)/.exec(lines[at]!)?.[1]) : up + 1;
+		const top = at - up;
+		assert.ok(rows > 1, `${images}: the image spans ${rows} rows`);
+		const covered = lines.slice(top, top + rows).filter((_, i) => top + i !== at).map((line) => stripAnsi(line).trim());
+		assert.deepEqual(covered, Array(rows - 1).fill(""), `${images}: rows under the image are left blank`);
+		const after = lines.findIndex((line) => stripAnsi(line).includes("After the diagram"));
+		assert.ok(after >= top + rows, `${images}: text after the image starts on row ${after - top} of a ${rows}-row image`);
+		if (images === "kitty") assert.match(lines[at]!, /[,;]C=1[,;]/, "the terminal is told not to move the cursor past the image");
+		const end = images === "kitty" ? "\x1b\\" : "\x07";
+		assert.ok(lines[at]!.includes(`${png.toString("base64")}${end}`), `${images}: the terminal receives the whole PNG and the end of its escape sequence`);
+		cleanupFn();
+		cleanupFn = undefined;
+	}
+});
+
+test("20. a drawn image keeps one Kitty image id across redraws and streaming updates, and each reply gets its own", async () => {
+	const fake = plantumlFixture({ png: pngOf(320, 280) });
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const text = diagram("ids");
+	const message = { role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any;
+	const comp = new AssistantMessageComponent(message);
+	comp.render(100);
+	await until(() => inFlight.size === 0);
+	const idOf = (lines: string[]) => /[,;]i=(\d+)/.exec(lines.find((line) => line.includes(KITTY_IMAGE)) ?? "")?.[1];
+	const first = idOf(comp.render(100));
+	assert.ok(first, "the image carries a Kitty image id");
+
+	comp.invalidate();
+	assert.equal(idOf(comp.render(100)), first, "a redraw keeps the id");
+	comp.updateContent(message);
+	assert.equal(idOf(comp.render(100)), first, "a streaming update keeps the id, so the image is not sent again");
+	assert.notEqual(idOf(reply(text).render(100)), first, "another reply with the same diagram gets its own id");
+});
+
+test("21. an image drawn before the terminal reports its cell size lays out like a fresh one once the size arrives", async () => {
+	const savedCell = getCellDimensions();
+	for (const images of ["kitty", "iterm2"] as const) {
+		setCellDimensions({ widthPx: 9, heightPx: 18 });
+		const fake = plantumlFixture({ images, png: pngOf(320, 280) });
+		const h = createHarness();
+		cleanupFn = () => {
+			fake.restore();
+			h.cleanup();
+			setCellDimensions(savedCell);
+		};
+		await h.emit("session_start");
+
+		const text = diagram(`cell ${images}`);
+		const comp = reply(text);
+		comp.render(100);
+		await until(() => inFlight.size === 0);
+		const reserved = (lines: string[]) => {
+			const line = lines.find((l) => l.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE)) ?? "";
+			return images === "kitty" ? Number(/[,;]r=(\d+)/.exec(line)?.[1]) : Number(/\x1b\[(\d+)A/.exec(line)?.[1] ?? 0) + 1;
+		};
+		const before = reserved(comp.render(100));
+
+		setCellDimensions({ widthPx: 10, heightPx: 30 });
+		comp.invalidate();
+		const fresh = reserved(reply(text).render(100));
+		assert.notEqual(fresh, before, `${images}: the new cell size changes how many rows the image covers`);
+		assert.equal(reserved(comp.render(100)), fresh, `${images}: the earlier message reserves the rows the image now covers`);
+		cleanupFn();
+		cleanupFn = undefined;
+	}
 });
