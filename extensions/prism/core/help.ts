@@ -206,6 +206,177 @@ gantt
     Release  :milestone, 2026-10-12, 0d
 \`\`\`
 
+A diagram wider than the terminal stays source, with a dim line saying why. Where the terminal shows images and the \`mmdr\` command is installed, \`mmdr\` draws it as a picture instead, after a moment (\`mmdr: false\` in \`~/.pi/agent/prism.json\` leaves it as source):
+
+\`\`\`mermaid
+flowchart TD
+    Q[Queue] --> W1[Worker 1] & W2[Worker 2] & W3[Worker 3] & W4[Worker 4] & W5[Worker 5] & W6[Worker 6] & W7[Worker 7] & W8[Worker 8] & W9[Worker 9] & W10[Worker 10] & W11[Worker 11] & W12[Worker 12] & W13[Worker 13] & W14[Worker 14] & W15[Worker 15] & W16[Worker 16]
+\`\`\`
+
+The Mermaid kinds below draw as pictures where the terminal shows images and the \`mmdr\` command is installed, and otherwise stay source with a note.
+
+\`timeline\`
+
+\`\`\`mermaid
+timeline
+    title Release history
+    2024 : Alpha : Prototype
+    2025 : Beta
+    2026 : Stable
+\`\`\`
+
+\`mindmap\`
+
+\`\`\`mermaid
+mindmap
+  root((prism))
+    Draws
+      Tables
+      Diagrams
+    Copies
+      Source
+      Image
+\`\`\`
+
+\`gitGraph\`
+
+\`\`\`mermaid
+gitGraph
+    commit id: "init"
+    branch feature
+    commit id: "draw"
+    checkout main
+    commit id: "fix"
+    merge feature
+\`\`\`
+
+\`journey\`
+
+\`\`\`mermaid
+journey
+    title Reading a reply
+    section Ask
+      Write prompt: 4: User
+    section Read
+      See diagram: 5: User
+      Copy source: 3: User
+\`\`\`
+
+\`quadrantChart\`
+
+\`\`\`mermaid
+quadrantChart
+    title Effort and impact
+    x-axis Low effort --> High effort
+    y-axis Low impact --> High impact
+    Tables: [0.2, 0.8]
+    Diagrams: [0.7, 0.75]
+    Themes: [0.3, 0.3]
+\`\`\`
+
+\`sankey-beta\`
+
+\`\`\`mermaid
+sankey-beta
+
+Replies,Text,60
+Replies,Diagrams,25
+Replies,Tables,15
+\`\`\`
+
+\`C4Context\`
+
+\`\`\`mermaid
+C4Context
+    title Reply rendering
+    Person(user, "User", "Reads replies")
+    System(pi, "Pi", "Terminal agent")
+    System_Ext(mmdr, "mmdr", "Draws diagrams")
+    Rel(user, pi, "Prompts")
+    Rel(pi, mmdr, "Sends source")
+\`\`\`
+
+\`architecture-beta\`
+
+\`\`\`mermaid
+architecture-beta
+    group edge(cloud)[Edge]
+    service web(internet)[Web] in edge
+    service api(server)[API] in edge
+    service db(database)[Store]
+    web:R --> L:api
+    api:B --> T:db
+\`\`\`
+
+\`block-beta\`
+
+\`\`\`mermaid
+block-beta
+    columns 3
+    Input Parse Render
+    space:3
+    Cache:3
+\`\`\`
+
+\`kanban\`
+
+\`\`\`mermaid
+kanban
+  Todo
+    t1[Write docs]
+  Doing
+    t2[Review diff]
+  Done
+    t3[Ship it]
+\`\`\`
+
+\`packet-beta\`
+
+\`\`\`mermaid
+packet-beta
+    0-15: "Source port"
+    16-31: "Destination port"
+    32-63: "Sequence number"
+\`\`\`
+
+\`radar-beta\`
+
+\`\`\`mermaid
+radar-beta
+    axis Speed, Color, Accuracy, Reach
+    curve Now{4, 3, 5, 2}
+    max 5
+\`\`\`
+
+\`treemap-beta\`
+
+\`\`\`mermaid
+treemap-beta
+"Replies"
+  "Text"
+    "Prose": 40
+    "Code": 20
+  "Visuals"
+    "Diagrams": 25
+    "Tables": 15
+\`\`\`
+
+\`requirementDiagram\`
+
+\`\`\`mermaid
+requirementDiagram
+    requirement fits {
+        id: 1
+        text: a diagram fits twenty rows
+        risk: low
+        verifymethod: demonstration
+    }
+    element demo {
+        type: page
+    }
+    demo - satisfies -> fits
+\`\`\`
+
 PlantUML draws from a fenced \`plantuml\` block with the local \`plantuml\` command: as an image in kitty and Ghostty, as text art for sequence diagrams elsewhere. \`plantuml: false\` in \`~/.pi/agent/prism.json\` leaves it as source.
 
 \`\`\`plantuml
@@ -213,13 +384,6 @@ PlantUML draws from a fenced \`plantuml\` block with the local \`plantuml\` comm
 You -> prism : markdown
 prism --> You : drawn reply
 @enduml
-\`\`\`
-
-A diagram wider than the terminal stays source, with a dim line saying why. Where the terminal shows images and the \`mmdr\` command is installed, \`mmdr\` draws it as a picture instead, after a moment (\`mmdr: false\` in \`~/.pi/agent/prism.json\` leaves it as source):
-
-\`\`\`mermaid
-flowchart TD
-    Q[Queue] --> W1[Worker 1] & W2[Worker 2] & W3[Worker 3] & W4[Worker 4] & W5[Worker 5] & W6[Worker 6] & W7[Worker 7] & W8[Worker 8] & W9[Worker 9] & W10[Worker 10] & W11[Worker 11] & W12[Worker 12] & W13[Worker 13] & W14[Worker 14] & W15[Worker 15] & W16[Worker 16]
 \`\`\`
 
 A figure draws as written, its markup colored by role:

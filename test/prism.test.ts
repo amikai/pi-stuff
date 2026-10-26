@@ -61,9 +61,10 @@ const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts"
 const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
-const { headerWord, judge, MMDR_HINT, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
+const { headerWord, judge, MMDR_HINT, MMDR_KINDS, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
 const { isSequenceDiagram, plantumlJobs } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
+const { showcaseText } = await import("../extensions/prism/core/help.ts");
 
 const stripAnsi = (s: string) =>
 	s
@@ -1959,4 +1960,30 @@ test("40. the mmdr hint reaches the model only when mermaid, mmdr, images, the c
 	assert.equal(await hinted({}, {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }), false, "over SSH");
 	assert.equal(await hinted({}, {}, { SSH_TTY: "/dev/pts/0" }), false, "over SSH on a tty");
 	assert.ok(MMDR_HINT.includes("```mermaid") && MMDR_HINT.includes("not hyphens"), "the hint names the fence and the id rule");
+});
+
+const demoKinds = () =>
+	parse(showcaseText(), { numbers: true, paths: true })
+		.filter((block) => block.kind === "code" && block.lang === "mermaid")
+		.map((block) => (block as { lines: string[] }).lines.join("\n"));
+
+test("41. /prism demo shows a sample of every kind the mmdr hint names, small and without hyphenated ids", () => {
+	const samples = demoKinds();
+	for (const kind of MMDR_KINDS) {
+		const own = samples.filter((source) => headerWord(source) === kind);
+		assert.equal(own.length, 1, `one ${kind} sample`);
+		assert.ok(own[0]!.split("\n").length <= 12, `${kind} is small`);
+	}
+	for (const source of samples.filter((source) => /^(flowchart|graph)\b/.test(source))) assert.doesNotMatch(source.replace(/\[[^\]]*\]/g, ""), /\w-\w/, "flowchart ids have no hyphens");
+});
+
+test("42. real mmdr draws every /prism demo sample as a picture", { skip: hasMmdr ? false : "mmdr is not on PATH" }, async () => {
+	mmdrJobs.clear();
+	const wake = { requestRender: () => {} };
+	for (const source of demoKinds().filter((source) => MMDR_KINDS.includes(headerWord(source) as never))) {
+		assert.equal(mmdrPicture(source, wake).state, "pending", headerWord(source));
+		await mmdrJobs.idle();
+		assert.equal(mmdrPicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
+	}
+	mmdrJobs.clear();
 });

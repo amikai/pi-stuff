@@ -654,7 +654,7 @@ if (cmd === "drive") {
 	if (feature === "mmdr") {
 		assert.equal(spawnSync("which", ["mmdr"]).status, 0, "mmdr must be on PATH");
 		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "prism turns mmdr off over SSH; drive it from a local terminal");
-		const { MMDR_HINT, MMDR_KINDS, mmdrJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/mmdr.ts")).href);
+		const { headerWord, MMDR_HINT, MMDR_KINDS, mmdrJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/mmdr.ts")).href);
 		const fence = (source) => ["```mermaid", source, "```"].join("\n");
 		const fan = (id) => ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n");
 		const timeline = "timeline\n  title Releases\n  2024 : alpha\n  2025 : beta : stable";
@@ -749,6 +749,35 @@ if (cmd === "drive") {
 		assert.ok(!textPlain.includes("mmdr"), "without images nothing mentions mmdr");
 		resetCapabilitiesCache();
 
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
+		await rt.commands.get("prism").handler("demo", rt.ctx);
+		const demoEntry = rt.appendedEntries.at(-1);
+		const demoRenderer = rt.entryRenderers.get("prism-output");
+		const demoComp = demoRenderer(demoEntry, { expanded: false }, activePiGlobalTheme);
+		const demoWidth = fittedAt(100);
+		demoComp.render(demoWidth);
+		await mmdrJobs.idle();
+		const demoLines = demoComp.render(demoWidth);
+		const demoPlain = demoLines.map(stripAnsi).join("\n");
+		const demoSamples = [...demoEntry.data.text.matchAll(/```mermaid\n([\s\S]*?)\n```/g)]
+			.map((m) => m[1])
+			.filter((source) => MMDR_KINDS.includes(headerWord(source)));
+		assert.deepEqual(
+			demoSamples.map(headerWord).sort(),
+			[...MMDR_KINDS].sort(),
+			"/prism demo has one sample of every kind the hint names",
+		);
+		for (const source of demoSamples) {
+			const word = headerWord(source);
+			assert.equal(mmdrJobs.cache.get(source)?.state, "drawn", `the ${word} demo sample ends as a picture`);
+			assert.ok(!demoPlain.includes(`${word} diagrams draw as source for now`), `the ${word} demo sample shows no note`);
+		}
+		assert.ok(!demoPlain.includes(PENDING), "no demo sample is still drawing");
+		const demoImageIds = new Set([...demoLines.join("\n").matchAll(/\x1b_G[^\x1b]*?\bi=(\d+)/g)].map((m) => m[1]));
+		assert.ok(demoImageIds.size >= demoSamples.length, "every demo sample is a kitty image");
+		resetCapabilitiesCache();
+
+		writeArtifacts(outDir, "mmdr-demo", demoLines, { feature, state: "demo", width: demoWidth, samples: demoSamples.length, imageIds: [...demoImageIds] });
 		writeArtifacts(outDir, "mmdr-pending", pendingLines, { feature, state: "pending", width: narrow });
 		writeArtifacts(outDir, "mmdr-images", drawnLines, { feature, state: "drawn", width: narrow, imageIds: [...imageIds], buttons });
 		writeArtifacts(outDir, "mmdr-wide", comp.render(wide), { feature, state: "wide", width: wide });
