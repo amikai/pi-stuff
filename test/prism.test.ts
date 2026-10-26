@@ -61,7 +61,7 @@ const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts"
 const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
-const { headerWord, judge, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
+const { headerWord, judge, MMDR_HINT, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
 const { isSequenceDiagram, plantumlJobs } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 
@@ -1926,4 +1926,37 @@ test("39. mmdr:false or an SSH session keeps every block the text renderer canno
 			h.cleanup();
 		}
 	}
+});
+
+test("40. the mmdr hint reaches the model only when mermaid, mmdr, images, the command and a local session are all there", async () => {
+	const startEvent = () => ({
+		type: "before_agent_start",
+		messageType: "user",
+		prompt: "x",
+		systemPrompt: "",
+		systemPromptOptions: { guidelines: [] as string[] },
+	});
+	const hinted = async (config: Record<string, unknown>, fixture: Parameters<typeof mmdrFixture>[0] = {}, env: Record<string, string> = {}) => {
+		const fake = mmdrFixture(fixture);
+		Object.assign(process.env, env);
+		const h = createHarness(config);
+		try {
+			await h.emit("session_start");
+			const event = startEvent();
+			await h.emit("before_agent_start", event);
+			return event.systemPromptOptions.guidelines.some((g) => g.includes("sankey-beta"));
+		} finally {
+			fake.restore();
+			h.cleanup();
+		}
+	};
+	assert.equal(await hinted({}), true, "every gate holds");
+	assert.equal(await hinted({ diagramHints: false }), false, "diagramHints off");
+	assert.equal(await hinted({ mermaid: false }), false, "mermaid off");
+	assert.equal(await hinted({ mmdr: false }), false, "mmdr off");
+	assert.equal(await hinted({}, { images: null }), false, "the terminal shows no images");
+	assert.equal(await hinted({}, { installed: false }), false, "mmdr is not installed");
+	assert.equal(await hinted({}, {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }), false, "over SSH");
+	assert.equal(await hinted({}, {}, { SSH_TTY: "/dev/pts/0" }), false, "over SSH on a tty");
+	assert.ok(MMDR_HINT.includes("```mermaid") && MMDR_HINT.includes("not hyphens"), "the hint names the fence and the id rule");
 });

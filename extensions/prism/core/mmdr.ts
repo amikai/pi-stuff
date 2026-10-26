@@ -19,6 +19,25 @@ const DECLINED: Settled = { state: 'declined' }
 // mmdr holds the whole raster in memory: a 300-edge chart peaks near 1 GB for 4 s, so jobs run one at a time.
 export const mmdrJobs = background<Settled>({ limit: 100, concurrency: 1, crashed: DECLINED })
 
+export const MMDR_KINDS = [
+  'timeline',
+  'mindmap',
+  'gitGraph',
+  'journey',
+  'quadrantChart',
+  'sankey-beta',
+  'C4Context',
+  'architecture-beta',
+  'block-beta',
+  'kanban',
+  'packet-beta',
+  'radar-beta',
+  'treemap-beta',
+  'requirementDiagram',
+] as const
+
+export const MMDR_HINT = `Other \`\`\`mermaid kinds (${MMDR_KINDS.join(', ')}) are drawn by prism as an image on a white background, at most about 20 terminal rows tall, so keep them small. Flowchart node ids use letters, digits and underscores, not hyphens.`
+
 const found = new Map<string | undefined, string | null>()
 
 export const mmdrPath = (): string | null => {

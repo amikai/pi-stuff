@@ -69,6 +69,7 @@ import {
 } from "./core/latex.ts";
 import { parse, type Block } from "./core/markdown.ts";
 import { drawDiagrams } from "./core/mermaid.ts";
+import { MMDR_HINT, mmdrPath } from "./core/mmdr.ts";
 import { drawPlantUml, PLANTUML_HINT } from "./core/plantuml.ts";
 import {
 	drawMath,
@@ -1154,6 +1155,7 @@ export default function prismExtension(
 					FIGURE_HINT,
 					...(style.latex && getCapabilities().images ? [LATEX_HINT] : []),
 					...(style.plantuml ? [PLANTUML_HINT] : []),
+					...(style.mermaid && mmdrEnabled(style) && getCapabilities().images && mmdrPath() !== null ? [MMDR_HINT] : []),
 				]
 			: [];
 		if (hints.length > 0) {

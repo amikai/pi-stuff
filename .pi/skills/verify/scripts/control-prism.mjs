@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -654,7 +654,7 @@ if (cmd === "drive") {
 	if (feature === "mmdr") {
 		assert.equal(spawnSync("which", ["mmdr"]).status, 0, "mmdr must be on PATH");
 		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "prism turns mmdr off over SSH; drive it from a local terminal");
-		const { mmdrJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/mmdr.ts")).href);
+		const { MMDR_HINT, MMDR_KINDS, mmdrJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/mmdr.ts")).href);
 		const fence = (source) => ["```mermaid", source, "```"].join("\n");
 		const fan = (id) => ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n");
 		const timeline = "timeline\n  title Releases\n  2024 : alpha\n  2025 : beta : stable";
@@ -700,6 +700,37 @@ if (cmd === "drive") {
 		const widePlain = comp.render(wide).map(stripAnsi).join("\n");
 		assert.equal(count(widePlain, "Child number 3"), 2, "at 140 columns both fan-outs are box art");
 		assert.ok(widePlain.includes("notADiagram diagrams draw as source for now"), "the misread header still keeps its note");
+
+		const minimal = {
+			timeline: "timeline\n  2024 : alpha",
+			mindmap: "mindmap\n  root((Plan))\n    Build\n    Ship",
+			gitGraph: "gitGraph\n  commit\n  branch dev\n  commit\n  checkout main\n  merge dev",
+			journey: "journey\n  title Day\n  section Work\n    Code: 5: Me",
+			quadrantChart: "quadrantChart\n  title Reach\n  x-axis Low --> High\n  y-axis Low --> High\n  A: [0.3, 0.6]",
+			"sankey-beta": "sankey-beta\n  A,B,10",
+			C4Context: 'C4Context\n  Person(u, "User")\n  System(s, "App")\n  Rel(u, s, "Uses")',
+			"architecture-beta": "architecture-beta\n  service api(server)[API]",
+			"block-beta": "block-beta\n  a b c",
+			kanban: "kanban\n  Todo\n    t1[Write docs]",
+			"packet-beta": 'packet-beta\n  0-15: "Source Port"\n  16-31: "Destination Port"',
+			"radar-beta": 'radar-beta\n  axis a["A"], b["B"], c["C"]\n  curve x["X"]{1, 2, 3}',
+			"treemap-beta": 'treemap-beta\n  "Root"\n    "Leaf": 5',
+			requirementDiagram: "requirementDiagram\n  requirement r1 {\n    id: 1\n    text: hello\n    risk: low\n    verifymethod: test\n  }",
+		};
+		assert.deepEqual(Object.keys(minimal).sort(), [...MMDR_KINDS].sort(), "every kind the hint names has a minimal body");
+		const kindsDir = mkdtempSync(join(tmpdir(), "prism-mmdr-kinds-"));
+		try {
+			for (const word of MMDR_KINDS) {
+				assert.ok(MMDR_HINT.includes(word), `the hint names ${word}`);
+				const layout = join(kindsDir, `${word}.json`);
+				const ran = spawnSync("mmdr", ["-i", "-", "-e", "png", "-o", join(kindsDir, `${word}.png`), "--dumpLayout", layout], { input: minimal[word], cwd: kindsDir });
+				assert.equal(ran.status, 0, `mmdr draws ${word}`);
+				const { kind } = JSON.parse(readFileSync(layout, "utf8"));
+				assert.ok(kind && kind.toLowerCase() !== "flowchart", `mmdr reads ${word} as its own kind, not a flowchart (reported ${kind})`);
+			}
+		} finally {
+			rmSync(kindsDir, { recursive: true, force: true });
+		}
 
 		const picture = mmdrJobs.cache.get(timeline);
 		assert.equal(picture?.state, "drawn", "the timeline is cached as a picture");
