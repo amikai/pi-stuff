@@ -324,16 +324,10 @@ type TextVerdict =
 { fits: true; art: { text: string; slices?: unknown; series?: unknown } } |
 { fits: false; why: 'unsupported'; word: string } |
 { fits: false; why: 'too-wide'; narrowest: number; columns: number } |
-{ fits: false; why: 'failed' };
+{ fits: false; why: 'no-art' };
 
 type GaveUp = Extract<TextVerdict, { fits: false }>;
 
-const FRONT_MATTER = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/;
-
-// Front matter is skipped here and not in kindOf, which keeps the text renderer's notes as they are.
-const headerWord = (source: string): string => source.replace(FRONT_MATTER, '').replace(/^(\s*%%[^\n]*\n)+/, '').trim().split(/\s/)[0] ?? '';
-
-// 'failed' means no pass drew anything, which covers both a source over the limits and one the parser rejects.
 const textVerdict = (source: string, style: Style, columns: number, pieColors: number): TextVerdict => {
   let narrowest = Infinity;
   for (const max of [Infinity, 24, 12]) {
@@ -344,12 +338,12 @@ const textVerdict = (source: string, style: Style, columns: number, pieColors: n
   }
   const word = unsupportedKind(source);
   if (word) return { fits: false, why: 'unsupported', word };
-  return narrowest === Infinity ? { fits: false, why: 'failed' } : { fits: false, why: 'too-wide', narrowest, columns };
+  return narrowest === Infinity ? { fits: false, why: 'no-art' } : { fits: false, why: 'too-wide', narrowest, columns };
 };
 
 const textNote = (verdict: GaveUp): string =>
 verdict.why === 'unsupported' ? `${verdict.word} diagrams draw as source for now` :
-verdict.why === 'failed' ? 'diagram failed to render' :
+verdict.why === 'no-art' ? 'diagram failed to render' :
 `diagram is ${verdict.narrowest} cols, terminal is ${verdict.columns}`;
 
 const PENDING_NOTE = 'drawing with mmdr…';
@@ -367,7 +361,7 @@ const fallback = (verdict: GaveUp, picture: Picture): { note: string } | { png: 
   }
 };
 
-const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>, i: number, columns: number, pieColors: number, images: Wake | undefined): DrawnBlock | undefined => {
+const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>, i: number, columns: number, pieColors: number, images: Wake | null): DrawnBlock | undefined => {
   const source = block.lines.join('\n');
   const verdict = textVerdict(source, style, columns, pieColors);
   if (verdict.fits) {
@@ -375,16 +369,14 @@ const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>,
     return { element: boxArt(el, style, art.text, `b${i}`, inlineMarks(source), art.slices, art.series), art: art.text };
   }
   if (block.isOpen) return undefined;
-  const word = headerWord(source);
-  const picture: Picture = images && word !== '' ? mmdrPicture(source.replace(INLINE_TAG, ''), word, images) : { state: 'declined' };
+  const picture: Picture = images ? mmdrPicture(source.replace(INLINE_TAG, ''), images) : { state: 'declined' };
   const out = fallback(verdict, picture);
   if ('note' in out) return out;
   const fit = fitImage(out, columns);
-  return { element: h(el.Image, { key: `b${i}`, source: { png: out.png }, columns: fit.columns, rows: fit.rows, alt: `${word} diagram` }), png: out.png };
+  return { element: h(el.Image, { key: `b${i}`, source: { png: out.png }, columns: fit.columns, rows: fit.rows, alt: 'mermaid diagram' }), png: out.png };
 };
 
-// `images` is passed only by a caller that can show pictures and repaint them: its absence is the whole "never spawn mmdr" rule.
-const drawDiagrams = (el, style: Style, blocks: Block[], columns: number, images?: Wake): Drawn => {
+const drawDiagrams = (el, style: Style, blocks: Block[], columns: number, images: Wake | null): Drawn => {
   const drawn: Drawn = new Map();
   const pieColors = pieColorsOf(style);
   if (style.mermaid) {
@@ -401,4 +393,4 @@ const drawDiagrams = (el, style: Style, blocks: Block[], columns: number, images
   }
   return drawn;
 };
-export { chartSize, inlineMarks, mermaidText, diagramPalette, boxArt, shortenEdgeLabels, drawDiagrams, fallback, headerWord, textNote, textVerdict };
+export { chartSize, inlineMarks, mermaidText, diagramPalette, boxArt, shortenEdgeLabels, drawDiagrams, fallback, textNote, textVerdict };

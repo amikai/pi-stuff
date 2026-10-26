@@ -668,9 +668,10 @@ if (cmd === "drive") {
 		const count = (haystack, needle) => haystack.split(needle).length - 1;
 		const KITTY = "\x1b_G";
 		const PENDING = "drawing with mmdr…";
-		// A reply draws its blocks 4 columns narrower than its render width.
-		const narrow = 84;
-		const wide = 144;
+		const REPLY_INSET = 4;
+		const fittedAt = (columns) => columns + REPLY_INSET;
+		const narrow = fittedAt(80);
+		const wide = fittedAt(140);
 		const buttons = process.platform === "darwin" && !process.env.SSH_CONNECTION && !process.env.SSH_TTY;
 
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });

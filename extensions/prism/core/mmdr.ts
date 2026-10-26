@@ -7,7 +7,6 @@ import { background } from './background.ts'
 import type { Wake } from './background.ts'
 import { MAX_IMAGE_BYTES, pngSize } from './latex.ts'
 
-/** What mmdr made of one source. A source mmdr cannot or should not draw is `declined`, and keeps the text renderer's note. */
 export type Picture =
   | { state: 'declined' }
   | { state: 'pending' }
@@ -29,12 +28,11 @@ const MAX_SOURCE = 20000
 const DECLINED: Settled = { state: 'declined' }
 const failed = (reason: FailureReason): Settled => ({ state: 'failed', reason })
 
-// mmdr is single-threaded and a large chart takes seconds, so one at a time keeps a reply full of diagrams from contending past the timeout.
+// mmdr holds the whole raster in memory: a 300-edge chart peaks near 1 GB for 4 s, so jobs run one at a time.
 export const mmdrJobs = background<Settled>({ limit: 100, concurrency: 1, crashed: failed('failed') })
 
 const found = new Map<string | undefined, string | null>()
 
-/** Absolute path of `mmdr` on PATH, or null. Memoized per PATH value, so install mmdr and restart pi. */
 export const mmdrPath = (): string | null => {
   const path = process.env.PATH
   if (found.has(path)) return found.get(path)!
@@ -53,22 +51,21 @@ export const mmdrPath = (): string | null => {
   return bin
 }
 
-/**
- * What mmdr makes of `source`, which the caller has stripped of inline tags: mmdr draws `<i>` literally.
- * `word` is the header word of the same source, used to catch mmdr's fallback of reading an unknown word as a flowchart.
- * Returns 'pending' and starts or joins the job on a miss.
- */
-export const mmdrPicture = (source: string, word: string, wake: Wake): Picture => {
+const FRONT_MATTER = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/
+
+export const headerWord = (source: string): string => source.replace(FRONT_MATTER, '').replace(/^(\s*%%[^\n]*\n)+/, '').trim().split(/\s/)[0] ?? ''
+
+export const mmdrPicture = (untagged: string, wake: Wake): Picture => {
+  const word = headerWord(untagged)
+  if (word === '') return DECLINED
   const bin = mmdrPath()
   if (bin === null) return DECLINED
-  if (source.length > MAX_SOURCE) return failed('skipped a source over 20000 chars')
-  return mmdrJobs.get(source, () => render(bin, source, word), wake) ?? { state: 'pending' }
+  if (untagged.length > MAX_SOURCE) return failed('skipped a source over 20000 chars')
+  return mmdrJobs.get(untagged, () => render(bin, untagged, word), wake) ?? { state: 'pending' }
 }
 
-/** The fields of `--dumpLayout` that prism reads. */
 export type Layout = { kind: string; width: number; height: number; nodes: string[]; edges: number }
 
-/** Parses mmdr's layout JSON at the boundary. Null when the text is not the shape mmdr 0.2.2 writes. */
 export const parseLayout = (text: string): Layout | null => {
   let json: Record<string, unknown> | null
   try {
@@ -105,11 +102,7 @@ const inSource = (source: string): ((id: string) => boolean) => {
 
 export type Judgment = 'ok' | 'refused' | 'found nothing to draw' | 'misread it'
 
-/**
- * mmdr exits 0 and draws something for almost any input, so its own account of what it drew is the only check.
- * It catches an unknown header word, an empty body, ids that hold syntax or an arrow, and, in a flowchart, ids that are not tokens of the source.
- * It does not catch a broken body inside a kind mmdr detects correctly: an empty timeline card or a mindmap node labelled `-->` still draws.
- */
+/** mmdr exits 0 and draws something for almost any input, so its own account of what it drew is the only check. */
 export const judge = (word: string, layout: Layout, source: string): Judgment => {
   if (layout.kind.toLowerCase() === 'flowchart' && !FLOWCHART_WORDS.test(word)) return 'refused'
   if (layout.nodes.length === 0 && layout.edges === 0 && layout.width < EMPTY_PX && layout.height < EMPTY_PX) return 'found nothing to draw'
@@ -120,7 +113,6 @@ export const judge = (word: string, layout: Layout, source: string): Judgment =>
 
 type Run = 'ok' | 'timeout' | 'failed'
 
-/** One mmdr process, with the source on stdin and the PNG and layout written into `dir`, its working directory. */
 const run = (bin: string, source: string, dir: string): Promise<Run> =>
   new Promise(done => {
     const child = spawn(bin, ['-i', '-', '-e', 'png', '-o', join(dir, 'd.png'), '--dumpLayout', join(dir, 'l.json')], { cwd: dir, stdio: ['pipe', 'ignore', 'ignore'] })
@@ -139,7 +131,6 @@ const run = (bin: string, source: string, dir: string): Promise<Run> =>
     child.stdin.end(source)
   })
 
-/** Width and height from the PNG header, without loading a 30 MB file. */
 const headerSize = async (file: string) => {
   const handle = await open(file, 'r')
   try {

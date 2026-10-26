@@ -911,7 +911,7 @@ export default function prismExtension(
 			activeStyle,
 			blocks,
 			columns - markerRoom(activeStyle),
-			getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : undefined,
+			getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
 		);
 		if (activeStyle.plantuml) {
 			const plantuml = drawPlantUml(EL, activeStyle, blocks, columns - markerRoom(activeStyle), {
@@ -1018,7 +1018,7 @@ export default function prismExtension(
 		}
 		syncThemeFromPi();
 		const blocks = parseCached(markdown);
-		const drawn = drawDiagrams(EL, style, blocks, Math.max(20, context.availableWidth));
+		const drawn = drawDiagrams(EL, style, blocks, Math.max(20, context.availableWidth), null);
 		if (drawn.size === 0) return markdown;
 
 		let out = markdown;

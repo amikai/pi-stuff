@@ -1,6 +1,4 @@
 #!/bin/sh
-# Stands in for mmdr in test/prism.test.ts. A marker in the diagram source picks the behavior; without one it
-# draws $FAKE_MMDR_DIR/fixture.png and reports a one-node Timeline layout.
 out=
 layout=
 while [ $# -gt 0 ]; do

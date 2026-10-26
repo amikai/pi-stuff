@@ -60,8 +60,8 @@ const { clearHover, settlePointerMove } = await import("../extensions/lib/pointe
 const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
 const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
-const { fallback, headerWord, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
-const { judge, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
+const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
+const { headerWord, judge, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
 const { isSequenceDiagram, plantumlJobs } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 
@@ -642,6 +642,9 @@ let diagramCount = 0;
 const diagram = (tag = "", body = "Alice -> Bob : hi") =>
 	["```plantuml", "@startuml", `' ${tag} #${++diagramCount}`, body, "@enduml", "```"].join("\n");
 
+const REPLY_INSET = 4;
+const fittedAt = (columns: number) => columns + REPLY_INSET;
+
 const reply = (text: string) =>
 	new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any);
 
@@ -1211,8 +1214,6 @@ test("23. a plantuml image offers source, image and preview, and each button han
 
 test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, and are absent where the desktop cannot show pictures", async () => {
 	const png = pngOf(320, 280);
-	// A reply renders its blocks 4 columns narrower than the width it is given, so render width W gives renderBlocks (and fitted) W - 4 columns.
-	const fittedAt = (columns: number) => columns + 4;
 	const drawnReply = async (config: Record<string, unknown>, recording = recordingDesktop()) => {
 		const fake = plantumlFixture({ png });
 		const h = createHarness(config, recording);
@@ -1493,6 +1494,21 @@ test("27. background jobs keep every caller's invalidator, queue behind the cap,
 	await new Promise((done) => setTimeout(done, 10));
 	assert.deepEqual([throwing.cache.get("p"), throwing.cache.get("q"), throwing.pending.size], ["p", "q", 0], "a wake that throws strands neither the queue nor idle()");
 
+	const reset = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const old = gate();
+	events.length = 0;
+	reset.get("k", run("old", old.opened), wake(events, "old"));
+	assert.deepEqual(events, ["old:start"]);
+	reset.clear();
+	const fresh = gate();
+	assert.equal(reset.get("k", run("fresh", fresh.opened), wake(events, "fresh")), undefined);
+	old.open();
+	await new Promise((done) => setTimeout(done, 10));
+	assert.deepEqual([[...reset.cache.keys()], [...reset.pending.keys()], events], [[], ["k"], ["old:start", "old:end", "fresh:start"]], "a job running at clear() stores nothing, wakes no one and leaves the newer pending entry");
+	fresh.open();
+	await reset.idle();
+	assert.equal(reset.cache.get("k"), "fresh", "the newer job still settles");
+
 	const stuck = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
 	const never = gate();
 	stuck.get("s", run("s", never.opened), wake([], "s"));
@@ -1638,17 +1654,16 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
 	};
 	await h.emit("session_start");
 
-	// A reply draws its blocks 4 columns narrower than its render width.
 	const comp = reply(fanOut());
-	assert.ok(plainText(comp, 84).includes("drawing with mmdr…"), "80 columns are too few for the 81-column art");
+	assert.ok(plainText(comp, fittedAt(80)).includes("drawing with mmdr…"), "80 columns are too few for the 81-column art");
 	await mmdrJobs.idle();
-	assert.equal(drawnImages(comp, 84), 1, "80 columns show the picture");
+	assert.equal(drawnImages(comp, fittedAt(80)), 1, "80 columns show the picture");
 
-	assert.ok(plainText(comp, 130).includes("Child number 3"), "126 columns show the text art");
-	assert.deepEqual(shownLabels(comp, 130, false), ["⧉ source", "⧉ art"], "the art has its own buttons");
-	assert.equal(drawnImages(comp, 130), 0);
+	assert.ok(plainText(comp, fittedAt(130)).includes("Child number 3"), "130 columns show the text art");
+	assert.deepEqual(shownLabels(comp, fittedAt(130), false), ["⧉ source", "⧉ art"], "the art has its own buttons");
+	assert.equal(drawnImages(comp, fittedAt(130)), 0);
 
-	assert.equal(drawnImages(comp, 84), 1, "narrowing again shows the picture at once");
+	assert.equal(drawnImages(comp, fittedAt(80)), 1, "narrowing again shows the picture at once");
 	assert.equal(fake.runs(), 1, "one run served all three widths");
 });
 
@@ -1800,7 +1815,7 @@ test("36. fallback shows the picture, the pending note, or today's note with mmd
 	const verdicts = [
 		{ fits: false, why: "unsupported", word: "timeline" },
 		{ fits: false, why: "too-wide", narrowest: 95, columns: 78 },
-		{ fits: false, why: "failed" },
+		{ fits: false, why: "no-art" },
 	] as const;
 	const notes = ["timeline diagrams draw as source for now", "diagram is 95 cols, terminal is 78", "diagram failed to render"];
 	assert.deepEqual(verdicts.map(textNote), notes, "textNote keeps main's strings");
@@ -1816,7 +1831,7 @@ test("36. fallback shows the picture, the pending note, or today's note with mmd
 	assert.ok(fits.fits, "textVerdict returns the art when it fits");
 	assert.deepEqual(textVerdict("timeline\n  2020 : a", style, 80, 0), { fits: false, why: "unsupported", word: "timeline" });
 	assert.deepEqual(textVerdict(fanOut().split("\n").slice(1, -1).join("\n"), style, 80, 0), { fits: false, why: "too-wide", narrowest: 81, columns: 80 });
-	assert.deepEqual(textVerdict("graph TD;\n  A-->B;", style, 80, 0), { fits: false, why: "failed" }, "valid syntax the text parser lacks gives 'failed'");
+	assert.deepEqual(textVerdict("graph TD;\n  A-->B;", style, 80, 0), { fits: false, why: "no-art" }, "valid syntax the text parser lacks gives 'no-art'");
 });
 
 const hasMmdr = (() => {
@@ -1844,10 +1859,10 @@ test("37. real mmdr: an unknown header reads as a flowchart, a timeline does not
 	assert.doesNotMatch(kindOf("timeline\n  2020 : a")!, /flowchart/i, "and a timeline as its own kind");
 
 	const ask = async (source: string) => {
-		const picture = mmdrPicture(source, headerWord(source), wake);
+		const picture = mmdrPicture(source, wake);
 		assert.equal(picture.state, "pending");
 		await mmdrJobs.idle();
-		return mmdrPicture(source, headerWord(source), wake);
+		return mmdrPicture(source, wake);
 	};
 	assert.deepEqual(await ask("notADiagram\n  foo"), { state: "declined" });
 	assert.equal((await ask("timeline\n  2020 : a")).state, "drawn");
