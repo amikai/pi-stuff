@@ -14,7 +14,7 @@ When the text renderer cannot draw a closed top-level ` ```mermaid ` block, and 
 
 - Put a mermaid block that text art cannot draw in an assistant reply: a kind outside the supported set, a source over 80 lines, or a diagram wider than the terminal.
 - Rendering needs the `mmdr` command on `PATH`, found once per pi session, so restart pi after installing it. Without it every note reads as on main and no `drawing with mmdr…` note appears.
-- While `mmdr` draws the note reads `drawing with mmdr…`. When `mmdr` cannot draw the block, for any reason (timeout, a non-zero exit, a layout the check refuses, a picture over the size limit, a source over the length limit), the block shows exactly what it showed before `mmdr` existed: main's note and the plain code block, with no mention of `mmdr`.
+- While `mmdr` draws the note reads `drawing with mmdr…`. When `mmdr` cannot draw the block, for any reason (timeout, a non-zero exit, a layout the check refuses, a picture over 3 MiB, a source over 100000 characters), the block shows exactly what it showed before `mmdr` existed: main's note and the plain code block, with no mention of `mmdr`.
 - The `[ ⧉ image ]` and `[ ⧉ preview ]` buttons appear only on macOS outside SSH. Elsewhere the picture has `[ ⧉ source ]` alone.
 - Fences still open while a reply streams, blocks inside lists, quotes or alerts, and the markdown transformer path never start `mmdr`.
 
@@ -34,6 +34,6 @@ Preconditions:
 - tmux cannot show kitty images, so `mmdr` never runs in `plantuml-live`'s tmux pane. The drive instead renders the real `AssistantMessageComponent` under a forced `setCapabilities({ images: "kitty" })`. The redraw after the job settles is the shared `core/background.ts`, which `plantuml-live` proves in tmux.
 - The picture is mmdr's light theme on an opaque white background in every pi theme.
 - `mmdr` exits 0 for almost any input, so prism reads its `--dumpLayout` file to decline a misread header, an empty body, ids that hold syntax and, in a flowchart, ids that are not tokens of the source. A broken body inside a kind `mmdr` detects correctly, such as an empty timeline card or a mindmap node labelled `-->`, still draws.
-- A render has 5 s, one runs at a time, and a PNG over 2 MiB is declined. Results, declines included, are cached for the session.
+- A render has 5 s, one runs at a time, and a PNG over 3 MiB is declined. Results, declines included, are cached for the session.
 - The 4-child fan-out is 81 columns of box art, so it needs 80 columns or fewer to give up and 100 or more to fit. A reply draws its blocks 4 columns narrower than its render width, so the drive renders at 84 and 144.
-- `test/prism.test.ts` tests 28 to 37 cover the same paths with `test/fake-mmdr.sh`. Test 37 runs real `mmdr` and is skipped without it.
+- `test/prism.test.ts` tests 28 to 38 cover the same paths with `test/fake-mmdr.sh`. Test 37 runs real `mmdr` and is skipped without it.

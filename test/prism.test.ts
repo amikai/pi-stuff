@@ -1533,7 +1533,8 @@ function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: 
 	const bin = join(dir, "bin");
 	mkdirSync(bin);
 	writeFileSync(join(dir, "fixture.png"), options.png ?? pngOf(320, 280));
-	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 2 * 1024 * 1024 + 1));
+	writeFileSync(join(dir, "big.png"), hugePng(2000, 1500, 2.5 * 1024 * 1024));
+	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 3 * 1024 * 1024 + 1));
 	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-mmdr.sh"), join(bin, "mmdr"));
 	chmodSync(join(bin, "mmdr"), 0o755);
 	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MMDR_DIR"].map((k) => [k, process.env[k]]));
@@ -1865,4 +1866,32 @@ test("37. real mmdr: an unknown header reads as a flowchart, a timeline does not
 	assert.equal((await ask("timeline\n  2020 : a")).state, "drawn");
 	assert.deepEqual(await ask("flowchart TD\n  api-gateway --> auth-service"), { state: "declined" });
 	mmdrJobs.clear();
+});
+
+test("38. an mmdr picture between 2 and 3 MiB reaches the terminal and the clipboard whole, and one over 3 MiB keeps the old note", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+	const png = readFileSync(join(fake.dir, "big.png"));
+	assert.ok(png.length > 2 * 1024 * 1024 && png.length < 3 * 1024 * 1024);
+
+	const comp = reply(mermaidFence("timeline\n  2020 : fake:big"));
+	comp.render(100);
+	await mmdrJobs.idle();
+	const drawn = comp.render(100).join("\n");
+	const sent = [...drawn.matchAll(/\x1b_G[^;\x1b]*;([^\x1b]*)\x1b\\/g)].map((m) => m[1]).join("");
+	assert.equal(sent, png.toString("base64"), "every chunk of the picture is sent to the terminal");
+	assert.ok(!plainText(comp).includes("draw as source"), "no note replaces the picture");
+	press(comp, 100, "⧉ image", false);
+	assert.deepEqual(h.desktop.pngs, [png], "image copies all of the PNG");
+
+	const over = reply(mermaidFence("timeline\n  2020 : fake:huge"));
+	over.render(100);
+	await mmdrJobs.idle();
+	assert.ok(plainText(over).includes("timeline diagrams draw as source for now"), "a picture over 3 MiB keeps main's note");
+	assert.equal(drawnImages(over), 0);
 });

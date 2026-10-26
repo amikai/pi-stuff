@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { background } from './background.ts'
 import type { Wake } from './background.ts'
-import { MAX_IMAGE_BYTES, pngSize } from './latex.ts'
+import { pngSize } from './latex.ts'
 
 export type Picture = { state: 'declined' } | { state: 'pending' } | { state: 'drawn'; png: string; width: number; height: number }
 
@@ -13,6 +13,7 @@ type Settled = Exclude<Picture, { state: 'pending' }>
 
 const TIMEOUT_MS = 5000
 const MAX_SOURCE = 100000
+const MAX_PICTURE_BYTES = 3 * 1024 * 1024
 const DECLINED: Settled = { state: 'declined' }
 
 // mmdr holds the whole raster in memory: a 300-edge chart peaks near 1 GB for 4 s, so jobs run one at a time.
@@ -123,7 +124,7 @@ const render = async (bin: string, source: string, word: string): Promise<Settle
     const layout = parseLayout(await readFile(join(dir, 'l.json'), 'utf8').catch(() => ''))
     if (layout === null || judge(word, layout, source) !== 'ok') return DECLINED
     const file = join(dir, 'd.png')
-    if ((await stat(file)).size > MAX_IMAGE_BYTES) return DECLINED
+    if ((await stat(file)).size > MAX_PICTURE_BYTES) return DECLINED
     const png = (await readFile(file)).toString('base64')
     const size = pngSize(png)
     return size && size.width > 0 && size.height > 0 ? { state: 'drawn', png, ...size } : DECLINED
