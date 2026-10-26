@@ -60,6 +60,8 @@ const { clearHover, settlePointerMove } = await import("../extensions/lib/pointe
 const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
 const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { inFlight, isSequenceDiagram, plantumlCache } = await import("../extensions/prism/core/plantuml.ts");
+const { mmdrCache, mmdrInFlight } = await import("../extensions/prism/core/mmdr.ts");
+const { MAX_IMAGE_BYTES } = await import("../extensions/prism/core/latex.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 
 const stripAnsi = (s: string) =>
@@ -675,6 +677,67 @@ function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installe
 			rmSync(dir, { recursive: true, force: true });
 		},
 	};
+}
+
+const FAKE_MMDR = `#!/bin/sh
+out=
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out=$2; fi
+  shift
+done
+cat > "$FAKE_MMDR_DIR/stdin"
+echo called >> "$FAKE_MMDR_DIR/calls.log"
+[ "\${FAKE_MMDR_EXIT:-0}" = 0 ] || exit "$FAKE_MMDR_EXIT"
+cp "$FAKE_MMDR_DIR/diagram.png" "$out"
+`;
+
+function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer; exitCode?: number } = {}) {
+	const dir = mkdtempSync(join(tmpdir(), "prism-mmdr-fake-"));
+	const bin = join(dir, "bin");
+	mkdirSync(bin);
+	writeFileSync(join(dir, "diagram.png"), options.png ?? PNG_1X1);
+	writeFileSync(join(bin, "mmdr"), FAKE_MMDR, { mode: 0o755 });
+	const saved = Object.fromEntries(["PATH", "FAKE_MMDR_DIR", "FAKE_MMDR_EXIT"].map((k) => [k, process.env[k]]));
+	process.env.FAKE_MMDR_DIR = dir;
+	process.env.FAKE_MMDR_EXIT = String(options.exitCode ?? 0);
+	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
+	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
+	mmdrCache.clear();
+	mmdrInFlight.clear();
+	return {
+		calls: () => {
+			try {
+				return readFileSync(join(dir, "calls.log"), "utf8").trim().split("\n").filter(Boolean);
+			} catch {
+				return [];
+			}
+		},
+		stdin: () => readFileSync(join(dir, "stdin"), "utf8"),
+		restore: () => {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			resetCapabilitiesCache();
+			mmdrCache.clear();
+			mmdrInFlight.clear();
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
+const TIMELINE = ["timeline", "    title History", "    2002 : LinkedIn", "    2004 : Facebook"].join("\n");
+const timeline = (tag = "") => ["```mermaid", TIMELINE, ...(tag ? [`    %% ${tag}`] : []), "```"].join("\n");
+const TIMELINE_NOTE = "timeline diagrams draw as source for now";
+
+function withMmdr(options: Parameters<typeof mmdrFixture>[0] = {}, config?: Record<string, unknown>) {
+	const fake = mmdrFixture(options);
+	const h = createHarness(config);
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	return { fake, h };
 }
 
 async function plantumlServer(respond: (url: string, res: ServerResponse) => void) {
@@ -1442,4 +1505,138 @@ test("26. a plantuml image stays drawn while its top rows are scrolled above pi'
 		return top.includes(KITTY_IMAGE) ? `${k} away: image, ${/[,;]r=(\d+)/.exec(top)?.[1]} rows` : `${k} away: ${JSON.stringify(stripAnsi(top))}`;
 	});
 	assert.deepEqual(topRows, scrolledAway.map((k) => `${k} away: image, ${rows - k} rows`), "the top row draws the image cropped to the rows still in view");
+});
+
+test("27. an unsupported mermaid kind shows its source, then an mmdr image once the job ends", async () => {
+	const { fake, h } = withMmdr();
+	await h.emit("session_start");
+
+	const comp = reply(timeline());
+	const first = stripAnsi(comp.render(100).join("\n"));
+	assert.ok(first.includes("2002 : LinkedIn"), "first frame draws the source");
+	assert.ok(first.includes(TIMELINE_NOTE), "first frame carries the text renderer's note");
+	assert.equal(mmdrInFlight.size, 1, "render starts one background job");
+
+	await until(() => mmdrInFlight.size === 0);
+	assert.ok(h.renders.screen > 0, "the finished job redraws the screen");
+	const drawn = comp.render(100).join("\n");
+	assert.ok(drawn.includes(KITTY_IMAGE), "second frame draws the PNG");
+	assert.ok(!stripAnsi(drawn).includes("2002 : LinkedIn"), "source is gone once the image is drawn");
+	assert.ok(!stripAnsi(drawn).includes(TIMELINE_NOTE), "the note is gone too");
+	assert.deepEqual(fake.calls(), ["called"], "spawns mmdr once");
+	assert.equal(fake.stdin(), TIMELINE, "mmdr reads the exact mermaid source on stdin");
+});
+
+test("28. a mermaid image offers source, image and preview, and each button hands its payload to the desktop", async () => {
+	const png = pngOf(320, 280);
+	const { h } = withMmdr({ png });
+	await h.emit("session_start");
+
+	const comp = reply(timeline());
+	comp.render(100);
+	await until(() => mmdrInFlight.size === 0);
+
+	assert.deepEqual(shownLabels(comp, 100, false), ["⧉ source", "⧉ image", "⧉ preview"], "three buttons, in order");
+	copiedTexts.length = 0;
+	press(comp, 100, "⧉ source", false);
+	assert.deepEqual(copiedTexts, [TIMELINE], "source copies the mermaid text");
+	press(comp, 100, "⧉ image", false);
+	assert.deepEqual(h.desktop.pngs, [png], "image copies the exact PNG that was drawn");
+	press(comp, 100, "⧉ preview", false);
+	assert.deepEqual(h.desktop.previews, [png], "preview opens the exact PNG that was drawn");
+});
+
+test("29. a flowchart the text renderer draws never runs mmdr", async () => {
+	const { fake, h } = withMmdr();
+	await h.emit("session_start");
+
+	const comp = reply(["```mermaid", "flowchart LR", "  A --> B", "```"].join("\n"));
+	const frame = comp.render(100).join("\n");
+	assert.ok(!frame.includes(KITTY_IMAGE), "draws text art, not an image");
+	assert.equal(mmdrInFlight.size, 0, "nothing in flight");
+	await sleep(100);
+	assert.deepEqual(fake.calls(), [], "mmdr is never spawned");
+});
+
+test("30. a fan-out flowchart too wide for the terminal falls back to an mmdr image", async () => {
+	const { fake, h } = withMmdr();
+	await h.emit("session_start");
+
+	const chain = ["flowchart TD", ...Array.from({ length: 6 }, (_, i) => `  Root --> N${i}[Stage number ${i}]`)].join("\n");
+	const comp = reply(["```mermaid", chain, "```"].join("\n"));
+	const first = stripAnsi(comp.render(40).join("\n"));
+	assert.match(first, /diagram is \d+ cols, terminal is \d+/, "first frame notes the width");
+	await until(() => mmdrInFlight.size === 0);
+	const drawn = comp.render(40).join("\n");
+	assert.ok(drawn.includes(KITTY_IMAGE), "the wide chart is drawn as an image");
+	assert.ok(!stripAnsi(drawn).includes("terminal is"), "the width note is gone");
+	assert.equal(fake.stdin(), chain, "mmdr got the chart source");
+});
+
+test("31. without mmdr installed the note stays and nothing stays in flight", async () => {
+	const { h } = withMmdr({ installed: false });
+	await h.emit("session_start");
+
+	const comp = reply(timeline());
+	comp.render(100);
+	await until(() => mmdrInFlight.size === 0);
+	const frame = comp.render(100).join("\n");
+	assert.ok(!frame.includes(KITTY_IMAGE), "no image");
+	assert.ok(stripAnsi(frame).includes(TIMELINE_NOTE), "the note stays");
+	assert.ok(stripAnsi(frame).includes("2002 : LinkedIn"), "the source stays");
+});
+
+test("32. a terminal without images never runs mmdr", async () => {
+	const { fake, h } = withMmdr({ images: null });
+	await h.emit("session_start");
+
+	const comp = reply(timeline());
+	comp.render(100);
+	assert.equal(mmdrInFlight.size, 0, "nothing in flight");
+	await sleep(100);
+	assert.deepEqual(fake.calls(), [], "mmdr is never spawned");
+	assert.ok(stripAnsi(comp.render(100).join("\n")).includes(TIMELINE_NOTE), "the note stays");
+});
+
+test("33. a mermaid fence still streaming never runs mmdr", async () => {
+	const { fake, h } = withMmdr();
+	await h.emit("session_start");
+
+	const comp = reply(["```mermaid", TIMELINE].join("\n"));
+	const frame = comp.render(100).join("\n");
+	assert.equal(mmdrInFlight.size, 0, "nothing in flight");
+	await sleep(100);
+	assert.deepEqual(fake.calls(), [], "mmdr is never spawned");
+	assert.ok(!frame.includes(KITTY_IMAGE), "no image");
+});
+
+test("34. a failing mmdr keeps the note and is not spawned again", async () => {
+	const { fake, h } = withMmdr({ exitCode: 1 });
+	await h.emit("session_start");
+
+	const comp = reply(timeline());
+	comp.render(100);
+	await until(() => mmdrInFlight.size === 0);
+	const frame = comp.render(100).join("\n");
+	assert.ok(stripAnsi(frame).includes(TIMELINE_NOTE), "the note stays");
+	assert.ok(!frame.includes(KITTY_IMAGE), "no image");
+
+	comp.invalidate();
+	comp.render(100);
+	assert.equal(mmdrInFlight.size, 0, "the failure is cached");
+	assert.equal(fake.calls().length, 1, "mmdr ran once");
+});
+
+test("35. a PNG over the size limit replaces the note with a too-large note", async () => {
+	const png = Buffer.concat([PNG_1X1, Buffer.alloc(MAX_IMAGE_BYTES)]);
+	const { h } = withMmdr({ png });
+	await h.emit("session_start");
+
+	const comp = reply(timeline());
+	comp.render(100);
+	await until(() => mmdrInFlight.size === 0);
+	const frame = comp.render(100).join("\n");
+	assert.ok(!frame.includes(KITTY_IMAGE), "no image");
+	assert.ok(stripAnsi(frame).includes("diagram image is too large"), "says the image is too large");
+	assert.ok(!stripAnsi(frame).includes(TIMELINE_NOTE), "the old note is replaced");
 });
