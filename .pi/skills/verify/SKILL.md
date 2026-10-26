@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Drive and verify the prism Pi TUI extension across assistant replies, Mermaid/figure diagrams, RTL/LaTeX math, setup commands, Pi theme synchronization, and its macOS Quick Look preview panel in an isolated agent directory.
+description: Drive and verify the prism Pi TUI extension across assistant replies, Mermaid/figure diagrams, mmdr pictures, RTL/LaTeX math, setup commands, Pi theme synchronization, and its macOS Quick Look preview panel in an isolated agent directory.
 ---
 
 # Verify prism
@@ -40,6 +40,7 @@ Run the harness against a mapped feature in [`features/`](features/):
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature theme-sync --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature plantuml --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature plantuml-live --out "artifacts/verify/$RUN_ID"
+.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature mmdr --out "artifacts/verify/$RUN_ID"
 .pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature quicklook --out "artifacts/verify/$RUN_ID"
 ```
 
@@ -73,4 +74,5 @@ Always confirm that `artifacts/verify/$RUN_ID/` still exists after `cleanup`.
 
 - `.pi/skills/verify/scripts/control-prism.mjs` — executable Node harness supporting `launch`, `doctor`, `drive`, and `cleanup`.
 - The `plantuml` and `plantuml-live` features need `plantuml` on `PATH`. `plantuml-live` also needs `tmux`, and runs `test/prism.sh` in a tmux server on its own socket, which it stops before it exits.
+- The `mmdr` feature needs `mmdr` on `PATH`. It writes the decoded timeline picture as `mmdr-timeline.png` beside its `.ansi`, `.txt` and `.json` proof.
 - The `quicklook` feature needs macOS outside SSH, the Xcode command line tools, and a terminal that may record the screen. It runs `test/prism-quicklook.test.ts`, which opens real Quick Look panels on the screen for about 40 s and drives them through `test/quicklook-probe.swift`, injected into the helper with `DYLD_INSERT_LIBRARIES`. Its proof is `.png` screenshots and `.json` reports, not `.ansi` and `.txt`.

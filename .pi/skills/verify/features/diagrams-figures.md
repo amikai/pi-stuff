@@ -1,6 +1,6 @@
 # Diagrams and figures
 
-Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, `xychart-beta` bar/line charts, pie charts, and Gantt schedules) and ` ```figure ` blocks as colored terminal graphics.
+Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, `xychart-beta` bar/line charts, pie charts, and Gantt schedules) and ` ```figure ` blocks as colored terminal graphics. A mermaid block the text renderer cannot draw goes to `mmdr` instead when the terminal shows images and `mmdr` is on `PATH`, which the [mmdr feature](./mmdr.md) covers.
 
 ## Sub-features
 
@@ -24,5 +24,6 @@ Preconditions:
 
 ## Gotchas
 
-- A Mermaid diagram wider than the current terminal width intentionally stays as source code with a dim note `diagram is <N> cols, terminal is <M>` above the fence so lines do not wrap and corrupt the box art.
-- A Mermaid kind outside the supported set stays as source with the note `<kind> diagrams draw as source for now`.
+- A Mermaid diagram wider than the current terminal width stays as source code with a dim note `diagram is <N> cols, terminal is <M>` above the fence so lines do not wrap and corrupt the box art. With a terminal that shows images and `mmdr` on `PATH`, the block is drawn as a picture instead. Every diagram in this drive fits, so it never starts `mmdr`.
+- A Mermaid kind outside the supported set stays as source with the note `<kind> diagrams draw as source for now`, under the same rule.
+- `mmdr` can add ` (mmdr <reason>)` to either note when it ran and could not help, or replace it with `drawing with mmdr…` while it runs. See [mmdr diagrams](./mmdr.md).

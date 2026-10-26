@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
 import { deflateRawSync } from 'node:zlib'
+import { background } from './background.ts'
 import { h } from './jsx.ts'
 import type { ElementTable } from './jsx.ts'
 import { fitImage, fitsImage, pngSize } from './latex.ts'
@@ -26,7 +27,6 @@ export type PlantUmlHooks = {
 export const PLANTUML_HINT =
   'A ```plantuml block (@startuml … @enduml) is rendered by prism: as an image on terminals that show images, otherwise as text art for sequence diagrams only. Do not use !include or !includeurl, which are blocked.'
 
-const CACHE_LIMIT = 100
 const CLI_TIMEOUT_MS = 5000
 const SERVER_TIMEOUT_MS = 8000
 const MAX_OUTPUT = 2 * 1024 * 1024
@@ -37,26 +37,9 @@ const UNTAGGED_START = new RegExp(`^@start(${PLANTUML_KINDS})\\b`, 'i')
 const SYNTAX_ERROR = /^ERROR(?=\r?\n|$)(?:\r?\n(\d+))?(?:\r?\n([^\r\n]*))?/
 const MESSAGE_LIMIT = 160
 
-export const plantumlCache = new Map<string, PlantUmlEntry>()
-// Pi rebuilds the component on every streamed token, so each source key keeps every caller's invalidate, not only the first.
-export const inFlight = new Map<string, Set<() => void>>()
-
-const lookup = (key: string): PlantUmlEntry | undefined => {
-  const hit = plantumlCache.get(key)
-  if (hit) {
-    plantumlCache.delete(key)
-    plantumlCache.set(key, hit)
-  }
-  return hit
-}
-
-const store = (key: string, entry: PlantUmlEntry): void => {
-  plantumlCache.delete(key)
-  plantumlCache.set(key, entry)
-  if (plantumlCache.size > CACHE_LIMIT) plantumlCache.delete(plantumlCache.keys().next().value!)
-}
-
 const failure = (note: string): PlantUmlEntry => ({ kind: 'error', note })
+
+export const plantumlJobs = background<PlantUmlEntry>({ limit: 100, concurrency: Infinity, crashed: failure('plantuml CLI failed') })
 
 // PlantUML's pipe mode matches markers with an untrimmed startsWith, so an indented marker reads as diagram content.
 const normalize = (lines: string[]): string =>
@@ -174,20 +157,6 @@ const render = async (source: string, mode: PlantUmlMode, style: Style): Promise
   return failure(cli === 'missing' ? 'plantuml CLI is not installed' : 'plantuml CLI failed')
 }
 
-const start = (key: string, source: string, style: Style, hooks: PlantUmlHooks): void => {
-  const invalidators = new Set<() => void>()
-  inFlight.set(key, invalidators)
-  render(source, hooks.mode, style)
-    .catch(() => failure('plantuml CLI failed'))
-    .then(entry => store(key, entry))
-    .finally(() => {
-      inFlight.delete(key)
-      for (const invalidate of invalidators) invalidate()
-      hooks.requestRender()
-    })
-    .catch(() => {})
-}
-
 const NON_SEQUENCE = 'plantuml non-sequence diagrams require an image-capable terminal'
 
 export const drawPlantUml = (el: ElementTable, style: Style, blocks: Block[], columns: number, hooks: PlantUmlHooks): Drawn => {
@@ -196,16 +165,8 @@ export const drawPlantUml = (el: ElementTable, style: Style, blocks: Block[], co
     const source = plantumlOf(block)
     if (source === null) continue
     const key = `${hooks.mode}:${style.isDark}:${style.plantumlServer ?? ''}:${source}`
-    let entry = lookup(key)
-    if (!entry && !inFlight.has(key)) {
-      if (hooks.mode === 'utxt' && !isSequenceDiagram(source)) {
-        entry = failure(NON_SEQUENCE)
-        store(key, entry)
-      } else {
-        start(key, source, style, hooks)
-      }
-    }
-    if (!entry && hooks.onInvalidate) inFlight.get(key)?.add(hooks.onInvalidate)
+    if (hooks.mode === 'utxt' && !plantumlJobs.cache.has(key) && !isSequenceDiagram(source)) plantumlJobs.put(key, failure(NON_SEQUENCE))
+    const entry = plantumlJobs.get(key, () => render(source, hooks.mode, style), hooks)
     if (!entry) continue
     if (entry.kind === 'error') {
       drawn.set(i, { note: entry.note })

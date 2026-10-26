@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { registerHooks } from "node:module";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync, inflateRawSync } from "node:zlib";
@@ -59,7 +59,10 @@ const { PrismComponent } = await import("../extensions/prism/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
 const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
 const { parse } = await import("../extensions/prism/core/markdown.ts");
-const { inFlight, isSequenceDiagram, plantumlCache } = await import("../extensions/prism/core/plantuml.ts");
+const { background } = await import("../extensions/prism/core/background.ts");
+const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
+const { headerWord, judge, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
+const { isSequenceDiagram, plantumlJobs } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 
 const stripAnsi = (s: string) =>
@@ -639,6 +642,9 @@ let diagramCount = 0;
 const diagram = (tag = "", body = "Alice -> Bob : hi") =>
 	["```plantuml", "@startuml", `' ${tag} #${++diagramCount}`, body, "@enduml", "```"].join("\n");
 
+const REPLY_INSET = 4;
+const fittedAt = (columns: number) => columns + REPLY_INSET;
+
 const reply = (text: string) =>
 	new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any);
 
@@ -653,8 +659,7 @@ function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installe
 	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
 	for (const name of JAVA_VARS) process.env[name] = "-DPLANTUML_SECURITY_PROFILE=INSECURE";
 	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
-	plantumlCache.clear();
-	inFlight.clear();
+	plantumlJobs.clear();
 	return {
 		calls: () => {
 			try {
@@ -670,8 +675,7 @@ function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installe
 				else process.env[name] = value;
 			}
 			resetCapabilitiesCache();
-			plantumlCache.clear();
-			inFlight.clear();
+			plantumlJobs.clear();
 			rmSync(dir, { recursive: true, force: true });
 		},
 	};
@@ -722,9 +726,9 @@ test("9. plantuml CLI success in png mode draws source first, then an image, san
 	const comp = reply(["Intro", "", "  @startuml", "' png", "Alice -> Bob : hi", "  @enduml"].join("\n"));
 	const first = stripAnsi(comp.render(100).join("\n"));
 	assert.ok(first.includes("Alice -> Bob : hi"), "first frame draws the source");
-	assert.equal(inFlight.size, 1, "render starts one background job");
+	assert.equal(plantumlJobs.pending.size, 1, "render starts one background job");
 
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(h.renders.screen > 0, "falls back to the screen TUI for the redraw");
 	assert.equal(h.renders.overlay, 0, "no setup overlay is open");
 	const drawn = comp.render(100).join("\n");
@@ -754,19 +758,19 @@ test("10. plantuml CLI success in utxt mode draws sequence art, skips a class di
 
 	const comp = reply(diagram("art"));
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("│Alice│ │Bob│"), "draws the text art");
 	assert.match(fake.calls()[0]!, /^args=-pipe -pipeNoStderr -tutxt profile=SANDBOX/, "asks for -tutxt without -darkmode");
 
 	const klass = reply(diagram("class", "class Foo {\n}\nFoo --> Bar"));
 	const note = stripAnsi(klass.render(100).join("\n"));
 	assert.ok(note.includes("plantuml non-sequence diagrams require an image-capable terminal"), "explains the refusal on the first frame");
-	assert.equal(inFlight.size, 0, "does not start a job");
+	assert.equal(plantumlJobs.pending.size, 0, "does not start a job");
 	assert.equal(fake.calls().length, 1, "does not spawn for a class diagram");
 
 	const wide = reply(diagram("fake:wide"));
 	wide.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	const wideDrawn = stripAnsi(wide.render(100).join("\n"));
 	assert.match(wideDrawn, /diagram is 200 cols, terminal is \d+/, "notes the width");
 	assert.ok(wideDrawn.includes("Alice -> Bob : hi"), "keeps the source");
@@ -783,15 +787,15 @@ test("11. plantuml CLI timeout, non-zero exit, and a missing CLI cache a note an
 
 	const comp = reply(diagram("fake:sleep"));
 	comp.render(100);
-	assert.equal(inFlight.size, 1);
-	await until(() => inFlight.size === 0, 8000);
+	assert.equal(plantumlJobs.pending.size, 1);
+	await plantumlJobs.idle(8000);
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml CLI failed"), "reports the timeout");
 	comp.render(100);
 	assert.equal(slow.calls().length, 1, "does not retry a cached failure");
 
 	const failing = reply(diagram("fake:fail"));
 	failing.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(failing.render(100).join("\n")).includes("plantuml CLI failed"), "reports a non-zero exit");
 
 	slow.restore();
@@ -802,9 +806,9 @@ test("11. plantuml CLI timeout, non-zero exit, and a missing CLI cache a note an
 	};
 	const gone = reply(diagram("enoent"));
 	gone.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(gone.render(100).join("\n")).includes("plantuml CLI is not installed"), "reports ENOENT");
-	assert.equal(inFlight.size, 0);
+	assert.equal(plantumlJobs.pending.size, 0);
 });
 
 test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/ with the source encoded", async () => {
@@ -826,7 +830,7 @@ test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/
 	const text = diagram("remote png");
 	const comp = reply(text);
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "draws the server PNG");
 	const [path, encoded] = server.urls[0]!.slice(1).split("/") as [string, string];
 	assert.equal(path, "dpng", "dark theme uses /dpng/");
@@ -835,7 +839,7 @@ test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/
 	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
 	const art = reply(diagram("remote txt"));
 	art.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.equal(server.urls[1]!.split("/")[1], "txt", "utxt mode uses /txt/");
 	assert.ok(stripAnsi(art.render(100).join("\n")).includes("│Alice│"), "draws the server art");
 });
@@ -857,20 +861,20 @@ test("13. plantumlServer HTTP 400, HTTP 5xx, and a refused connection cache a no
 	const noteFor = async (tag: string) => {
 		const comp = reply(diagram(tag));
 		comp.render(100);
-		assert.equal(inFlight.size, 1);
-		await until(() => inFlight.size === 0);
+		assert.equal(plantumlJobs.pending.size, 1);
+		await plantumlJobs.idle();
 		return stripAnsi(comp.render(100).join("\n"));
 	};
 	assert.ok((await noteFor("bad")).includes("diagram failed to render"), "HTTP 400");
 	assert.ok((await noteFor("down")).includes("plantumlServer request failed"), "HTTP 503");
 	assert.equal(server.urls.length, 2, "one request each, no retries");
-	assert.equal(plantumlCache.size, 2, "both failures are cached");
+	assert.equal(plantumlJobs.cache.size, 2, "both failures are cached");
 
 	const rendersBefore = h.renders.screen;
 	await server.close();
 	assert.ok((await noteFor("refused")).includes("plantumlServer request failed"), "connection refused");
 	assert.ok(h.renders.screen > rendersBefore, "a failure still requests a redraw");
-	assert.equal(inFlight.size, 0, "no key is left in flight");
+	assert.equal(plantumlJobs.pending.size, 0, "no key is left in flight");
 });
 
 test("14. a plantuml syntax error reports the source line and never reaches plantumlServer", async () => {
@@ -886,18 +890,18 @@ test("14. a plantuml syntax error reports the source line and never reaches plan
 
 	const comp = reply(diagram("fake:syntax"));
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml error (line 4): Syntax Error?"), "ERROR then 3 is line 4 with markers present");
 	assert.equal(server.urls.length, 0, "the server sees no request");
 
 	const bare = reply(["```plantuml", "' fake:syntax bare", "Alice -> Bob", "```"].join("\n"));
 	bare.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(bare.render(100).join("\n")).includes("plantuml error (line 3): Syntax Error?"), "subtracts the line PlantUML synthesizes");
 
 	const blocked = reply(diagram("fake:include"));
 	blocked.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(
 		stripAnsi(blocked.render(100).join("\n")).includes("plantuml error (line 3): cannot include /tmp/prism/local.txt"),
 		"shows PlantUML's reason for a blocked include",
@@ -925,11 +929,11 @@ test("15. plantuml detection covers fences and unfenced blocks, and leaves unclo
 	await h.emit("session_start");
 	const untagged = reply("```\n@startuml\n' untagged\nA -> B\n@enduml\n```");
 	untagged.render(100);
-	assert.equal(inFlight.size, 1, "an untagged fence opening with @start renders");
-	await until(() => inFlight.size === 0);
+	assert.equal(plantumlJobs.pending.size, 1, "an untagged fence opening with @start renders");
+	await plantumlJobs.idle();
 	const plain = reply("```\nA -> B\n```");
 	plain.render(100);
-	assert.equal(inFlight.size, 0, "an untagged fence without @start is plain code");
+	assert.equal(plantumlJobs.pending.size, 0, "an untagged fence without @start is plain code");
 
 	const startEvent = {
 		type: "before_agent_start",
@@ -955,7 +959,7 @@ test("16. plantuml:false renders PlantUML blocks as ordinary code, never spawns,
 	const plain = stripAnsi(comp.render(100).join("\n"));
 	assert.ok(plain.includes("Alice -> Bob : hi") && plain.includes("A -> B"), "draws both blocks as code");
 	await sleep(100);
-	assert.equal(inFlight.size, 0);
+	assert.equal(plantumlJobs.pending.size, 0);
 	assert.equal(fake.calls().length, 0, "never spawns");
 
 	const startEvent = {
@@ -1003,7 +1007,7 @@ test("18. closing the setup overlay stops plantuml redraws from going to the sta
 	void h.commands.get("prism")!.handler("setup", h.ctx);
 	assert.ok(h.getOverlay(), "setup overlay is open");
 	reply(diagram("overlay open")).render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(h.renders.overlay > 0, "redraw goes to the open overlay");
 	assert.equal(h.renders.screen, 0);
 
@@ -1011,7 +1015,7 @@ test("18. closing the setup overlay stops plantuml redraws from going to the sta
 	assert.equal(h.getOverlay(), null, "Escape closes the overlay");
 	const overlayRenders = h.renders.overlay;
 	reply(diagram("overlay closed")).render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(h.renders.screen > 0, "redraw goes to the screen TUI");
 	assert.equal(h.renders.overlay, overlayRenders, "stale overlay handle is not used");
 });
@@ -1029,7 +1033,7 @@ test("19. a plantuml image reserves a line per image row, so the text after it i
 
 		const comp = reply([diagram(images), "", "After the diagram"].join("\n"));
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		const lines = comp.render(100);
 		const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
 		assert.ok(at >= 0, `${images}: the diagram is drawn as an image`);
@@ -1063,7 +1067,7 @@ test("20. a drawn image keeps one Kitty image id across redraws and streaming up
 	const message = { role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	const idOf = (lines: string[]) => /[,;]i=(\d+)/.exec(lines.find((line) => line.includes(KITTY_IMAGE)) ?? "")?.[1];
 	const first = idOf(comp.render(100));
 	assert.ok(first, "the image carries a Kitty image id");
@@ -1091,7 +1095,7 @@ test("21. an image drawn before the terminal reports its cell size lays out like
 		const text = diagram(`cell ${images}`);
 		const comp = reply(text);
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		const reserved = (lines: string[]) => {
 			const line = lines.find((l) => l.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE)) ?? "";
 			return images === "kitty" ? Number(/[,;]r=(\d+)/.exec(line)?.[1]) : Number(/\x1b\[(\d+)A/.exec(line)?.[1] ?? 0) + 1;
@@ -1120,10 +1124,10 @@ test("22. a plantuml diagram replaces its source after a streaming update that a
 	const message = { role: "assistant", content: [{ type: "text", text: [diagram("streamed"), "", "After"].join("\n") }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
-	assert.equal(inFlight.size, 1, "the first frame starts the render");
+	assert.equal(plantumlJobs.pending.size, 1, "the first frame starts the render");
 	comp.updateContent(message);
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("Alice -> Bob : hi"), "the rebuilt frame still shows the source while it renders");
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the image");
 });
 
@@ -1179,7 +1183,7 @@ test("23. a plantuml image offers source, image and preview, and each button han
 		const text = diagram(copyButtonStyle);
 		const comp = reply(text);
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		const hover = copyButtonStyle === "hover";
 
 		assert.deepEqual(shownLabels(comp, 100, hover), ["⧉ source", "⧉ image", "⧉ preview"], `${copyButtonStyle}: three buttons, in order`);
@@ -1210,8 +1214,6 @@ test("23. a plantuml image offers source, image and preview, and each button han
 
 test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, and are absent where the desktop cannot show pictures", async () => {
 	const png = pngOf(320, 280);
-	// A reply renders its blocks 4 columns narrower than the width it is given, so render width W gives renderBlocks (and fitted) W - 4 columns.
-	const fittedAt = (columns: number) => columns + 4;
 	const drawnReply = async (config: Record<string, unknown>, recording = recordingDesktop()) => {
 		const fake = plantumlFixture({ png });
 		const h = createHarness(config, recording);
@@ -1222,7 +1224,7 @@ test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, 
 		await h.emit("session_start");
 		const comp = reply(diagram(JSON.stringify(config)));
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		return { comp, h };
 	};
 
@@ -1354,6 +1356,7 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	assert.deepEqual(firstArgv.slice(1), [firstFile], "the helper gets the PNG path as its only argument");
 	assert.ok(alive(Number(firstPid)), "the fake panel is still open after the build finished");
 	assert.ok(firstFile.startsWith(previews) && firstFile.endsWith(".png"), "Quick Look gets a .png under the preview directory");
+	assert.match(basename(firstFile), /^diagram-[0-9a-f]{12}\.png$/, "the title bar shows a name that fits any diagram source");
 	assert.deepEqual(readFileSync(join(dir, `seen-${firstPid}.png`)), first, "the file Quick Look opened holds the PNG");
 
 	desktop.previewPng(first, session.report);
@@ -1421,7 +1424,7 @@ test("26. a plantuml image stays drawn while its top rows are scrolled above pi'
 
 	const comp = reply(diagram("scroll"));
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	const lines = comp.render(100);
 	const at = lines.findIndex((line) => line.includes(KITTY_IMAGE));
 	assert.ok(at >= 0, "the diagram is drawn as an image");
@@ -1442,4 +1445,427 @@ test("26. a plantuml image stays drawn while its top rows are scrolled above pi'
 		return top.includes(KITTY_IMAGE) ? `${k} away: image, ${/[,;]r=(\d+)/.exec(top)?.[1]} rows` : `${k} away: ${JSON.stringify(stripAnsi(top))}`;
 	});
 	assert.deepEqual(topRows, scrolledAway.map((k) => `${k} away: image, ${rows - k} rows`), "the top row draws the image cropped to the rows still in view");
+});
+
+test("27. background jobs keep every caller's invalidator, queue behind the cap, wake after the next job starts, and stay awaitable", async () => {
+	const wake = (invalidated: string[], name: string) => ({ requestRender: () => invalidated.push(`${name}:render`), onInvalidate: () => invalidated.push(`${name}:invalidate`) });
+	const gate = () => {
+		let open!: () => void;
+		const opened = new Promise<void>((done) => (open = done));
+		return { open, opened };
+	};
+
+	const jobs = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const events: string[] = [];
+	const first = gate();
+	const run = (name: string, gate?: Promise<void>) => async () => {
+		events.push(`${name}:start`);
+		await gate;
+		events.push(`${name}:end`);
+		return name;
+	};
+
+	assert.equal(jobs.get("a", run("a", first.opened), wake(events, "a1")), undefined);
+	assert.equal(jobs.get("a", run("a"), wake(events, "a2")), undefined, "a second caller joins the pending key");
+	assert.equal(jobs.get("b", run("b"), wake(events, "b")), undefined);
+	assert.deepEqual([...jobs.pending.keys()], ["a", "b"]);
+	assert.equal(jobs.pending.get("a")!.size, 2, "both callers' invalidators are kept");
+	assert.deepEqual(events, ["a:start"], "b waits behind the cap");
+
+	first.open();
+	await jobs.idle();
+	assert.deepEqual(events, ["a:start", "a:end", "b:start", "a1:invalidate", "a2:invalidate", "a1:render", "b:end", "b:invalidate", "b:render"]);
+	assert.equal(jobs.get("a", run("a"), wake(events, "late")), "a");
+	assert.deepEqual([...jobs.cache.keys()], ["b", "a"], "a hit moves the key to the young end");
+
+	jobs.put("c", "c");
+	assert.deepEqual([...jobs.cache.keys()], ["a", "c"], "the oldest entry leaves past the limit");
+
+	const crashing = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	crashing.get("x", () => Promise.reject(new Error("boom")), wake([], "x"));
+	await crashing.idle();
+	assert.equal(crashing.cache.get("x"), "crashed", "a rejected job settles as the crash value");
+
+	const throwing = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const woken: string[] = [];
+	throwing.get("p", async () => "p", { requestRender: () => woken.push("p"), onInvalidate: () => { throw new Error("bad wake"); } });
+	throwing.get("q", async () => "q", wake(woken, "q"));
+	await throwing.idle();
+	await new Promise((done) => setTimeout(done, 10));
+	assert.deepEqual([throwing.cache.get("p"), throwing.cache.get("q"), throwing.pending.size], ["p", "q", 0], "a wake that throws strands neither the queue nor idle()");
+
+	const reset = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const old = gate();
+	events.length = 0;
+	reset.get("k", run("old", old.opened), wake(events, "old"));
+	assert.deepEqual(events, ["old:start"]);
+	reset.clear();
+	const fresh = gate();
+	assert.equal(reset.get("k", run("fresh", fresh.opened), wake(events, "fresh")), undefined);
+	old.open();
+	await new Promise((done) => setTimeout(done, 10));
+	assert.deepEqual([[...reset.cache.keys()], [...reset.pending.keys()], events], [[], ["k"], ["old:start", "old:end", "fresh:start"]], "a job running at clear() stores nothing, wakes no one and leaves the newer pending entry");
+	fresh.open();
+	await reset.idle();
+	assert.equal(reset.cache.get("k"), "fresh", "the newer job still settles");
+
+	const stuck = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const never = gate();
+	stuck.get("s", run("s", never.opened), wake([], "s"));
+	await assert.rejects(stuck.idle(20), /still pending/);
+	const waiting = stuck.idle();
+	stuck.clear();
+	await waiting;
+	assert.equal(stuck.pending.size, 0, "clear() resolves the waiters");
+	never.open();
+});
+
+const hugePng = (width: number, height: number, bytes: number) => {
+	const png = Buffer.alloc(bytes);
+	pngOf(1, 1).copy(png, 0, 0, 33);
+	png.writeUInt32BE(width, 16);
+	png.writeUInt32BE(height, 20);
+	return png;
+};
+
+function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer } = {}) {
+	const dir = mkdtempSync(join(tmpdir(), "prism-fake-mmdr-"));
+	const bin = join(dir, "bin");
+	mkdirSync(bin);
+	writeFileSync(join(dir, "fixture.png"), options.png ?? pngOf(320, 280));
+	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 2 * 1024 * 1024 + 1));
+	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-mmdr.sh"), join(bin, "mmdr"));
+	chmodSync(join(bin, "mmdr"), 0o755);
+	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MMDR_DIR"].map((k) => [k, process.env[k]]));
+	process.env.FAKE_MMDR_DIR = dir;
+	process.env.TMPDIR = dir;
+	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
+	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
+	mmdrJobs.clear();
+	const read = (name: string) => {
+		try {
+			return readFileSync(join(dir, name), "utf8");
+		} catch {
+			return "";
+		}
+	};
+	return {
+		dir,
+		calls: () => read("calls.log").trim().split("\n").filter(Boolean),
+		runs: () => read("calls.log").split("\n").filter((line) => line === "start").length,
+		stdin: () => read("last-stdin.txt"),
+		cwd: () => read("last-cwd.txt").trim(),
+		leftovers: () => readdirSync(dir).filter((name) => name.startsWith("prism-mmdr-")),
+		restore: () => {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+			resetCapabilitiesCache();
+			mmdrJobs.clear();
+			rmSync(dir, { recursive: true, force: true });
+		},
+	};
+}
+
+const mermaidFence = (source: string) => ["```mermaid", source, "```"].join("\n");
+const fanOut = (id: (n: number) => string = (n) => `c${n}`) =>
+	mermaidFence(["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n"));
+const plainText = (comp: any, width = 100) => stripAnsi(comp.render(width).join("\n"));
+const drawnImages = (comp: any, width = 100) => shownLabels(comp, width, false).filter((label) => label === "⧉ preview").length;
+
+test("28. a timeline the text renderer cannot draw shows a pending note, then the mmdr picture with source, image and preview", async () => {
+	const png = pngOf(320, 280);
+	const fake = mmdrFixture({ png });
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const source = "timeline\n  2020 : <i>start</i>\n  2021 : end";
+	const comp = reply(mermaidFence(source));
+	const first = plainText(comp);
+	assert.ok(first.includes("drawing with mmdr…"), "the first frame says mmdr is drawing");
+	assert.ok(!first.includes("timeline diagrams draw as source"), "the pending note replaces the give-up note");
+	assert.ok(first.includes("2020 : <i>start</i>"), "the source stays visible meanwhile");
+	assert.equal(mmdrJobs.pending.size, 1);
+
+	await mmdrJobs.idle();
+	assert.ok(h.renders.screen > 0, "the settled job asks pi to paint");
+	const drawn = comp.render(100).join("\n");
+	assert.ok(drawn.includes(KITTY_IMAGE), "the next frame draws the PNG");
+	assert.ok(!stripAnsi(drawn).includes("2020 :"), "the source is gone");
+	assert.deepEqual(shownLabels(comp, 100, false), ["⧉ source", "⧉ image", "⧉ preview"]);
+
+	copiedTexts.length = 0;
+	press(comp, 100, "⧉ source", false);
+	assert.deepEqual(copiedTexts, [source], "source copies the mermaid text as written, tags included");
+	press(comp, 100, "⧉ image", false);
+	assert.deepEqual(h.desktop.pngs, [png], "image copies the PNG mmdr drew");
+	press(comp, 100, "⧉ preview", false);
+	assert.deepEqual(h.desktop.previews, [png], "preview opens the PNG mmdr drew");
+
+	assert.equal(fake.stdin(), "timeline\n  2020 : start\n  2021 : end\n", "mmdr gets the source without inline tags");
+	assert.ok(basename(fake.cwd()).startsWith("prism-mmdr-"), "mmdr runs in its own job directory");
+	assert.deepEqual(fake.leftovers(), [], "the job directory is removed");
+	comp.invalidate();
+	comp.render(100);
+	assert.equal(fake.runs(), 1, "later frames hit the cache");
+});
+
+test("29. mmdr never runs for art that fits, an open fence, a terminal without images, or the markdown transformer", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const art = reply(mermaidFence("flowchart TD\n  A --> B"));
+	assert.ok(plainText(art).includes("│"), "a flowchart that fits is drawn as art");
+	assert.deepEqual(shownLabels(art, 100, false), ["⧉ source", "⧉ art"]);
+
+	const open = reply("```mermaid\ntimeline\n  2020 : a");
+	assert.ok(!plainText(open).includes("mmdr") && !plainText(open).includes("draw as source"), "an open fence is plain source with no note");
+
+	const transformed = h.markdownTransformers[0]!(mermaidFence("timeline\n  2020 : a"), { messageType: "assistant", isStreaming: false, availableWidth: 80 });
+	assert.ok(transformed.includes("timeline diagrams draw as source for now"), "the transformer keeps the give-up note");
+	assert.ok(!transformed.includes("mmdr"), "the transformer never mentions mmdr");
+
+	assert.equal(mmdrJobs.pending.size, 0);
+	assert.deepEqual(fake.calls(), [], "no run started");
+
+	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+	const text = reply(mermaidFence("timeline\n  2020 : a"));
+	assert.ok(plainText(text).includes("timeline diagrams draw as source for now"), "a terminal without images keeps the give-up note");
+	assert.equal(mmdrJobs.pending.size, 0);
+	assert.deepEqual(fake.calls(), [], "no run started without images");
+});
+
+test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from one run", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(fanOut());
+	assert.ok(plainText(comp, fittedAt(80)).includes("drawing with mmdr…"), "80 columns are too few for the 81-column art");
+	await mmdrJobs.idle();
+	assert.equal(drawnImages(comp, fittedAt(80)), 1, "80 columns show the picture");
+
+	assert.ok(plainText(comp, fittedAt(130)).includes("Child number 3"), "130 columns show the text art");
+	assert.deepEqual(shownLabels(comp, fittedAt(130), false), ["⧉ source", "⧉ art"], "the art has its own buttons");
+	assert.equal(drawnImages(comp, fittedAt(130)), 0);
+
+	assert.equal(drawnImages(comp, fittedAt(80)), 1, "narrowing again shows the picture at once");
+	assert.equal(fake.runs(), 1, "one run served all three widths");
+});
+
+test("31. mmdr's refusals keep the text note, its failures add a reason, and a missing mmdr changes nothing", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const noteOf = async (source: string) => {
+		const comp = reply(mermaidFence(source));
+		comp.render(100);
+		await mmdrJobs.idle();
+		const plain = plainText(comp);
+		return { plain, images: drawnImages(comp) };
+	};
+	const timeline = (marker: string) => `timeline\n  2020 : ${marker}`;
+	const give = "timeline diagrams draw as source for now";
+
+	const misread = await noteOf("notADiagram\n  fake:flowchart");
+	assert.ok(misread.plain.includes("notADiagram diagrams draw as source for now"), "a header mmdr misread as a flowchart keeps the note");
+	assert.ok(!misread.plain.includes("(mmdr"), "and says nothing about mmdr");
+	assert.equal(misread.images, 0);
+
+	const reasons: [string, string][] = [
+		["fake:syntax", "misread it"],
+		["fake:empty", "found nothing to draw"],
+		["fake:fail", "failed"],
+		["fake:nolayout", "failed"],
+		["fake:huge", "image is 8141×4530 px, over the 2 MiB limit"],
+	];
+	for (const [marker, reason] of reasons) {
+		const result = await noteOf(timeline(marker));
+		assert.ok(result.plain.includes(`${give} (mmdr ${reason})`), `${marker}: ${reason}`);
+		assert.equal(result.images, 0, `${marker}: no picture`);
+	}
+	assert.deepEqual(fake.leftovers(), [], "every job directory is removed, failures included");
+
+	const before = fake.runs();
+	const long = await noteOf(timeline("x".repeat(20000)));
+	assert.ok(long.plain.includes(`${give} (mmdr skipped a source over 20000 chars)`), "a huge source is not sent");
+	assert.equal(fake.runs(), before, "and starts no run");
+
+	fake.restore();
+	const absent = mmdrFixture({ installed: false });
+	cleanupFn = () => {
+		absent.restore();
+		h.cleanup();
+	};
+	const comp = reply(mermaidFence(timeline("absent")));
+	const frame = plainText(comp);
+	assert.ok(frame.includes(give), "without mmdr the note is today's");
+	assert.ok(!frame.includes("mmdr"), "and never mentions mmdr");
+	assert.equal(mmdrJobs.pending.size, 0);
+	assert.deepEqual(absent.calls(), []);
+});
+
+test("32. an mmdr render past 5 s is killed and noted", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(mermaidFence("timeline\n  2020 : fake:sleep"));
+	comp.render(100);
+	await mmdrJobs.idle(8000);
+	assert.ok(plainText(comp).includes("timeline diagrams draw as source for now (mmdr timed out after 5 s)"));
+	assert.deepEqual(fake.leftovers(), [], "the job directory is removed after the kill");
+});
+
+test("33. five slow blocks run one at a time and all end as pictures", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply([0, 1, 2, 3, 4].map((n) => mermaidFence(`timeline\n  2020 : fake:slow ${n}`)).join("\n\n"));
+	comp.render(100);
+	assert.equal(mmdrJobs.pending.size, 5);
+	await mmdrJobs.idle();
+	assert.equal(drawnImages(comp), 5);
+	let open = 0;
+	let most = 0;
+	for (const line of fake.calls()) most = Math.max(most, (open += line === "start" ? 1 : -1));
+	assert.equal(most, 1, "no two runs overlap");
+	assert.equal(fake.calls().length, 10, "five runs started and ended");
+});
+
+test("34. a reply rebuilt while mmdr draws shows the picture once it settles, with no further nudge", async () => {
+	const fake = mmdrFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const message = { role: "assistant", content: [{ type: "text", text: [mermaidFence("timeline\n  2020 : fake:slow"), "", "After"].join("\n") }], timestamp: 1000 } as any;
+	const comp = new AssistantMessageComponent(message);
+	comp.render(100);
+	assert.equal(mmdrJobs.pending.size, 1);
+	comp.updateContent(message);
+	assert.ok(plainText(comp).includes("drawing with mmdr…"), "the rebuilt frame still shows the pending note");
+	assert.equal(mmdrJobs.pending.size, 1, "the rebuild joins the job");
+	await mmdrJobs.idle();
+	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the picture");
+	assert.equal(fake.runs(), 1, "the rebuild did not start a second run");
+});
+
+test("35. judge accepts what mmdr drew faithfully and refuses what it misread, over layouts recorded from mmdr 0.2.2", () => {
+	const corpus = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "mmdr-layouts.json"), "utf8")) as Record<
+		string,
+		{ source: string; layout: { kind: string; width: number; height: number; nodes: string[]; edges: number }; expect: string }
+	>;
+	const judged = Object.fromEntries(
+		Object.entries(corpus).map(([name, { source, layout }]) => {
+			const raw = JSON.stringify({ ...layout, nodes: layout.nodes.map((id) => ({ id })), edges: Array.from({ length: layout.edges }, () => ({})) });
+			const parsed = parseLayout(raw);
+			return [name, parsed ? judge(headerWord(source), parsed, source) : "unparsed"];
+		}),
+	);
+	assert.deepEqual(judged, Object.fromEntries(Object.entries(corpus).map(([name, { expect }]) => [name, expect])));
+
+	for (const odd of ["", "null", "[]", "{}", '{"kind":"Flowchart","width":1,"height":1}', '{"kind":"Flowchart","width":"1","height":1,"nodes":[],"edges":[]}', '{"kind":"Flowchart","width":1,"height":1,"nodes":[{"id":3}],"edges":[]}', '{"kind":"Flowchart","width":1,"height":1,"nodes":[1],"edges":[]}']) {
+		assert.equal(parseLayout(odd), null, `a layout of ${JSON.stringify(odd)} fails closed`);
+	}
+
+	const words: [string, string][] = [
+		["flowchart TD\n  A --> B", "flowchart"],
+		["  \n%% note\n%%{init: {}}%%\ntimeline\n  2020 : a", "timeline"],
+		["---\ntitle: T\n---\nmindmap\n  root", "mindmap"],
+		["---\r\ntitle: T\r\n---\r\ngantt\r\n  x", "gantt"],
+		["graph TD;\n  A-->B;", "graph"],
+		["", ""],
+	];
+	for (const [source, word] of words) assert.equal(headerWord(source), word, JSON.stringify(source));
+});
+
+test("36. fallback shows the picture, the pending note, or today's note with mmdr's reason, for every verdict", () => {
+	const verdicts = [
+		{ fits: false, why: "unsupported", word: "timeline" },
+		{ fits: false, why: "too-wide", narrowest: 95, columns: 78 },
+		{ fits: false, why: "no-art" },
+	] as const;
+	const notes = ["timeline diagrams draw as source for now", "diagram is 95 cols, terminal is 78", "diagram failed to render"];
+	assert.deepEqual(verdicts.map(textNote), notes, "textNote keeps main's strings");
+	const png = { state: "drawn", png: "AAAA", width: 3, height: 4 } as const;
+	verdicts.forEach((verdict, i) => {
+		assert.deepEqual(fallback(verdict, png), png, "a picture wins");
+		assert.deepEqual(fallback(verdict, { state: "pending" }), { note: "drawing with mmdr…" });
+		assert.deepEqual(fallback(verdict, { state: "declined" }), { note: notes[i] });
+		assert.deepEqual(fallback(verdict, { state: "failed", reason: "timed out after 5 s" }), { note: `${notes[i]} (mmdr timed out after 5 s)` });
+	});
+	const style = resolveStyle({});
+	const fits = textVerdict("flowchart TD\n  A --> B", style, 80, 0);
+	assert.ok(fits.fits, "textVerdict returns the art when it fits");
+	assert.deepEqual(textVerdict("timeline\n  2020 : a", style, 80, 0), { fits: false, why: "unsupported", word: "timeline" });
+	assert.deepEqual(textVerdict(fanOut().split("\n").slice(1, -1).join("\n"), style, 80, 0), { fits: false, why: "too-wide", narrowest: 81, columns: 80 });
+	assert.deepEqual(textVerdict("graph TD;\n  A-->B;", style, 80, 0), { fits: false, why: "no-art" }, "valid syntax the text parser lacks gives 'no-art'");
+});
+
+const hasMmdr = (() => {
+	try {
+		execFileSync("which", ["mmdr"]);
+		return true;
+	} catch {
+		return false;
+	}
+})();
+
+test("37. real mmdr: an unknown header reads as a flowchart, a timeline does not, and a hyphenated id is refused", { skip: hasMmdr ? false : "mmdr is not on PATH" }, async () => {
+	mmdrJobs.clear();
+	const wake = { requestRender: () => {} };
+	const kindOf = (source: string) => {
+		const dir = mkdtempSync(join(tmpdir(), "prism-real-mmdr-"));
+		try {
+			spawnSync("mmdr", ["-i", "-", "-e", "png", "-o", join(dir, "d.png"), "--dumpLayout", join(dir, "l.json")], { input: source, cwd: dir });
+			return parseLayout(readFileSync(join(dir, "l.json"), "utf8"))?.kind;
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	};
+	assert.match(kindOf("notADiagram\n  foo")!, /flowchart/i, "mmdr reads an unknown word as a flowchart");
+	assert.doesNotMatch(kindOf("timeline\n  2020 : a")!, /flowchart/i, "and a timeline as its own kind");
+
+	const ask = async (source: string) => {
+		const picture = mmdrPicture(source, wake);
+		assert.equal(picture.state, "pending");
+		await mmdrJobs.idle();
+		return mmdrPicture(source, wake);
+	};
+	assert.deepEqual(await ask("notADiagram\n  foo"), { state: "declined" });
+	assert.equal((await ask("timeline\n  2020 : a")).state, "drawn");
+	assert.deepEqual(await ask("flowchart TD\n  api-gateway --> auth-service"), { state: "failed", reason: "misread it" });
+	mmdrJobs.clear();
 });
