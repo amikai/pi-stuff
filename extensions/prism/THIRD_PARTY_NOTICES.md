@@ -40,6 +40,17 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+`core/vendor/plantuml.js` bundles [PlantUML](https://github.com/plantuml/plantuml) 1.2026.10beta1 (commit e6c3adc, compiled to JavaScript with TeaVM), [Viz.js](https://github.com/mdaines/viz-js) (`@viz-js/viz` 3.31.0, MIT, which compiles [Graphviz](https://graphviz.org), EPL-1.0) and [resvg-wasm](https://github.com/yisibl/resvg-js) (`@resvg/resvg-wasm` 2.6.2, MPL-2.0). PlantUML is offered under several licenses. This build is the GPL-3.0-or-later one from the project's root. `core/vendor/plantuml/package.json` pins the npm packages, and esbuild 0.28.2 (MIT) only builds the bundle. See "PlantUML engine" in `README.md` for how to rebuild it. PlantUML's licenses do not cover the images it draws.
+
+```
+PlantUML is free software, distributed under the GNU General Public License,
+version 3 or (at your option) any later version. The full text is at
+https://www.gnu.org/licenses/gpl-3.0.txt and in the LICENSE file of the
+PlantUML repository.
+
+Copyright (C) 2009-2026, Arnaud Roques - https://plantuml.com
+```
+
 ## Optional system clipboard tools
 
 On Linux, HTML copying calls an installed and running [CopyQ](https://github.com/hluk/CopyQ) (GPL-3.0-or-later).
