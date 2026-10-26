@@ -1,4 +1,6 @@
 #!/bin/sh
+PATH=/usr/bin:/bin
+printf '%s\n' "$*" >"$FAKE_MMDR_DIR/last-args.txt"
 out=
 layout=
 while [ $# -gt 0 ]; do
@@ -22,6 +24,7 @@ size='"width":300,"height":200'
 case "$src" in *fake:flowchart*) kind=Flowchart ;; esac
 case "$src" in *fake:syntax*) nodes='">","A"' ;; esac
 case "$src" in *fake:empty*) nodes=; size='"width":8,"height":8' ;; esac
+case "$src" in *fake:tall*) size='"width":300,"height":40000' ;; esac
 image=fixture.png
 case "$src" in *fake:huge*) image=huge.png ;; esac
 case "$src" in *fake:big*) image=big.png ;; esac
