@@ -651,6 +651,80 @@ if (cmd === "drive") {
 		process.exit(0);
 	}
 
+	if (feature === "mmdr") {
+		assert.equal(spawnSync("which", ["mmdr"]).status, 0, "mmdr must be on PATH");
+		const { mmdrJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/mmdr.ts")).href);
+		const fence = (source) => ["```mermaid", source, "```"].join("\n");
+		const fan = (id) => ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n");
+		const timeline = "timeline\n  title Releases\n  2024 : alpha\n  2025 : beta : stable";
+		const text = [
+			fence(timeline),
+			fence("notADiagram\n  foo"),
+			fence(fan((n) => `c${n}`)),
+			fence(fan((n) => `child-${n}`)),
+		].join("\n\n");
+		const reply = () =>
+			new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 5000 });
+		const count = (haystack, needle) => haystack.split(needle).length - 1;
+		const KITTY = "\x1b_G";
+		const PENDING = "drawing with mmdr…";
+		// A reply draws its blocks 4 columns narrower than its render width.
+		const narrow = 84;
+		const wide = 144;
+		const buttons = process.platform === "darwin" && !process.env.SSH_CONNECTION && !process.env.SSH_TTY;
+
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
+		const comp = reply();
+		const pendingLines = comp.render(narrow);
+		const pendingPlain = pendingLines.map(stripAnsi).join("\n");
+		assert.equal(count(pendingPlain, PENDING), 4, "the first frame marks all four blocks as drawing with mmdr");
+		assert.equal(count(pendingLines.join("\n"), KITTY), 0, "no picture yet");
+
+		await mmdrJobs.idle();
+		const drawnLines = comp.render(narrow);
+		const drawnPlain = drawnLines.map(stripAnsi).join("\n");
+		const imageIds = new Set([...drawnLines.join("\n").matchAll(/\x1b_G[^\x1b]*?\bi=(\d+)/g)].map((m) => m[1]));
+		assert.equal(imageIds.size, 2, "the timeline and the fan-out are kitty images");
+		assert.ok(!drawnPlain.includes(PENDING), "nothing is still pending");
+		assert.equal(count(drawnPlain, "[ ⧉ source ]"), 2, "both pictures offer source");
+		assert.equal(count(drawnPlain, "[ ⧉ image ]"), buttons ? 2 : 0, "image buttons appear where the desktop shows pictures");
+		assert.equal(count(drawnPlain, "[ ⧉ preview ]"), buttons ? 2 : 0, "preview buttons appear where the desktop shows pictures");
+		assert.ok(drawnPlain.includes("notADiagram diagrams draw as source for now"), "a header mmdr misread keeps main's note");
+		assert.ok(!drawnPlain.includes("notADiagram diagrams draw as source for now (mmdr"), "and blames no one");
+		assert.ok(
+			drawnPlain.includes("diagram is 81 cols, terminal is 80 (mmdr misread it)"),
+			"the hyphenated fan-out keeps its text note and says why mmdr did not help",
+		);
+
+		const widePlain = comp.render(wide).map(stripAnsi).join("\n");
+		assert.equal(count(widePlain, "Child number 3"), 2, "at 140 columns both fan-outs are box art");
+		assert.ok(widePlain.includes("notADiagram diagrams draw as source for now"), "the misread header still keeps its note");
+
+		const picture = mmdrJobs.cache.get(timeline);
+		assert.equal(picture?.state, "drawn", "the timeline is cached as a picture");
+		const timelinePng = Buffer.from(picture.png, "base64");
+		assert.equal(timelinePng.subarray(1, 4).toString("latin1"), "PNG", "the cached picture is a PNG");
+		mkdirSync(outDir, { recursive: true });
+		writeFileSync(join(outDir, "mmdr-timeline.png"), timelinePng);
+
+		setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+		const jobsBefore = mmdrJobs.pending.size;
+		const textLines = reply().render(narrow);
+		const textPlain = textLines.map(stripAnsi).join("\n");
+		assert.equal(jobsBefore + mmdrJobs.pending.size, 0, "without images nothing is pending");
+		assert.ok(textPlain.includes("timeline diagrams draw as source for now"), "without images the timeline keeps main's note");
+		assert.ok(textPlain.includes("diagram is 81 cols, terminal is 80"), "without images the fan-out keeps main's note");
+		assert.ok(!textPlain.includes("mmdr"), "without images nothing mentions mmdr");
+		resetCapabilitiesCache();
+
+		writeArtifacts(outDir, "mmdr-pending", pendingLines, { feature, state: "pending", width: narrow });
+		writeArtifacts(outDir, "mmdr-images", drawnLines, { feature, state: "drawn", width: narrow, imageIds: [...imageIds], buttons });
+		writeArtifacts(outDir, "mmdr-wide", comp.render(wide), { feature, state: "wide", width: wide });
+		writeArtifacts(outDir, "mmdr-text", textLines, { feature, state: "images-off", width: narrow });
+		console.log(JSON.stringify({ ok: true, feature, outDir, timelineBytes: timelinePng.length }));
+		process.exit(0);
+	}
+
 	if (feature === "quicklook") {
 		assert.equal(process.platform, "darwin", "the Quick Look preview exists only on macOS");
 		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "over SSH the panel opens on a screen nobody watches");
