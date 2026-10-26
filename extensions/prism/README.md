@@ -77,11 +77,7 @@ Any of the 20 semantic color slots (`accentColor`, `headingColor`, `tableHeaderC
 
 PlantUML runs in a worker thread that `prism` starts on the first diagram. Diagrams render one at a time, the first about 0.3 s after the worker starts and later ones in 15 to 70 ms. A render that takes more than 5 s ends with the note `plantuml render timed out`, and the next diagram gets a fresh worker. If the worker fails, the note is `plantuml worker failed`.
 
-The engine reads no files and makes no requests. It declines every `!include`, `!includeurl`, and `!theme ... from` except the C4-PlantUML ones below, and a declined line shows PlantUML's reason as the note, as in `cannot include /etc/passwd`. `%getenv` does nothing.
-
-C4-PlantUML v2.14.0 is bundled, so C4 diagrams draw offline. `!include <C4/C4_Container>` loads it, and so do `C4`, `C4_Context`, `C4_Component`, `C4_Deployment`, `C4_Dynamic`, and `C4_Sequence`. Themes load with `!theme C4_united from C4-PlantUML/themes`, before or after the include. A model that writes the usual link works too. Before the render, `prism` points a line such as `!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml` (also `!include_once`, `!include_many`, and `!includeurl`) at the bundle, and does the same for `!theme NAME from https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/themes`. It does so for any GitHub owner, including a fork, and any ref. The bundle is always v2.14.0, so a fork's own changes, or a newer or older tag, do not show. Other URLs and other libraries stay declined.
-
-C4's default `Person` shape is a bitmap sprite, and the engine cannot draw bitmaps: the whole render fails with `Rendering failed: java.lang.UnsupportedOperationException`. To avoid it, `prism` adds the line `SHOW_PERSON_OUTLINE()` after the first C4 include, which switches `Person` to its outline shape. Error line numbers still count the lines you wrote. A sprite you name yourself, with `$sprite=` or `$legendSprite=`, fails the same way, so leave those out.
+The engine reads no files and makes no requests. It declines every `!include`, `!includeurl`, and `!theme ... from`, including PlantUML's built-in libraries such as `!include <C4/C4_Container>`, and a declined line shows PlantUML's reason as the note, as in `cannot include /etc/passwd`. `%getenv` does nothing. PlantUML's own themes, such as `!theme cerulean`, still work, because they are bundled into the engine. The engine cannot draw bitmap sprites, as in `sprite $x [16x16/16] {...}`: a diagram that uses one fails with `Rendering failed: java.lang.UnsupportedOperationException`. SVG sprites draw.
 
 Diagrams draw in PlantUML's light theme on an opaque white background, whatever Pi's theme is. Dark mode is not available. Terminals without images show the note `plantuml diagrams require an image-capable terminal`, because there is no text art.
 
@@ -91,7 +87,7 @@ Results, including failures, are cached for the session. Edit the source to retr
 
 ## PlantUML engine
 
-[`core/vendor/plantuml.js`](core/vendor/plantuml.js) is PlantUML compiled to JavaScript and bundled with Graphviz, resvg, and the C4 library into one file. [`core/vendor/plantuml/README.md`](core/vendor/plantuml/README.md) says where it comes from, how to rebuild it, and which patches it carries.
+[`core/vendor/plantuml.js`](core/vendor/plantuml.js) is PlantUML compiled to JavaScript and bundled with Graphviz and resvg into one file. [`core/vendor/plantuml/README.md`](core/vendor/plantuml/README.md) says where it comes from, how to rebuild it, and which patches it carries.
 
 ## Testing and verification
 

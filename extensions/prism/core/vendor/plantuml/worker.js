@@ -4,33 +4,13 @@ import * as viz from '@viz-js/viz'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
 import './themes.js'
-import c4Bundle from './c4.txt'
 
 // The engine logs through console, which a worker forwards to the parent's stdout and would draw over pi's screen.
 for (const name of ['log', 'info', 'debug', 'warn', 'error']) console[name] = () => {}
 
-// The engine reads no file and no URL itself: it asks these two loaders, which serve only the bundled C4 library.
-const C4_THEME = /^C4-PlantUML\/themes\/puml-theme-([\w-]+)\.puml$/
-let c4 = null
-const loadC4 = () => {
-  if (!c4) {
-    new Function('window', c4Bundle)(globalThis)
-    c4 = globalThis.PLANTUML_STDLIB.c4
-  }
-  return c4
-}
-globalThis.PLANTUML_STDLIB_LOADER = (url, ok, fail) => {
-  if (url !== 'c4.min.js') return fail(`${url} is not bundled`)
-  loadC4()
-  ok()
-}
-// The TeaVM engine cannot read a theme from the standard library, only from a host folder, so C4's themes are served as one.
-globalThis.PLANTUML_FILE_LOADER = (path, _from, ok) => {
-  const name = C4_THEME.exec(path)?.[1]
-  const lines = name && loadC4()[`themes/puml-theme-${name.toLowerCase()}`]
-  if (!lines) return false
-  ok(path, lines.join('\n'))
-}
+// With no loader the engine loads a library through document, which Node lacks: the throw leaves the library marked as
+// loading, so the next diagram that includes it waits until the timeout. Declining every library fails each one at once.
+globalThis.PLANTUML_STDLIB_LOADER = (url, _ok, fail) => fail(`${url} is not bundled`)
 
 let vizInstance
 globalThis.Viz = { instance: () => (vizInstance ??= viz.instance()) }
