@@ -653,6 +653,7 @@ if (cmd === "drive") {
 
 	if (feature === "mmdr") {
 		assert.equal(spawnSync("which", ["mmdr"]).status, 0, "mmdr must be on PATH");
+		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "prism turns mmdr off over SSH; drive it from a local terminal");
 		const { mmdrJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/mmdr.ts")).href);
 		const fence = (source) => ["```mermaid", source, "```"].join("\n");
 		const fan = (id) => ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n");
@@ -672,7 +673,7 @@ if (cmd === "drive") {
 		const fittedAt = (columns) => columns + REPLY_INSET;
 		const narrow = fittedAt(80);
 		const wide = fittedAt(140);
-		const buttons = process.platform === "darwin" && !process.env.SSH_CONNECTION && !process.env.SSH_TTY;
+		const buttons = process.platform === "darwin";
 
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
 		const comp = reply();

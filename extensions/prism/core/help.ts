@@ -215,7 +215,7 @@ prism --> You : drawn reply
 @enduml
 \`\`\`
 
-A diagram wider than the terminal stays source, with a dim line saying why. Where the terminal shows images and the \`mmdr\` command is installed, \`mmdr\` draws it as a picture instead, after a moment:
+A diagram wider than the terminal stays source, with a dim line saying why. Where the terminal shows images and the \`mmdr\` command is installed, \`mmdr\` draws it as a picture instead, after a moment (\`mmdr: false\` in \`~/.pi/agent/prism.json\` leaves it as source):
 
 \`\`\`mermaid
 flowchart TD

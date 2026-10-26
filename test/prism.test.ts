@@ -1537,7 +1537,9 @@ function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: 
 	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 3 * 1024 * 1024 + 1));
 	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-mmdr.sh"), join(bin, "mmdr"));
 	chmodSync(join(bin, "mmdr"), 0o755);
-	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MMDR_DIR"].map((k) => [k, process.env[k]]));
+	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MMDR_DIR", "SSH_CONNECTION", "SSH_TTY"].map((k) => [k, process.env[k]]));
+	delete process.env.SSH_CONNECTION;
+	delete process.env.SSH_TTY;
 	process.env.FAKE_MMDR_DIR = dir;
 	process.env.TMPDIR = dir;
 	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
@@ -1894,4 +1896,34 @@ test("38. an mmdr picture between 2 and 3 MiB reaches the terminal and the clipb
 	await mmdrJobs.idle();
 	assert.ok(plainText(over).includes("timeline diagrams draw as source for now"), "a picture over 3 MiB keeps main's note");
 	assert.equal(drawnImages(over), 0);
+});
+
+test("39. mmdr:false or an SSH session keeps every block the text renderer cannot draw as source and never starts mmdr", async () => {
+	assert.equal(resolveStyle({}).mmdr, true);
+	assert.equal(resolveStyle({ mmdr: false }).mmdr, false);
+
+	const cases: [string, Record<string, unknown>, Record<string, string>][] = [
+		["mmdr:false", { mmdr: false }, {}],
+		["SSH_CONNECTION", {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }],
+		["SSH_TTY", {}, { SSH_TTY: "/dev/pts/0" }],
+	];
+	for (const [name, config, env] of cases) {
+		const fake = mmdrFixture();
+		Object.assign(process.env, env);
+		const h = createHarness(config);
+		try {
+			await h.emit("session_start");
+			const comp = reply([mermaidFence("timeline\n  2020 : off"), fanOut((n) => `c${n}`)].join("\n\n"));
+			const plain = plainText(comp, fittedAt(80));
+			assert.ok(plain.includes("timeline diagrams draw as source for now"), `${name}: the timeline keeps main's note`);
+			assert.ok(plain.includes("diagram is 81 cols, terminal is 80"), `${name}: the wide flowchart keeps main's note`);
+			assert.ok(!plain.includes("mmdr"), `${name}: nothing mentions mmdr`);
+			await sleep(100);
+			assert.equal(mmdrJobs.pending.size, 0, name);
+			assert.deepEqual(fake.calls(), [], `${name}: mmdr is never called`);
+		} finally {
+			fake.restore();
+			h.cleanup();
+		}
+	}
 });
