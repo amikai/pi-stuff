@@ -906,7 +906,13 @@ export default function prismExtension(
 		const copy = makeCopyButton();
 		const picture = makePictureButtons();
 		const fold = makeFolder(options?.onInvalidate);
-		const drawn = drawDiagrams(EL, activeStyle, blocks, columns - markerRoom(activeStyle));
+		const drawn = drawDiagrams(
+			EL,
+			activeStyle,
+			blocks,
+			columns - markerRoom(activeStyle),
+			getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : undefined,
+		);
 		if (activeStyle.plantuml) {
 			const plantuml = drawPlantUml(EL, activeStyle, blocks, columns - markerRoom(activeStyle), {
 				mode: getCapabilities().images ? "png" : "utxt",

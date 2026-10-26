@@ -3,8 +3,12 @@ import type { ElementTable, RenderElement } from "./jsx.ts"
 import type { ChartArt } from "./charts.ts"
 import { ganttText, pieText } from "./charts.ts"
 import { drawFigure, isFigureLang } from "./figure.ts"
+import { fitImage } from "./latex.ts"
+import { mmdrPicture } from "./mmdr.ts"
+import type { Picture } from "./mmdr.ts"
+import type { Wake } from "./background.ts"
 import type { Block } from "./markdown.ts"
-import type { Drawn } from "./render.ts"
+import type { Drawn, DrawnBlock } from "./render.ts"
 import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts"
 import { asIs, hasRtl, holdEngine, holdRow, holdVisual, led } from "./rtl.ts"
 import type { Style, Theme } from "./theme.ts"
@@ -316,26 +320,78 @@ quoted !== undefined ? `${open}"${cap(quoted, max)}"${close}` : `|${cap(piped, m
 
 const pieColorsOf = (style) => style.pieStyle === 'round' ? diagramPalette(style.theme).length : 0;
 
-const drawDiagrams = (el, style, blocks, columns) => {
-  const drawn = new Map();
+type TextVerdict =
+{ fits: true; art: { text: string; slices?: unknown; series?: unknown } } |
+{ fits: false; why: 'unsupported'; word: string } |
+{ fits: false; why: 'too-wide'; narrowest: number; columns: number } |
+{ fits: false; why: 'failed' };
+
+type GaveUp = Extract<TextVerdict, { fits: false }>;
+
+const FRONT_MATTER = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/;
+
+// Front matter is skipped here and not in kindOf, which keeps the text renderer's notes as they are.
+const headerWord = (source: string): string => source.replace(FRONT_MATTER, '').replace(/^(\s*%%[^\n]*\n)+/, '').trim().split(/\s/)[0] ?? '';
+
+// 'failed' means no pass drew anything, which covers both a source over the limits and one the parser rejects.
+const textVerdict = (source: string, style: Style, columns: number, pieColors: number): TextVerdict => {
+  let narrowest = Infinity;
+  for (const max of [Infinity, 24, 12]) {
+    const art = mermaidArt(max === Infinity ? source : shortenEdgeLabels(source, max), style.mermaidAscii, columns, pieColors);
+    const wide = art === null ? Infinity : artWidth(art.text);
+    narrowest = Math.min(narrowest, wide);
+    if (art !== null && wide <= columns - 2) return { fits: true, art };
+  }
+  const word = unsupportedKind(source);
+  if (word) return { fits: false, why: 'unsupported', word };
+  return narrowest === Infinity ? { fits: false, why: 'failed' } : { fits: false, why: 'too-wide', narrowest, columns };
+};
+
+const textNote = (verdict: GaveUp): string =>
+verdict.why === 'unsupported' ? `${verdict.word} diagrams draw as source for now` :
+verdict.why === 'failed' ? 'diagram failed to render' :
+`diagram is ${verdict.narrowest} cols, terminal is ${verdict.columns}`;
+
+const PENDING_NOTE = 'drawing with mmdr…';
+
+const fallback = (verdict: GaveUp, picture: Picture): { note: string } | { png: string; width: number; height: number } => {
+  switch (picture.state) {
+    case 'drawn':
+      return picture;
+    case 'pending':
+      return { note: PENDING_NOTE };
+    case 'failed':
+      return { note: `${textNote(verdict)} (mmdr ${picture.reason})` };
+    case 'declined':
+      return { note: textNote(verdict) };
+  }
+};
+
+const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>, i: number, columns: number, pieColors: number, images: Wake | undefined): DrawnBlock | undefined => {
+  const source = block.lines.join('\n');
+  const verdict = textVerdict(source, style, columns, pieColors);
+  if (verdict.fits) {
+    const { art } = verdict;
+    return { element: boxArt(el, style, art.text, `b${i}`, inlineMarks(source), art.slices, art.series), art: art.text };
+  }
+  if (block.isOpen) return undefined;
+  const word = headerWord(source);
+  const picture: Picture = images && word !== '' ? mmdrPicture(source.replace(INLINE_TAG, ''), word, images) : { state: 'declined' };
+  const out = fallback(verdict, picture);
+  if ('note' in out) return out;
+  const fit = fitImage(out, columns);
+  return { element: h(el.Image, { key: `b${i}`, source: { png: out.png }, columns: fit.columns, rows: fit.rows, alt: `${word} diagram` }), png: out.png };
+};
+
+// `images` is passed only by a caller that can show pictures and repaint them: its absence is the whole "never spawn mmdr" rule.
+const drawDiagrams = (el, style: Style, blocks: Block[], columns: number, images?: Wake): Drawn => {
+  const drawn: Drawn = new Map();
   const pieColors = pieColorsOf(style);
   if (style.mermaid) {
     for (const [i, block] of blocks.entries()) {
       if (block.kind !== 'code' || block.lang.toLowerCase() !== 'mermaid') continue;
-      const source = block.lines.join('\n');
-      let narrowest = Infinity;
-      for (const max of [Infinity, 24, 12]) {
-        const art = mermaidArt(max === Infinity ? source : shortenEdgeLabels(source, max), style.mermaidAscii, columns, pieColors);
-        const wide = art === null ? Infinity : artWidth(art.text);
-        narrowest = Math.min(narrowest, wide);
-        if (art === null || wide > columns - 2) continue;
-        drawn.set(i, { element: boxArt(el, style, art.text, `b${i}`, inlineMarks(source), art.slices, art.series), art: art.text });
-        break;
-      }
-      if (!drawn.has(i) && !block.isOpen) {
-        const kind = unsupportedKind(source);
-        drawn.set(i, { note: kind ? `${kind} diagrams draw as source for now` : narrowest === Infinity ? 'diagram failed to render' : `diagram is ${narrowest} cols, terminal is ${columns}` });
-      }
+      const entry = mermaidBlock(el, style, block, i, columns, pieColors, images);
+      if (entry) drawn.set(i, entry);
     }
   }
   for (const [i, block] of blocks.entries()) {
@@ -345,4 +401,4 @@ const drawDiagrams = (el, style, blocks, columns) => {
   }
   return drawn;
 };
-export { chartSize, inlineMarks, mermaidText, diagramPalette, boxArt, shortenEdgeLabels, drawDiagrams };
+export { chartSize, inlineMarks, mermaidText, diagramPalette, boxArt, shortenEdgeLabels, drawDiagrams, fallback, headerWord, textNote, textVerdict };
