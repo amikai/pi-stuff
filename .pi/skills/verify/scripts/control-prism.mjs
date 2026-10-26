@@ -490,12 +490,7 @@ if (cmd === "drive") {
 	if (feature === "plantuml") {
 		assert.equal(spawnSync("which", ["plantuml"]).status, 0, "plantuml must be on PATH");
 		const plantuml = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/plantuml.ts")).href);
-		const waitForJobs = async () => {
-			for (let waited = 0; plantuml.inFlight.size > 0 && waited < 15000; waited += 20) {
-				await new Promise((done) => setTimeout(done, 20));
-			}
-			assert.equal(plantuml.inFlight.size, 0, "background plantuml jobs finished within 15 s");
-		};
+		const waitForJobs = () => plantuml.plantumlJobs.idle();
 		const localFile = join(rt.workDir, "local.txt");
 		writeFileSync(localFile, "Alice -> Zed : LOCALFILE\n");
 		const md = [
@@ -560,7 +555,7 @@ if (cmd === "drive") {
 		await waitForJobs();
 		const pngLines = png.render(width);
 		assert.ok(pngLines.join("\n").includes("\x1b_G"), "png mode draws the image through the kitty protocol");
-		const pngEntry = [...plantuml.plantumlCache.entries()].find(([key]) => key.startsWith("png:true:"))?.[1];
+		const pngEntry = [...plantuml.plantumlJobs.cache.entries()].find(([key]) => key.startsWith("png:true:"))?.[1];
 		assert.equal(pngEntry?.kind, "image", "png render is cached as an image under the dark-theme key");
 		resetCapabilitiesCache();
 

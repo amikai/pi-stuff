@@ -59,7 +59,8 @@ const { PrismComponent } = await import("../extensions/prism/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
 const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
 const { parse } = await import("../extensions/prism/core/markdown.ts");
-const { inFlight, isSequenceDiagram, plantumlCache } = await import("../extensions/prism/core/plantuml.ts");
+const { background } = await import("../extensions/prism/core/background.ts");
+const { isSequenceDiagram, plantumlJobs } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 
 const stripAnsi = (s: string) =>
@@ -653,8 +654,7 @@ function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installe
 	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
 	for (const name of JAVA_VARS) process.env[name] = "-DPLANTUML_SECURITY_PROFILE=INSECURE";
 	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
-	plantumlCache.clear();
-	inFlight.clear();
+	plantumlJobs.clear();
 	return {
 		calls: () => {
 			try {
@@ -670,8 +670,7 @@ function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installe
 				else process.env[name] = value;
 			}
 			resetCapabilitiesCache();
-			plantumlCache.clear();
-			inFlight.clear();
+			plantumlJobs.clear();
 			rmSync(dir, { recursive: true, force: true });
 		},
 	};
@@ -722,9 +721,9 @@ test("9. plantuml CLI success in png mode draws source first, then an image, san
 	const comp = reply(["Intro", "", "  @startuml", "' png", "Alice -> Bob : hi", "  @enduml"].join("\n"));
 	const first = stripAnsi(comp.render(100).join("\n"));
 	assert.ok(first.includes("Alice -> Bob : hi"), "first frame draws the source");
-	assert.equal(inFlight.size, 1, "render starts one background job");
+	assert.equal(plantumlJobs.pending.size, 1, "render starts one background job");
 
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(h.renders.screen > 0, "falls back to the screen TUI for the redraw");
 	assert.equal(h.renders.overlay, 0, "no setup overlay is open");
 	const drawn = comp.render(100).join("\n");
@@ -754,19 +753,19 @@ test("10. plantuml CLI success in utxt mode draws sequence art, skips a class di
 
 	const comp = reply(diagram("art"));
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("│Alice│ │Bob│"), "draws the text art");
 	assert.match(fake.calls()[0]!, /^args=-pipe -pipeNoStderr -tutxt profile=SANDBOX/, "asks for -tutxt without -darkmode");
 
 	const klass = reply(diagram("class", "class Foo {\n}\nFoo --> Bar"));
 	const note = stripAnsi(klass.render(100).join("\n"));
 	assert.ok(note.includes("plantuml non-sequence diagrams require an image-capable terminal"), "explains the refusal on the first frame");
-	assert.equal(inFlight.size, 0, "does not start a job");
+	assert.equal(plantumlJobs.pending.size, 0, "does not start a job");
 	assert.equal(fake.calls().length, 1, "does not spawn for a class diagram");
 
 	const wide = reply(diagram("fake:wide"));
 	wide.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	const wideDrawn = stripAnsi(wide.render(100).join("\n"));
 	assert.match(wideDrawn, /diagram is 200 cols, terminal is \d+/, "notes the width");
 	assert.ok(wideDrawn.includes("Alice -> Bob : hi"), "keeps the source");
@@ -783,15 +782,15 @@ test("11. plantuml CLI timeout, non-zero exit, and a missing CLI cache a note an
 
 	const comp = reply(diagram("fake:sleep"));
 	comp.render(100);
-	assert.equal(inFlight.size, 1);
-	await until(() => inFlight.size === 0, 8000);
+	assert.equal(plantumlJobs.pending.size, 1);
+	await plantumlJobs.idle(8000);
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml CLI failed"), "reports the timeout");
 	comp.render(100);
 	assert.equal(slow.calls().length, 1, "does not retry a cached failure");
 
 	const failing = reply(diagram("fake:fail"));
 	failing.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(failing.render(100).join("\n")).includes("plantuml CLI failed"), "reports a non-zero exit");
 
 	slow.restore();
@@ -802,9 +801,9 @@ test("11. plantuml CLI timeout, non-zero exit, and a missing CLI cache a note an
 	};
 	const gone = reply(diagram("enoent"));
 	gone.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(gone.render(100).join("\n")).includes("plantuml CLI is not installed"), "reports ENOENT");
-	assert.equal(inFlight.size, 0);
+	assert.equal(plantumlJobs.pending.size, 0);
 });
 
 test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/ with the source encoded", async () => {
@@ -826,7 +825,7 @@ test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/
 	const text = diagram("remote png");
 	const comp = reply(text);
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "draws the server PNG");
 	const [path, encoded] = server.urls[0]!.slice(1).split("/") as [string, string];
 	assert.equal(path, "dpng", "dark theme uses /dpng/");
@@ -835,7 +834,7 @@ test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/
 	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
 	const art = reply(diagram("remote txt"));
 	art.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.equal(server.urls[1]!.split("/")[1], "txt", "utxt mode uses /txt/");
 	assert.ok(stripAnsi(art.render(100).join("\n")).includes("│Alice│"), "draws the server art");
 });
@@ -857,20 +856,20 @@ test("13. plantumlServer HTTP 400, HTTP 5xx, and a refused connection cache a no
 	const noteFor = async (tag: string) => {
 		const comp = reply(diagram(tag));
 		comp.render(100);
-		assert.equal(inFlight.size, 1);
-		await until(() => inFlight.size === 0);
+		assert.equal(plantumlJobs.pending.size, 1);
+		await plantumlJobs.idle();
 		return stripAnsi(comp.render(100).join("\n"));
 	};
 	assert.ok((await noteFor("bad")).includes("diagram failed to render"), "HTTP 400");
 	assert.ok((await noteFor("down")).includes("plantumlServer request failed"), "HTTP 503");
 	assert.equal(server.urls.length, 2, "one request each, no retries");
-	assert.equal(plantumlCache.size, 2, "both failures are cached");
+	assert.equal(plantumlJobs.cache.size, 2, "both failures are cached");
 
 	const rendersBefore = h.renders.screen;
 	await server.close();
 	assert.ok((await noteFor("refused")).includes("plantumlServer request failed"), "connection refused");
 	assert.ok(h.renders.screen > rendersBefore, "a failure still requests a redraw");
-	assert.equal(inFlight.size, 0, "no key is left in flight");
+	assert.equal(plantumlJobs.pending.size, 0, "no key is left in flight");
 });
 
 test("14. a plantuml syntax error reports the source line and never reaches plantumlServer", async () => {
@@ -886,18 +885,18 @@ test("14. a plantuml syntax error reports the source line and never reaches plan
 
 	const comp = reply(diagram("fake:syntax"));
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml error (line 4): Syntax Error?"), "ERROR then 3 is line 4 with markers present");
 	assert.equal(server.urls.length, 0, "the server sees no request");
 
 	const bare = reply(["```plantuml", "' fake:syntax bare", "Alice -> Bob", "```"].join("\n"));
 	bare.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(stripAnsi(bare.render(100).join("\n")).includes("plantuml error (line 3): Syntax Error?"), "subtracts the line PlantUML synthesizes");
 
 	const blocked = reply(diagram("fake:include"));
 	blocked.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(
 		stripAnsi(blocked.render(100).join("\n")).includes("plantuml error (line 3): cannot include /tmp/prism/local.txt"),
 		"shows PlantUML's reason for a blocked include",
@@ -925,11 +924,11 @@ test("15. plantuml detection covers fences and unfenced blocks, and leaves unclo
 	await h.emit("session_start");
 	const untagged = reply("```\n@startuml\n' untagged\nA -> B\n@enduml\n```");
 	untagged.render(100);
-	assert.equal(inFlight.size, 1, "an untagged fence opening with @start renders");
-	await until(() => inFlight.size === 0);
+	assert.equal(plantumlJobs.pending.size, 1, "an untagged fence opening with @start renders");
+	await plantumlJobs.idle();
 	const plain = reply("```\nA -> B\n```");
 	plain.render(100);
-	assert.equal(inFlight.size, 0, "an untagged fence without @start is plain code");
+	assert.equal(plantumlJobs.pending.size, 0, "an untagged fence without @start is plain code");
 
 	const startEvent = {
 		type: "before_agent_start",
@@ -955,7 +954,7 @@ test("16. plantuml:false renders PlantUML blocks as ordinary code, never spawns,
 	const plain = stripAnsi(comp.render(100).join("\n"));
 	assert.ok(plain.includes("Alice -> Bob : hi") && plain.includes("A -> B"), "draws both blocks as code");
 	await sleep(100);
-	assert.equal(inFlight.size, 0);
+	assert.equal(plantumlJobs.pending.size, 0);
 	assert.equal(fake.calls().length, 0, "never spawns");
 
 	const startEvent = {
@@ -1003,7 +1002,7 @@ test("18. closing the setup overlay stops plantuml redraws from going to the sta
 	void h.commands.get("prism")!.handler("setup", h.ctx);
 	assert.ok(h.getOverlay(), "setup overlay is open");
 	reply(diagram("overlay open")).render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(h.renders.overlay > 0, "redraw goes to the open overlay");
 	assert.equal(h.renders.screen, 0);
 
@@ -1011,7 +1010,7 @@ test("18. closing the setup overlay stops plantuml redraws from going to the sta
 	assert.equal(h.getOverlay(), null, "Escape closes the overlay");
 	const overlayRenders = h.renders.overlay;
 	reply(diagram("overlay closed")).render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(h.renders.screen > 0, "redraw goes to the screen TUI");
 	assert.equal(h.renders.overlay, overlayRenders, "stale overlay handle is not used");
 });
@@ -1029,7 +1028,7 @@ test("19. a plantuml image reserves a line per image row, so the text after it i
 
 		const comp = reply([diagram(images), "", "After the diagram"].join("\n"));
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		const lines = comp.render(100);
 		const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
 		assert.ok(at >= 0, `${images}: the diagram is drawn as an image`);
@@ -1063,7 +1062,7 @@ test("20. a drawn image keeps one Kitty image id across redraws and streaming up
 	const message = { role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	const idOf = (lines: string[]) => /[,;]i=(\d+)/.exec(lines.find((line) => line.includes(KITTY_IMAGE)) ?? "")?.[1];
 	const first = idOf(comp.render(100));
 	assert.ok(first, "the image carries a Kitty image id");
@@ -1091,7 +1090,7 @@ test("21. an image drawn before the terminal reports its cell size lays out like
 		const text = diagram(`cell ${images}`);
 		const comp = reply(text);
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		const reserved = (lines: string[]) => {
 			const line = lines.find((l) => l.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE)) ?? "";
 			return images === "kitty" ? Number(/[,;]r=(\d+)/.exec(line)?.[1]) : Number(/\x1b\[(\d+)A/.exec(line)?.[1] ?? 0) + 1;
@@ -1120,10 +1119,10 @@ test("22. a plantuml diagram replaces its source after a streaming update that a
 	const message = { role: "assistant", content: [{ type: "text", text: [diagram("streamed"), "", "After"].join("\n") }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
-	assert.equal(inFlight.size, 1, "the first frame starts the render");
+	assert.equal(plantumlJobs.pending.size, 1, "the first frame starts the render");
 	comp.updateContent(message);
 	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("Alice -> Bob : hi"), "the rebuilt frame still shows the source while it renders");
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the image");
 });
 
@@ -1179,7 +1178,7 @@ test("23. a plantuml image offers source, image and preview, and each button han
 		const text = diagram(copyButtonStyle);
 		const comp = reply(text);
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		const hover = copyButtonStyle === "hover";
 
 		assert.deepEqual(shownLabels(comp, 100, hover), ["⧉ source", "⧉ image", "⧉ preview"], `${copyButtonStyle}: three buttons, in order`);
@@ -1222,7 +1221,7 @@ test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, 
 		await h.emit("session_start");
 		const comp = reply(diagram(JSON.stringify(config)));
 		comp.render(100);
-		await until(() => inFlight.size === 0);
+		await plantumlJobs.idle();
 		return { comp, h };
 	};
 
@@ -1421,7 +1420,7 @@ test("26. a plantuml image stays drawn while its top rows are scrolled above pi'
 
 	const comp = reply(diagram("scroll"));
 	comp.render(100);
-	await until(() => inFlight.size === 0);
+	await plantumlJobs.idle();
 	const lines = comp.render(100);
 	const at = lines.findIndex((line) => line.includes(KITTY_IMAGE));
 	assert.ok(at >= 0, "the diagram is drawn as an image");
@@ -1442,4 +1441,62 @@ test("26. a plantuml image stays drawn while its top rows are scrolled above pi'
 		return top.includes(KITTY_IMAGE) ? `${k} away: image, ${/[,;]r=(\d+)/.exec(top)?.[1]} rows` : `${k} away: ${JSON.stringify(stripAnsi(top))}`;
 	});
 	assert.deepEqual(topRows, scrolledAway.map((k) => `${k} away: image, ${rows - k} rows`), "the top row draws the image cropped to the rows still in view");
+});
+
+test("27. background jobs keep every caller's invalidator, queue behind the cap, wake after the next job starts, and stay awaitable", async () => {
+	const wake = (invalidated: string[], name: string) => ({ requestRender: () => invalidated.push(`${name}:render`), onInvalidate: () => invalidated.push(`${name}:invalidate`) });
+	const gate = () => {
+		let open!: () => void;
+		const opened = new Promise<void>((done) => (open = done));
+		return { open, opened };
+	};
+
+	const jobs = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const events: string[] = [];
+	const first = gate();
+	const run = (name: string, gate?: Promise<void>) => async () => {
+		events.push(`${name}:start`);
+		await gate;
+		events.push(`${name}:end`);
+		return name;
+	};
+
+	assert.equal(jobs.get("a", run("a", first.opened), wake(events, "a1")), undefined);
+	assert.equal(jobs.get("a", run("a"), wake(events, "a2")), undefined, "a second caller joins the pending key");
+	assert.equal(jobs.get("b", run("b"), wake(events, "b")), undefined);
+	assert.deepEqual([...jobs.pending.keys()], ["a", "b"]);
+	assert.equal(jobs.pending.get("a")!.size, 2, "both callers' invalidators are kept");
+	assert.deepEqual(events, ["a:start"], "b waits behind the cap");
+
+	first.open();
+	await jobs.idle();
+	assert.deepEqual(events, ["a:start", "a:end", "b:start", "a1:invalidate", "a2:invalidate", "a1:render", "b:end", "b:invalidate", "b:render"]);
+	assert.equal(jobs.get("a", run("a"), wake(events, "late")), "a");
+	assert.deepEqual([...jobs.cache.keys()], ["b", "a"], "a hit moves the key to the young end");
+
+	jobs.put("c", "c");
+	assert.deepEqual([...jobs.cache.keys()], ["a", "c"], "the oldest entry leaves past the limit");
+
+	const crashing = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	crashing.get("x", () => Promise.reject(new Error("boom")), wake([], "x"));
+	await crashing.idle();
+	assert.equal(crashing.cache.get("x"), "crashed", "a rejected job settles as the crash value");
+
+	const throwing = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const woken: string[] = [];
+	throwing.get("p", async () => "p", { requestRender: () => woken.push("p"), onInvalidate: () => { throw new Error("bad wake"); } });
+	throwing.get("q", async () => "q", wake(woken, "q"));
+	await throwing.idle();
+	await new Promise((done) => setTimeout(done, 10));
+	assert.deepEqual([throwing.cache.get("p"), throwing.cache.get("q"), throwing.pending.size], ["p", "q", 0], "a wake that throws strands neither the queue nor idle()");
+
+	const stuck = background<string>({ limit: 2, concurrency: 1, crashed: "crashed" });
+	const never = gate();
+	stuck.get("s", run("s", never.opened), wake([], "s"));
+	await assert.rejects(stuck.idle(20), /still pending/);
+	const waiting = stuck.idle();
+	stuck.clear();
+	await waiting;
+	assert.equal(stuck.pending.size, 0, "clear() resolves the waiters");
+	never.open();
 });
