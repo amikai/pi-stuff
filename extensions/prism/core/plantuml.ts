@@ -18,7 +18,7 @@ export type PlantUmlHooks = {
 }
 
 export const PLANTUML_HINT =
-  'A ```plantuml block (@startuml … @enduml) is rendered by prism as an image on terminals that show images, and stays a note elsewhere. Do not use !include or !includeurl, which are blocked.'
+  'A ```plantuml block (@startuml … @enduml) is rendered by prism as an image on terminals that show images, and stays a note elsewhere. C4-PlantUML works: start with !include <C4/C4_Container> (also C4, C4_Context, C4_Component, C4_Deployment, C4_Dynamic, C4_Sequence) and optionally !theme C4_united from C4-PlantUML/themes. Do not use $sprite. Every other !include and !includeurl is blocked.'
 
 export const plantumlTimeout = { ms: 5000 }
 
@@ -106,19 +106,42 @@ const imageEntry = (bytes: Uint8Array, source: string): PlantUmlEntry => {
   return fitsImage(png) ? { kind: 'image', png, ...size, source } : failure('diagram image is too large')
 }
 
+// The worker serves PlantUML's bundled C4-PlantUML, so a link to any copy of that repository is pointed at the bundle.
+const C4_REPOSITORY = String.raw`https:\/\/raw\.githubusercontent\.com\/[\w.-]+\/C4-PlantUML\/\S+?`
+const C4_REWRITES: [RegExp, string][] = [
+  [new RegExp(String.raw`^(\s*!include)(?:url|(_once|_many))?(\s+)${C4_REPOSITORY}\/(C4(?:_\w+)?)\.puml\s*$`, 'i'), '$1$2$3<C4/$4>'],
+  [new RegExp(String.raw`^(\s*!theme\s+\S+\s+from\s+)(?:${C4_REPOSITORY}\/themes|<C4\/themes>)\/?\s*$`, 'i'), '$1C4-PlantUML/themes'],
+]
+const C4_INCLUDE = /^\s*!include(?:_once|_many)?\s+<C4\//i
+
+// C4's default Person sprite is a bitmap the engine cannot draw, and the outline variant avoids it.
+const C4_OUTLINE = 'SHOW_PERSON_OUTLINE()'
+
+type Prepared = { sent: string; lineOf: (sentLine: number) => number }
+
 // The engine reads a diagram only when the source opens with @start, and reports lines of what it was sent.
-const prepare = (source: string): { sent: string; shift: number } => {
+const prepare = (source: string): Prepared => {
   const trimmed = source.replace(/^(?:[ \t]*\r?\n)+/, '')
-  if (/^@start/i.test(trimmed)) return { sent: trimmed, shift: source.split('\n').length - trimmed.split('\n').length }
-  return { sent: `@startuml\n${source}@enduml\n`, shift: -1 }
+  const wrapped = !/^@start/i.test(trimmed)
+  const offset = wrapped ? 0 : source.split('\n').length - trimmed.split('\n').length + 1
+  const lines = (wrapped ? `@startuml\n${source}@enduml\n` : trimmed)
+    .split('\n')
+    .map(line => C4_REWRITES.reduce((text, [pattern, to]) => text.replace(pattern, to), line))
+  const origin = lines.map((_, i) => Math.max(1, offset + i))
+  const c4 = lines.findIndex(line => C4_INCLUDE.test(line))
+  if (c4 >= 0) {
+    lines.splice(c4 + 1, 0, C4_OUTLINE)
+    origin.splice(c4 + 1, 0, origin[c4]!)
+  }
+  return { sent: lines.join('\n'), lineOf: sentLine => origin[sentLine - 1] ?? origin.at(-1)! }
 }
 
 const render = async (source: string): Promise<PlantUmlEntry> => {
-  const { sent, shift } = prepare(source)
+  const { sent, lineOf } = prepare(source)
   const reply = await ask(sent)
   if ('failed' in reply) return failure(reply.failed)
   if ('png' in reply) return imageEntry(reply.png, source)
-  const place = reply.line === undefined ? '' : ` (line ${Math.max(1, reply.line + shift)})`
+  const place = reply.line === undefined ? '' : ` (line ${lineOf(reply.line)})`
   const message = reply.error.trim().slice(0, MESSAGE_LIMIT)
   return failure(`plantuml error${place}${message === '' ? '' : `: ${message}`}`)
 }

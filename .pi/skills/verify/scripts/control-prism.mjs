@@ -516,6 +516,16 @@ if (cmd === "drive") {
 			"",
 			"```plantuml",
 			"@startuml",
+			"!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml",
+			'Person(user, "User")',
+			'Container(web, "Web", "Go")',
+			'Rel(user, web, "Uses")',
+			"SHOW_LEGEND()",
+			"@enduml",
+			"```",
+			"",
+			"```plantuml",
+			"@startuml",
 			"!include /etc/passwd",
 			"Alice -> Bob : after include",
 			"@enduml",
@@ -534,7 +544,7 @@ if (cmd === "drive") {
 		const text = reply(3000);
 		const textLines = text.render(width);
 		const textPlain = textLines.map(stripAnsi).join("\n");
-		assert.equal(count(textPlain, "plantuml diagrams require an image-capable terminal"), 6, "every block gets the note on a terminal without images");
+		assert.equal(count(textPlain, "plantuml diagrams require an image-capable terminal"), 7, "every block gets the note on a terminal without images");
 		assert.equal(plantuml.plantumlJobs.pending.size, 0, "no render starts without images");
 		assert.ok(!textPlain.includes("│Alice│"), "no text art is drawn");
 
@@ -546,7 +556,7 @@ if (cmd === "drive") {
 		const pngLines = png.render(width);
 		const pngPlain = pngLines.map(stripAnsi).join("\n");
 		const imageIds = new Set([...pngLines.join("\n").matchAll(/\x1b_G[^\x1b]*?\bi=(\d+)/g)].map((m) => m[1]));
-		assert.equal(imageIds.size, 4, "the fenced, unfenced, untagged and class diagrams are kitty images");
+		assert.equal(imageIds.size, 5, "the fenced, unfenced, untagged, class and C4 diagrams are kitty images");
 		assert.ok(pngPlain.includes("plantuml error (line 2): cannot include /etc/passwd"), "a blocked include shows PlantUML's reason");
 		assert.ok(pngPlain.includes("plantuml error (line 2): Syntax Error?"), "a syntax error names its line");
 		resetCapabilitiesCache();
