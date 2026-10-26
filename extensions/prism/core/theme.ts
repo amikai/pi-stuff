@@ -82,7 +82,6 @@ export type Style = {
 	plantuml: boolean;
 	mmdr: boolean;
 	overSsh: boolean;
-	isDark: boolean;
 	cwd: string;
 	home: string;
 };
@@ -129,7 +128,6 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		plantuml: options.plantuml !== false,
 		mmdr: options.mmdr !== false,
 		overSsh: false,
-		isDark: true,
 		cwd: "",
 		home: "",
 	};

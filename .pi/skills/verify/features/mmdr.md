@@ -37,7 +37,7 @@ Preconditions:
 
 ## Gotchas
 
-- tmux cannot show kitty images, so `mmdr` never runs in `plantuml-live`'s tmux pane. The drive instead renders the real `AssistantMessageComponent` under a forced `setCapabilities({ images: "kitty" })`. The redraw after the job settles is the shared `core/background.ts`, which `plantuml-live` proves in tmux.
+- tmux cannot show kitty images, so `mmdr` never runs in a tmux pane. The drive renders the real `AssistantMessageComponent` under a forced `setCapabilities({ images: "kitty" })`. The redraw after the job settles is the shared `core/background.ts`, which `test/prism.test.ts` test 9 covers for PlantUML.
 - The picture is mmdr's light theme on an opaque white background in every pi theme.
 - `mmdr` exits 0 for almost any input, so prism reads its `--dumpLayout` file to decline a misread header, an empty body, ids that hold syntax and, in a flowchart, ids that are not tokens of the source. A broken body inside a kind `mmdr` detects correctly, such as an empty timeline card or a mindmap node labelled `-->`, still draws.
 - A render has 5 s, one runs at a time, and a PNG over 3 MiB is declined. Results, declines included, are cached for the session.

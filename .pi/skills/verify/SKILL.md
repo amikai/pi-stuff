@@ -73,6 +73,5 @@ Always confirm that `artifacts/verify/$RUN_ID/` still exists after `cleanup`.
 ## Helpers
 
 - `.pi/skills/verify/scripts/control-prism.mjs` — executable Node harness supporting `launch`, `doctor`, `drive`, and `cleanup`.
-- The `plantuml` and `plantuml-live` features need `plantuml` on `PATH`. `plantuml-live` also needs `tmux`, and runs `test/prism.sh` in a tmux server on its own socket, which it stops before it exits.
 - The `mmdr` feature needs `mmdr` on `PATH`. It writes the decoded timeline picture as `mmdr-timeline.png` beside its `.ansi`, `.txt` and `.json` proof.
 - The `quicklook` feature needs macOS outside SSH, the Xcode command line tools, and a terminal that may record the screen. It runs `test/prism-quicklook.test.ts`, which opens real Quick Look panels on the screen for about 40 s and drives them through `test/quicklook-probe.swift`, injected into the helper with `DYLD_INSERT_LIBRARIES`. Its proof is `.png` screenshots and `.json` reports, not `.ansi` and `.txt`.
