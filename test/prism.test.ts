@@ -1700,9 +1700,12 @@ test("31. every way mmdr cannot draw keeps the text note and the source, and a m
 	assert.deepEqual(fake.leftovers(), [], "every job directory is removed, failures included");
 
 	const before = fake.runs();
-	const long = await noteOf(timeline("x".repeat(20000)));
-	assert.ok(long.plain.includes(give) && !long.plain.includes("mmdr"), "a huge source keeps main's note and is not sent");
+	const long = await noteOf(timeline("x".repeat(100000)));
+	assert.ok(long.plain.includes(give) && !long.plain.includes("mmdr"), "a source over 100000 characters keeps main's note and is not sent");
 	assert.equal(fake.runs(), before, "and starts no run");
+	const large = await noteOf(timeline("x".repeat(99000)));
+	assert.equal(large.images, 1, "a source under the cap draws");
+	assert.equal(fake.runs(), before + 1);
 
 	fake.restore();
 	const absent = mmdrFixture({ installed: false });

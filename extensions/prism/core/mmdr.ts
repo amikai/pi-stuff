@@ -12,7 +12,7 @@ export type Picture = { state: 'declined' } | { state: 'pending' } | { state: 'd
 type Settled = Exclude<Picture, { state: 'pending' }>
 
 const TIMEOUT_MS = 5000
-const MAX_SOURCE = 20000
+const MAX_SOURCE = 100000
 const DECLINED: Settled = { state: 'declined' }
 
 // mmdr holds the whole raster in memory: a 300-edge chart peaks near 1 GB for 4 s, so jobs run one at a time.
