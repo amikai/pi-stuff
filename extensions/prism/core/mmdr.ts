@@ -70,7 +70,7 @@ export type Layout = { kind: string; width: number; height: number; nodes: strin
 
 /** Parses mmdr's layout JSON at the boundary. Null when the text is not the shape mmdr 0.2.2 writes. */
 export const parseLayout = (text: string): Layout | null => {
-  let json: any
+  let json: Record<string, unknown> | null
   try {
     json = JSON.parse(text)
   } catch {
@@ -170,8 +170,6 @@ const render = async (bin: string, source: string, word: string): Promise<Settle
     const png = (await readFile(file)).toString('base64')
     const size = pngSize(png)
     return size && size.width > 0 && size.height > 0 ? { state: 'drawn', png, ...size } : failed('failed')
-  } catch {
-    return failed('failed')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
