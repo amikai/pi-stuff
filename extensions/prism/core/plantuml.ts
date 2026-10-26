@@ -32,7 +32,7 @@ const failure = (note: string): PlantUmlEntry => ({ kind: 'error', note })
 
 export const plantumlJobs = background<PlantUmlEntry>({ limit: 100, concurrency: 1, crashed: failure('plantuml worker failed') })
 
-// PlantUML's pipe mode matches markers with an untrimmed startsWith, so an indented marker reads as diagram content.
+// PlantUML matches markers with an untrimmed startsWith, so an indented marker reads as diagram content.
 const normalize = (lines: string[]): string =>
   `${lines.map(line => (/^\s*@(start|end)/i.test(line) ? line.trimStart() : line)).join('\n')}\n`
 
