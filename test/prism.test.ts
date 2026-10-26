@@ -1529,7 +1529,7 @@ const hugePng = (width: number, height: number, bytes: number) => {
 	return png;
 };
 
-function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer } = {}) {
+function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; rsvg?: boolean; png?: Buffer } = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "prism-fake-mmdr-"));
 	const bin = join(dir, "bin");
 	mkdirSync(bin);
@@ -1538,12 +1538,16 @@ function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: 
 	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 3 * 1024 * 1024 + 1));
 	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-mmdr.sh"), join(bin, "mmdr"));
 	chmodSync(join(bin, "mmdr"), 0o755);
+	if (options.rsvg !== false) {
+		copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-rsvg-convert.sh"), join(bin, "rsvg-convert"));
+		chmodSync(join(bin, "rsvg-convert"), 0o755);
+	}
 	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MMDR_DIR", "SSH_CONNECTION", "SSH_TTY"].map((k) => [k, process.env[k]]));
 	delete process.env.SSH_CONNECTION;
 	delete process.env.SSH_TTY;
 	process.env.FAKE_MMDR_DIR = dir;
 	process.env.TMPDIR = dir;
-	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
+	process.env.PATH = options.installed === false ? join(dir, "empty") : options.rsvg === false ? bin : `${bin}:${saved.PATH}`;
 	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
 	mmdrJobs.clear();
 	const read = (name: string) => {
@@ -1558,6 +1562,8 @@ function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: 
 		calls: () => read("calls.log").trim().split("\n").filter(Boolean),
 		runs: () => read("calls.log").split("\n").filter((line) => line === "start").length,
 		stdin: () => read("last-stdin.txt"),
+		args: () => read("last-args.txt").trim(),
+		rsvgArgs: () => read("rsvg-args.txt").trim(),
 		cwd: () => read("last-cwd.txt").trim(),
 		leftovers: () => readdirSync(dir).filter((name) => name.startsWith("prism-mmdr-")),
 		restore: () => {
@@ -1984,6 +1990,64 @@ test("42. real mmdr draws every /prism demo sample as a picture", { skip: hasMmd
 		assert.equal(mmdrPicture(source, wake).state, "pending", headerWord(source));
 		await mmdrJobs.idle();
 		assert.equal(mmdrPicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
+	}
+	mmdrJobs.clear();
+});
+
+const drawnBy = async (source: string) => {
+	const wake = { requestRender: () => {} };
+	assert.equal(mmdrPicture(source, wake).state, "pending");
+	await mmdrJobs.idle();
+	return mmdrPicture(source, wake);
+};
+const pngWidth = (png: string) => Buffer.from(png, "base64").readUInt32BE(16);
+
+test("43. with rsvg-convert, mmdr writes SVG and rsvg-convert draws it at 2x, under librsvg's side limit, at the 1x size on screen", async () => {
+	const fake = mmdrFixture({ png: pngOf(320, 280) });
+	cleanupFn = fake.restore;
+
+	const picture = await drawnBy("timeline\n  2020 : start");
+	assert.match(fake.args(), /-o \S+\/d\.svg --dumpLayout/, "mmdr writes SVG");
+	assert.doesNotMatch(fake.args(), /-e png/);
+	assert.match(fake.rsvgArgs(), /^-z 2 -o \S+\/d\.png \S+\/d\.svg$/, "rsvg-convert draws the SVG at 2x");
+	assert.ok(picture.state === "drawn");
+	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 160, height: 140 }, "the picture keeps the size of mmdr's 1x layout");
+
+	await drawnBy("timeline\n  2020 : fake:tall");
+	assert.match(fake.rsvgArgs(), /^-z 0\.8 /, "a 40000 px tall layout zooms to 32000 px");
+
+	assert.deepEqual(await drawnBy("timeline\n  2020 : fake:rsvg-fail"), { state: "declined" }, "a failed rsvg-convert keeps the old note");
+	assert.deepEqual(fake.leftovers(), []);
+});
+
+test("44. without rsvg-convert, mmdr writes its own 1x PNG", async () => {
+	const fake = mmdrFixture({ png: pngOf(320, 280), rsvg: false });
+	cleanupFn = fake.restore;
+
+	const picture = await drawnBy("timeline\n  2020 : start");
+	assert.match(fake.args(), /-e png -o \S+\/d\.png --dumpLayout/);
+	assert.equal(fake.rsvgArgs(), "", "rsvg-convert never runs");
+	assert.ok(picture.state === "drawn");
+	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 320, height: 280 });
+});
+
+const hasRsvg = (() => {
+	try {
+		execFileSync("which", ["rsvg-convert"]);
+		return true;
+	} catch {
+		return false;
+	}
+})();
+
+test("45. real rsvg-convert gives every /prism demo sample twice the pixels of mmdr's own PNG, in the same columns", { skip: hasMmdr && hasRsvg ? false : "mmdr or rsvg-convert is not on PATH" }, async () => {
+	mmdrJobs.clear();
+	for (const source of demoKinds().filter((source) => MMDR_KINDS.includes(headerWord(source) as never))) {
+		const own = spawnSync("mmdr", ["-i", "-", "-e", "png", "-o", "/dev/stdout"], { input: source }).stdout.toString("base64");
+		const picture = await drawnBy(source);
+		assert.ok(picture.state === "drawn", headerWord(source));
+		assert.ok(Math.abs(pngWidth(picture.png) - 2 * pngWidth(own)) <= 2, `${headerWord(source)}: ${pngWidth(picture.png)} px against mmdr's ${pngWidth(own)}`);
+		assert.ok(Math.abs(picture.width - pngWidth(own)) <= 1, `${headerWord(source)} fills the columns mmdr's own PNG did`);
 	}
 	mmdrJobs.clear();
 });

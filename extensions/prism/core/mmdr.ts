@@ -14,6 +14,10 @@ type Settled = Exclude<Picture, { state: 'pending' }>
 const TIMEOUT_MS = 5000
 const MAX_SOURCE = 100000
 const MAX_PICTURE_BYTES = 3 * 1024 * 1024
+// mmdr's own PNG is 1x, which a Retina terminal stretches until it blurs, so rsvg-convert draws mmdr's SVG at 2x instead.
+const ZOOM = 2
+// librsvg refuses an image over 32767 px a side.
+const RSVG_MAX_PX = 32000
 const DECLINED: Settled = { state: 'declined' }
 
 // mmdr holds the whole raster in memory: a 300-edge chart peaks near 1 GB for 4 s, so jobs run one at a time.
@@ -38,15 +42,16 @@ export const MMDR_KINDS = [
 
 export const MMDR_HINT = `Other \`\`\`mermaid kinds (${MMDR_KINDS.join(', ')}) are drawn by prism as an image on a white background, at most about 20 terminal rows tall, so keep them small. Flowchart node ids use letters, digits and underscores, not hyphens.`
 
-const found = new Map<string | undefined, string | null>()
+const found = new Map<string, string | null>()
 
-export const mmdrPath = (): string | null => {
+const onPath = (name: string): string | null => {
   const path = process.env.PATH
-  if (found.has(path)) return found.get(path)!
+  const key = `${name}\0${path}`
+  if (found.has(key)) return found.get(key)!
   let bin: string | null = null
   for (const dir of (path ?? '').split(delimiter)) {
     if (dir === '') continue
-    const file = resolve(dir, 'mmdr')
+    const file = resolve(dir, name)
     try {
       accessSync(file, constants.X_OK)
       if (!statSync(file).isFile()) continue
@@ -54,9 +59,11 @@ export const mmdrPath = (): string | null => {
       break
     } catch {}
   }
-  found.set(path, bin)
+  found.set(key, bin)
   return bin
 }
+
+export const mmdrPath = (): string | null => onPath('mmdr')
 
 const FRONT_MATTER = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/
 
@@ -118,9 +125,9 @@ export const judge = (word: string, layout: Layout, source: string): Judgment =>
   return 'ok'
 }
 
-const run = (bin: string, source: string, dir: string): Promise<boolean> =>
+const run = (bin: string, args: string[], dir: string, input = ''): Promise<boolean> =>
   new Promise(done => {
-    const child = spawn(bin, ['-i', '-', '-e', 'png', '-o', join(dir, 'd.png'), '--dumpLayout', join(dir, 'l.json')], { cwd: dir, stdio: ['pipe', 'ignore', 'ignore'] })
+    const child = spawn(bin, args, { cwd: dir, stdio: ['pipe', 'ignore', 'ignore'] })
     let settled = false
     const finish = (ok: boolean, kill = false) => {
       if (settled) return
@@ -133,20 +140,25 @@ const run = (bin: string, source: string, dir: string): Promise<boolean> =>
     child.on('error', () => finish(false))
     child.stdin.on('error', () => {})
     child.on('close', code => finish(code === 0))
-    child.stdin.end(source)
+    child.stdin.end(input)
   })
 
 const render = async (bin: string, source: string, word: string): Promise<Settled> => {
   const dir = await mkdtemp(join(tmpdir(), 'prism-mmdr-'))
   try {
-    if (!(await run(bin, source, dir))) return DECLINED
+    const rsvg = onPath('rsvg-convert')
+    const svg = join(dir, 'd.svg')
+    const file = join(dir, 'd.png')
+    const out = rsvg ? ['-o', svg] : ['-e', 'png', '-o', file]
+    if (!(await run(bin, ['-i', '-', ...out, '--dumpLayout', join(dir, 'l.json')], dir, source))) return DECLINED
     const layout = parseLayout(await readFile(join(dir, 'l.json'), 'utf8').catch(() => ''))
     if (layout === null || judge(word, layout, source) !== 'ok') return DECLINED
-    const file = join(dir, 'd.png')
+    const zoom = rsvg ? Math.min(ZOOM, RSVG_MAX_PX / Math.max(layout.width, layout.height)) : 1
+    if (rsvg && !(await run(rsvg, ['-z', String(zoom), '-o', file, svg], dir))) return DECLINED
     if ((await stat(file)).size > MAX_PICTURE_BYTES) return DECLINED
     const png = (await readFile(file)).toString('base64')
     const size = pngSize(png)
-    return size && size.width > 0 && size.height > 0 ? { state: 'drawn', png, ...size } : DECLINED
+    return size && size.width > 0 && size.height > 0 ? { state: 'drawn', png, width: size.width / zoom, height: size.height / zoom } : DECLINED
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
