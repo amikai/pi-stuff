@@ -41,7 +41,7 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 		swiftc = "/usr/bin/swiftc",
 		helperSource = join(dirname(fileURLToPath(import.meta.url)), "quicklook.swift"),
 		helperDir = join(getAgentDir(), "prism"),
-		dir = join(tmpdir(), "prism-plantuml"),
+		dir = join(tmpdir(), "prism-preview"),
 	} = options;
 	let helper: Promise<string | null> | null = null;
 	let building = false;
@@ -133,7 +133,7 @@ function compile(swiftc: string, source: string, bin: string): Promise<void> {
 }
 
 function previewFile(dir: string, png: Uint8Array): string {
-	const file = join(dir, `plantuml-${sha12(png)}.png`);
+	const file = join(dir, `diagram-${sha12(png)}.png`);
 	if (existsSync(file)) return file;
 	mkdirSync(dir, { recursive: true, mode: 0o700 });
 	const temp = `${file}.${process.pid}.tmp`;
