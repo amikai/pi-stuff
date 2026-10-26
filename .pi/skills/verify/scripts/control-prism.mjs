@@ -516,7 +516,7 @@ if (cmd === "drive") {
 			"",
 			"```plantuml",
 			"@startuml",
-			"!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml",
+			"!include <C4/C4_Container>",
 			'Person(user, "User")',
 			'Container(web, "Web", "Go")',
 			'Rel(user, web, "Uses")',
@@ -556,7 +556,8 @@ if (cmd === "drive") {
 		const pngLines = png.render(width);
 		const pngPlain = pngLines.map(stripAnsi).join("\n");
 		const imageIds = new Set([...pngLines.join("\n").matchAll(/\x1b_G[^\x1b]*?\bi=(\d+)/g)].map((m) => m[1]));
-		assert.equal(imageIds.size, 5, "the fenced, unfenced, untagged, class and C4 diagrams are kitty images");
+		assert.equal(imageIds.size, 4, "the fenced, unfenced, untagged and class diagrams are kitty images");
+		assert.ok(pngPlain.includes("plantuml error (line 2): cannot include <C4/C4_Container>"), "a built-in library include is refused too");
 		assert.ok(pngPlain.includes("plantuml error (line 2): cannot include /etc/passwd"), "a blocked include shows PlantUML's reason");
 		assert.ok(pngPlain.includes("plantuml error (line 2): Syntax Error?"), "a syntax error names its line");
 		resetCapabilitiesCache();

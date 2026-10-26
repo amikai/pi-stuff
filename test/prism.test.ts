@@ -783,14 +783,6 @@ test("13. a blocked plantuml include shows PlantUML's reason", async () => {
 	assert.ok((await noteOf("!includeurl https://example.com/a.puml")).includes("plantuml error (line 3): cannot include https://example.com/a.puml"), "a URL include is refused too");
 	assert.ok((await noteOf("!include <awslib/AWSCommon>")).includes("plantuml error (line 3): cannot include <awslib/AWSCommon>"), "a stdlib file other than C4 is refused");
 	assert.ok((await noteOf("!theme x from /etc")).includes("plantuml error (line 3): Cannot load theme x in /etc"), "a theme folder on disk is refused");
-	const lookalikes = [
-		"https://example.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml",
-		"https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/other.puml",
-		"https://raw.githubusercontent.com/plantuml-stdlib/PlantUML/master/C4_Container.puml",
-	];
-	for (const url of lookalikes) {
-		assert.ok((await noteOf(`!includeurl ${url}`)).includes(`plantuml error (line 3): cannot include ${url}`), `${url} is not rewritten`);
-	}
 	assert.equal(cachedImages().length, 0, "nothing was drawn");
 });
 
@@ -1962,15 +1954,12 @@ const C4_FORK = "https://raw.githubusercontent.com/gnodux/C4-PlantUML/master/C4_
 
 async function settled(markdown: string) {
 	const comp = reply(markdown);
-	comp.render(100);
+	comp.render(200);
 	await plantumlJobs.idle();
-	return { plain: stripAnsi(comp.render(100).join("\n")), images: cachedImages().length };
+	return { plain: stripAnsi(comp.render(200).join("\n")), images: cachedImages().length };
 }
 
-const c4Body = (include: string, extra = "") =>
-	`${include}\n${extra}\nPerson(user, "User", "Reads the page")\nContainer(web, "Web", "Go", "Serves it")\nRel(user, web, "Uses")\nSHOW_LEGEND()`;
-
-test("46. a C4-PlantUML diagram written with a raw.githubusercontent URL of any owner and ref draws, Person and legend included", async () => {
+test("46. includes of PlantUML's built-in libraries are refused, C4 included", async () => {
 	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
@@ -1979,24 +1968,15 @@ test("46. a C4-PlantUML diagram written with a raw.githubusercontent URL of any 
 	};
 	await h.emit("session_start");
 
-	const includes = [
-		`!include ${C4_RAW}/master/C4_Container.puml`,
-		`!include ${C4_RAW}/v2.14.0/C4_Container.puml`,
-		`!include ${C4_RAW}/some-branch/C4_Container.puml`,
-		`!include_once ${C4_RAW}/master/C4_Container.puml`,
-		`!includeurl ${C4_RAW}/master/C4_Container.puml`,
-		`!include ${C4_FORK}`,
-		"!include <C4/C4_Container>",
-	];
-	for (const include of includes) {
-		const { plain, images } = await settled(diagram("c4", c4Body(include)));
-		assert.ok(!plain.includes("plantuml error"), `${include}: ${plain}`);
-		assert.equal(images, 1, `${include} draws`);
+	for (const name of ["<C4/C4_Container>", "<C4/C4_Context>", "<C4/C4>"]) {
+		const { plain, images } = await settled(diagram("builtin", `!include ${name}\nPerson(user, "User")`));
+		assert.ok(plain.includes(`plantuml error (line 3): cannot include ${name}`), `${name}: ${plain}`);
+		assert.equal(images, 0, `${name} draws nothing`);
 		plantumlJobs.clear();
 	}
 });
 
-test("47. C4 themes draw from the C4-PlantUML URL of any owner, from <C4/themes>, and from the bundled folder name", async () => {
+test("47. C4-PlantUML URLs and C4 themes are refused with PlantUML's reason", async () => {
 	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
@@ -2005,25 +1985,21 @@ test("47. C4 themes draw from the C4-PlantUML URL of any owner, from <C4/themes>
 	};
 	await h.emit("session_start");
 
-	const include = `!include ${C4_FORK}`;
-	const themes = [
-		`!theme C4_united from ${C4_RAW}/master/themes`,
-		`!theme C4_united from ${C4_RAW}/v2.14.0/themes/`,
-		"!theme C4_blue from https://raw.githubusercontent.com/gnodux/C4-PlantUML/master/themes",
-		"!theme C4_united from <C4/themes>",
-		"!theme C4_united from C4-PlantUML/themes",
+	const refused = [
+		[`!include ${C4_RAW}/master/C4_Container.puml`, `cannot include ${C4_RAW}/master/C4_Container.puml`],
+		[`!includeurl ${C4_FORK}`, `cannot include ${C4_FORK}`],
+		[`!theme C4_united from ${C4_RAW}/master/themes`, `Cannot load theme C4_united in ${C4_RAW}/master/themes`],
+		["!theme C4_united from <C4/themes>", "Cannot load theme C4_united in <C4/themes>"],
 	];
-	for (const theme of themes) {
-		for (const body of [`${include}\n${theme}`, `${theme}\n${include}`]) {
-			const { plain, images } = await settled(diagram("theme", c4Body(body)));
-			assert.ok(!plain.includes("plantuml error"), `${theme}: ${plain}`);
-			assert.equal(images, 1, `${theme} draws`);
-			plantumlJobs.clear();
-		}
+	for (const [line, reason] of refused) {
+		const { plain, images } = await settled(diagram("refused", line));
+		assert.ok(plain.includes(`plantuml error (line 3): ${reason}`), `${line}: ${plain}`);
+		assert.equal(images, 0, `${line} draws nothing`);
+		plantumlJobs.clear();
 	}
 });
 
-test("48. an error after or before the C4 include names the line of the source, with and without @startuml markers", async () => {
+test("48. an error names the line of the source, with and without @startuml markers and after blank lines", async () => {
 	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
@@ -2032,27 +2008,18 @@ test("48. an error after or before the C4 include names the line of the source, 
 	};
 	await h.emit("session_start");
 
-	const include = `!include ${C4_RAW}/master/C4_Container.puml`;
 	const noteOf = async (markdown: string) => (await settled(markdown)).plain;
 	assert.ok(
-		(await noteOf(diagram("after", `${include}\nPerson(user, "User")\nfoo bar baz`))).includes("plantuml error (line 5): Syntax Error?"),
-		"markers, a comment, the include and Person put the fault on line 5",
+		(await noteOf(diagram("markers", "Alice -> Bob\nfoo bar baz"))).includes("plantuml error (line 4): Syntax Error?"),
+		"markers, a comment and one good line put the fault on line 4",
 	);
 	assert.ok(
-		(await noteOf(diagram("right after", `${include}\nfoo bar baz`))).includes("plantuml error (line 4): Syntax Error?"),
-		"the line right after the include is not shifted",
+		(await noteOf(["```plantuml", "' bare", "Alice -> Bob", "foo bar baz", "```"].join("\n"))).includes("plantuml error (line 3): Syntax Error?"),
+		"the @startuml prism adds is not counted",
 	);
 	assert.ok(
-		(await noteOf(diagram("before", `foo bar baz\n${include}`))).includes("plantuml error (line 3): Syntax Error?"),
-		"a fault before the include keeps its line",
-	);
-	assert.ok(
-		(await noteOf(["```plantuml", "' bare", include, "Person(user, \"User\")", "foo bar baz", "```"].join("\n"))).includes("plantuml error (line 4): Syntax Error?"),
-		"the markers prism adds and the outline it injects cancel out",
-	);
-	assert.ok(
-		(await noteOf(["```plantuml", "", "", "@startuml", include, "foo bar baz", "@enduml", "```"].join("\n"))).includes("plantuml error (line 5): Syntax Error?"),
-		"blank lines before @startuml count along with the injected line",
+		(await noteOf(["```plantuml", "", "", "@startuml", "Alice -> Bob", "foo bar baz", "@enduml", "```"].join("\n"))).includes("plantuml error (line 5): Syntax Error?"),
+		"blank lines before @startuml are counted",
 	);
 });
 
