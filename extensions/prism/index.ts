@@ -69,6 +69,7 @@ import {
 } from "./core/latex.ts";
 import { parse, type Block } from "./core/markdown.ts";
 import { drawDiagrams } from "./core/mermaid.ts";
+import { drawMmdr } from "./core/mmdr.ts";
 import { drawPlantUml, PLANTUML_HINT } from "./core/plantuml.ts";
 import {
 	drawMath,
@@ -914,6 +915,13 @@ export default function prismExtension(
 				onInvalidate: options?.onInvalidate,
 			});
 			for (const [i, item] of plantuml) drawn.set(i, item);
+		}
+		if (activeStyle.mermaid && getCapabilities().images) {
+			const mmdr = drawMmdr(EL, blocks, columns - markerRoom(activeStyle), drawn, {
+				requestRender,
+				onInvalidate: options?.onInvalidate,
+			});
+			for (const [i, item] of mmdr) drawn.set(i, item);
 		}
 		const math = typesetFormulasSync(blocks);
 		const pictures = loadPicturesSync(blocks);
