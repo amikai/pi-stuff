@@ -91,30 +91,7 @@ Results, including failures, are cached for the session. Edit the source to retr
 
 ## PlantUML engine
 
-[`core/vendor/plantuml.js`](core/vendor/plantuml.js) is a generated file, 8.4 MB of ESM. [`core/vendor/plantuml/build.sh`](core/vendor/plantuml/build.sh) makes it, and [`core/vendor/plantuml/worker.js`](core/vendor/plantuml/worker.js) is the worker source that `core/plantuml.ts` starts.
-
-The engine is PlantUML itself, compiled to JavaScript. It comes from a [PlantUML source checkout](https://github.com/plantuml/plantuml) at commit `e6c3adc2be7a50daa5f04b2b0f9d24928aa08efa`, which reports `PlantUML version 1.2026.10beta1 / e6c3adc`. Its subproject `plantuml-mcp-js` has a headless entry, `net.sourceforge.plantuml.teavm.js.headless.PlantUMLHeadless`, which TeaVM compiles with:
-
-```sh
-./gradlew :plantuml-mcp-js:npmPackage -Pfast
-```
-
-`build.sh` first makes a throwaway `git worktree` of the checkout's `HEAD`, so the checkout is untouched and its uncommitted changes are ignored. It applies [`core/vendor/plantuml/patches/*.patch`](core/vendor/plantuml/patches) to that worktree. Today there is one, `space-width.patch`, which sets the width of U+0020 to 44 in `UnicodeFontWidthSansSerif`. The TeaVM engine measures text with that table, and upstream has 0 for the space, so wrapped words ran together. `build.sh` then runs the command above in the worktree (`-Pfast` builds only the GPL jar, which is the license this bundle carries) and bundles the result with esbuild 0.28.2 into the single file. The bundle holds:
-
-- the compiled engine, `engine.js`,
-- `worker.js`, which loads the engine and the fonts, serves the bundled C4 library and its themes to the engine and declines every other file, paints the SVG's CSS background, which `resvg` ignores, behind the picture, and answers `{ id, source }` messages with `{ id, png }` or `{ id, error, line }`,
-- PlantUML's `src/main/teavm/generated/themes.js`,
-- PlantUML's `src/main/teavm/stdlib/c4.min.js`, the C4-PlantUML v2.14.0 library, as text,
-- `@viz-js/viz` 3.31.0, which is Graphviz compiled to WebAssembly and does the layout,
-- `@resvg/resvg-wasm` 2.6.2, which turns the SVG into a PNG at twice its size.
-
-To rebuild, install JDK 17 or later and Node, check out PlantUML at the commit above, and run:
-
-```sh
-extensions/prism/core/vendor/plantuml/build.sh <plantuml-checkout>
-```
-
-The Gradle build takes about 2.5 minutes. `package.json` and `package-lock.json` in `core/vendor/plantuml/` pin the npm packages, so only the PlantUML commit changes between builds. The first line of `plantuml.js` records the version and commit it was built from.
+[`core/vendor/plantuml.js`](core/vendor/plantuml.js) is PlantUML compiled to JavaScript and bundled with Graphviz, resvg, and the C4 library into one file. [`core/vendor/plantuml/README.md`](core/vendor/plantuml/README.md) says where it comes from, how to rebuild it, and which patches it carries.
 
 ## Testing and verification
 

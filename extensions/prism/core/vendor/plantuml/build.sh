@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rebuilds ../plantuml.js from a PlantUML source checkout. See extensions/prism/README.md, "PlantUML engine".
+# Rebuilds ../plantuml.js from a PlantUML source checkout. See README.md in this folder.
 # Usage: build.sh <plantuml-checkout>
 set -euo pipefail
 
