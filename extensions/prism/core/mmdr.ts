@@ -1,35 +1,42 @@
 import { spawn } from 'node:child_process'
 import { accessSync, constants, statSync } from 'node:fs'
-import { mkdtemp, open, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
 import { background } from './background.ts'
 import type { Wake } from './background.ts'
-import { MAX_IMAGE_BYTES, pngSize } from './latex.ts'
+import { pngSize } from './latex.ts'
 
-export type Picture =
-  | { state: 'declined' }
-  | { state: 'pending' }
-  | { state: 'drawn'; png: string; width: number; height: number }
-  | { state: 'failed'; reason: FailureReason }
-
-export type FailureReason =
-  | 'timed out after 5 s'
-  | 'misread it'
-  | 'found nothing to draw'
-  | 'skipped a source over 20000 chars'
-  | `image is ${number}×${number} px, over the 2 MiB limit`
-  | 'failed'
+export type Picture = { state: 'declined' } | { state: 'pending' } | { state: 'drawn'; png: string; width: number; height: number }
 
 type Settled = Exclude<Picture, { state: 'pending' }>
 
 const TIMEOUT_MS = 5000
-const MAX_SOURCE = 20000
+const MAX_SOURCE = 100000
+const MAX_PICTURE_BYTES = 3 * 1024 * 1024
 const DECLINED: Settled = { state: 'declined' }
-const failed = (reason: FailureReason): Settled => ({ state: 'failed', reason })
 
 // mmdr holds the whole raster in memory: a 300-edge chart peaks near 1 GB for 4 s, so jobs run one at a time.
-export const mmdrJobs = background<Settled>({ limit: 100, concurrency: 1, crashed: failed('failed') })
+export const mmdrJobs = background<Settled>({ limit: 100, concurrency: 1, crashed: DECLINED })
+
+export const MMDR_KINDS = [
+  'timeline',
+  'mindmap',
+  'gitGraph',
+  'journey',
+  'quadrantChart',
+  'sankey-beta',
+  'C4Context',
+  'architecture-beta',
+  'block-beta',
+  'kanban',
+  'packet-beta',
+  'radar-beta',
+  'treemap-beta',
+  'requirementDiagram',
+] as const
+
+export const MMDR_HINT = `Other \`\`\`mermaid kinds (${MMDR_KINDS.join(', ')}) are drawn by prism as an image on a white background, at most about 20 terminal rows tall, so keep them small. Flowchart node ids use letters, digits and underscores, not hyphens.`
 
 const found = new Map<string | undefined, string | null>()
 
@@ -60,7 +67,7 @@ export const mmdrPicture = (untagged: string, wake: Wake): Picture => {
   if (word === '') return DECLINED
   const bin = mmdrPath()
   if (bin === null) return DECLINED
-  if (untagged.length > MAX_SOURCE) return failed('skipped a source over 20000 chars')
+  if (untagged.length > MAX_SOURCE) return DECLINED
   return mmdrJobs.get(untagged, () => render(bin, untagged, word), wake) ?? { state: 'pending' }
 }
 
@@ -111,56 +118,35 @@ export const judge = (word: string, layout: Layout, source: string): Judgment =>
   return 'ok'
 }
 
-type Run = 'ok' | 'timeout' | 'failed'
-
-const run = (bin: string, source: string, dir: string): Promise<Run> =>
+const run = (bin: string, source: string, dir: string): Promise<boolean> =>
   new Promise(done => {
     const child = spawn(bin, ['-i', '-', '-e', 'png', '-o', join(dir, 'd.png'), '--dumpLayout', join(dir, 'l.json')], { cwd: dir, stdio: ['pipe', 'ignore', 'ignore'] })
     let settled = false
-    const finish = (result: Run, kill = false) => {
+    const finish = (ok: boolean, kill = false) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       if (kill) child.kill('SIGKILL')
-      done(result)
+      done(ok)
     }
-    const timer = setTimeout(() => finish('timeout', true), TIMEOUT_MS)
-    child.on('error', () => finish('failed'))
+    const timer = setTimeout(() => finish(false, true), TIMEOUT_MS)
+    child.on('error', () => finish(false))
     child.stdin.on('error', () => {})
-    child.on('close', code => finish(code === 0 ? 'ok' : 'failed'))
+    child.on('close', code => finish(code === 0))
     child.stdin.end(source)
   })
-
-const headerSize = async (file: string) => {
-  const handle = await open(file, 'r')
-  try {
-    const head = Buffer.alloc(24)
-    await handle.read(head, 0, 24, 0)
-    return pngSize(head.toString('base64'))
-  } finally {
-    await handle.close()
-  }
-}
 
 const render = async (bin: string, source: string, word: string): Promise<Settled> => {
   const dir = await mkdtemp(join(tmpdir(), 'prism-mmdr-'))
   try {
-    const result = await run(bin, source, dir)
-    if (result === 'timeout') return failed('timed out after 5 s')
-    if (result === 'failed') return failed('failed')
+    if (!(await run(bin, source, dir))) return DECLINED
     const layout = parseLayout(await readFile(join(dir, 'l.json'), 'utf8').catch(() => ''))
-    if (layout === null) return failed('failed')
-    const judgment = judge(word, layout, source)
-    if (judgment === 'refused') return DECLINED
-    if (judgment !== 'ok') return failed(judgment)
+    if (layout === null || judge(word, layout, source) !== 'ok') return DECLINED
     const file = join(dir, 'd.png')
-    if ((await stat(file)).size > MAX_IMAGE_BYTES) {
-      const size = await headerSize(file)
-      return failed(size ? `image is ${size.width}×${size.height} px, over the 2 MiB limit` : 'failed')
-    }
+    if ((await stat(file)).size > MAX_PICTURE_BYTES) return DECLINED
     const png = (await readFile(file)).toString('base64')
     const size = pngSize(png)
-    return size && size.width > 0 && size.height > 0 ? { state: 'drawn', png, ...size } : failed('failed')
+    return size && size.width > 0 && size.height > 0 ? { state: 'drawn', png, ...size } : DECLINED
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

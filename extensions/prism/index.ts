@@ -69,6 +69,7 @@ import {
 } from "./core/latex.ts";
 import { parse, type Block } from "./core/markdown.ts";
 import { drawDiagrams } from "./core/mermaid.ts";
+import { MMDR_HINT, mmdrPath } from "./core/mmdr.ts";
 import { drawPlantUml, PLANTUML_HINT } from "./core/plantuml.ts";
 import {
 	drawMath,
@@ -136,6 +137,7 @@ const DEFAULT_OPTIONS: PrismOptions = {
 	diagramHints: true,
 	latex: false,
 	plantuml: true,
+	mmdr: true,
 };
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
@@ -228,13 +230,17 @@ function detectTerminalFromEnv(env: NodeJS.ProcessEnv = process.env): Terminal |
 	return null;
 }
 
+const detectSsh = (env: NodeJS.ProcessEnv = process.env): boolean => Boolean(env.SSH_CONNECTION || env.SSH_TTY);
+
 function detectHtmlClipboardBackend(env: NodeJS.ProcessEnv = process.env): ClipboardBackend | null {
-	if (env.SSH_CONNECTION || env.SSH_TTY) return null;
+	if (detectSsh(env)) return null;
 	if (env.OS === "Windows_NT" || process.platform === "win32") return "windows";
 	if (process.platform === "darwin" && existsSync("/usr/bin/osascript")) return "macos";
 	if (env.WAYLAND_DISPLAY || env.DISPLAY) return "linux";
 	return null;
 }
+
+const mmdrEnabled = (style: Style): boolean => style.mmdr && !style.overSsh;
 
 function detectTerminalEnv(env: NodeJS.ProcessEnv = process.env): TerminalEnv {
 	return {
@@ -254,11 +260,11 @@ function applyTerminalCapabilities(style: Style, cwd: string): Terminal | null {
 	style.home = homedir();
 	style.htmlCopy = detectHtmlClipboardBackend();
 
-	const overSsh = Boolean(process.env.SSH_CONNECTION || process.env.SSH_TTY);
+	style.overSsh = detectSsh();
 	const hyperlinks = getCapabilities().hyperlinks || drawsHyperlinks(detectTerminalEnv());
 	style.httpLinks = hyperlinks;
 	style.editorLinks = hyperlinks;
-	if (hyperlinks && !overSsh) {
+	if (hyperlinks && !style.overSsh) {
 		const distro = process.env.WSL_DISTRO_NAME;
 		const linuxTerm =
 			distro !== undefined &&
@@ -911,7 +917,7 @@ export default function prismExtension(
 			activeStyle,
 			blocks,
 			columns - markerRoom(activeStyle),
-			getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
+			mmdrEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
 		);
 		if (activeStyle.plantuml) {
 			const plantuml = drawPlantUml(EL, activeStyle, blocks, columns - markerRoom(activeStyle), {
@@ -1149,6 +1155,7 @@ export default function prismExtension(
 					FIGURE_HINT,
 					...(style.latex && getCapabilities().images ? [LATEX_HINT] : []),
 					...(style.plantuml ? [PLANTUML_HINT] : []),
+					...(style.mermaid && mmdrEnabled(style) && getCapabilities().images && mmdrPath() !== null ? [MMDR_HINT] : []),
 				]
 			: [];
 		if (hints.length > 0) {

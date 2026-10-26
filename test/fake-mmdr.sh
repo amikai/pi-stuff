@@ -24,6 +24,7 @@ case "$src" in *fake:syntax*) nodes='">","A"' ;; esac
 case "$src" in *fake:empty*) nodes=; size='"width":8,"height":8' ;; esac
 image=fixture.png
 case "$src" in *fake:huge*) image=huge.png ;; esac
+case "$src" in *fake:big*) image=big.png ;; esac
 cp "$FAKE_MMDR_DIR/$image" "$out"
 case "$src" in
 *fake:nolayout*) ;;
