@@ -5,7 +5,7 @@ PlantUML draws fenced blocks tagged `plantuml`, `puml`, or `uml`, untagged fence
 ## Sub-features
 
 - `plantuml-no-images` shows the note `plantuml diagrams require an image-capable terminal` for every block on a terminal without images, draws no text art, and starts no render.
-- `plantuml-png` draws tagged, untagged, unfenced, and class diagrams as kitty images.
+- `plantuml-png` draws tagged, untagged, unfenced, class, and C4 diagrams as kitty images. The C4 diagram uses a `raw.githubusercontent.com` link to C4-PlantUML, which prism points at the bundled copy, and `Person`, which needs the `SHOW_PERSON_OUTLINE()` that prism adds.
 - `plantuml-blocked-include` shows PlantUML's reason, `plantuml error (line N): cannot include <path>`, for `!include`, and reads nothing from the file.
 - `plantuml-syntax-error` names the line of a syntax error, `plantuml error (line N): <message>`.
 
@@ -28,7 +28,7 @@ Preconditions:
 - `.pi/skills/verify/scripts/control-prism.mjs doctor --run-id "$RUN_ID"` exits `0`.
 
 - **Render the note, images, blocked include, and syntax error.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature plantuml --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contains `"ok":true`.
-- **Proof.** `artifacts/verify/$RUN_ID/plantuml-text.txt` contains the note six times and does not contain `│Alice│`. `artifacts/verify/$RUN_ID/plantuml-png.ansi` contains the kitty escape `ESC _ G` for four images, and `plantuml-png.txt` contains `plantuml error (line 2): cannot include /etc/passwd` and `plantuml error (line 2): Syntax Error?`.
+- **Proof.** `artifacts/verify/$RUN_ID/plantuml-text.txt` contains the note seven times and does not contain `│Alice│`. `artifacts/verify/$RUN_ID/plantuml-png.ansi` contains the kitty escape `ESC _ G` for five images, and `plantuml-png.txt` contains `plantuml error (line 2): cannot include /etc/passwd` and `plantuml error (line 2): Syntax Error?`.
 
 ## Gotchas
 
