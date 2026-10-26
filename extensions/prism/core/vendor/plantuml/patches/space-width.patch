@@ -1,0 +1,13 @@
+diff --git a/src/main/java/net/sourceforge/plantuml/klimt/drawing/font/UnicodeFontWidthSansSerif.java b/src/main/java/net/sourceforge/plantuml/klimt/drawing/font/UnicodeFontWidthSansSerif.java
+index e951e312889..3bee5bf049d 100644
+--- a/src/main/java/net/sourceforge/plantuml/klimt/drawing/font/UnicodeFontWidthSansSerif.java
++++ b/src/main/java/net/sourceforge/plantuml/klimt/drawing/font/UnicodeFontWidthSansSerif.java
+@@ -6,7 +6,7 @@ public class UnicodeFontWidthSansSerif {
+ 
+ 			// block 0x00
+ 			{ 120, 120, 120, 120, 120, 120, 120, 120, 120, 0, 0, 0, 0, 0, 120, 120, 120, 120, 120, 120, 120, 120, 120,
+-					120, 120, 120, 120, 120, 120, 0, 120, 120, 0, 44, 57, 89, 89, (byte) 142, 107, 31, 53, 53, 62, 94,
++					120, 120, 120, 120, 120, 120, 0, 120, 120, 44, 44, 57, 89, 89, (byte) 142, 107, 31, 53, 53, 62, 94,
+ 					44, 53, 44, 44, 89, 89, 89, 89, 89, 89, 89, 89, 89, 89, 44, 44, 94, 94, 94, 89, (byte) 163, 107,
+ 					107, 116, 116, 107, 98, 124, 116, 44, 80, 107, 89, (byte) 133, 116, 124, 107, 124, 116, 107, 98,
+ 					116, 107, (byte) 151, 107, 107, 98, 44, 44, 44, 75, 89, 53, 89, 89, 80, 89, 89, 44, 89, 89, 36, 36,
