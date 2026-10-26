@@ -377,7 +377,7 @@ requirementDiagram
     demo - satisfies -> fits
 \`\`\`
 
-PlantUML draws from a fenced \`plantuml\` block with the local \`plantuml\` command: as an image in kitty and Ghostty, as text art for sequence diagrams elsewhere. \`plantuml: false\` in \`~/.pi/agent/prism.json\` leaves it as source.
+PlantUML draws from a fenced \`plantuml\` block as an image in kitty and Ghostty, and stays a note elsewhere. \`plantuml: false\` in \`~/.pi/agent/prism.json\` leaves it as source.
 
 \`\`\`plantuml
 @startuml
@@ -417,8 +417,6 @@ export const helpText = (): string => `
 | \`/prism demo-rtl\` | Hebrew right-to-left showcase |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
-
-A fenced \`plantuml\` block draws when the \`plantuml\` command is installed. Set \`plantumlServer\` in \`~/.pi/agent/prism.json\` to use a server when the command is missing or fails.
 
 > [!TIP]
 > Any color slot can be overridden in \`~/.pi/agent/prism.json\`, such as \`headingColor\` or \`numberColor\`.

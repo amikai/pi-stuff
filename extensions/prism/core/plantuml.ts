@@ -1,45 +1,36 @@
-import { spawn } from 'node:child_process'
-import { deflateRawSync } from 'node:zlib'
+import { Worker } from 'node:worker_threads'
 import { background } from './background.ts'
 import { h } from './jsx.ts'
 import type { ElementTable } from './jsx.ts'
 import { fitImage, fitsImage, pngSize } from './latex.ts'
 import { PLANTUML_KINDS } from './markdown.ts'
 import type { Block } from './markdown.ts'
-import { boxArt } from './mermaid.ts'
-import { width } from './render.ts'
 import type { Drawn } from './render.ts'
-import type { Style } from './theme.ts'
-
-export type PlantUmlMode = 'png' | 'utxt'
 
 export type PlantUmlEntry =
   | { kind: 'image'; png: string; width: number; height: number; source: string }
-  | { kind: 'art'; text: string; source: string }
   | { kind: 'error'; note: string }
 
 export type PlantUmlHooks = {
-  mode: PlantUmlMode
+  images: boolean
   requestRender: () => void
   onInvalidate?: () => void
 }
 
 export const PLANTUML_HINT =
-  'A ```plantuml block (@startuml … @enduml) is rendered by prism: as an image on terminals that show images, otherwise as text art for sequence diagrams only. Do not use !include or !includeurl, which are blocked.'
+  'A ```plantuml block (@startuml … @enduml) is rendered by prism as an image on terminals that show images, and stays a note elsewhere. Do not use !include or !includeurl, which are blocked.'
 
-const CLI_TIMEOUT_MS = 5000
-const SERVER_TIMEOUT_MS = 8000
+export const plantumlTimeout = { ms: 5000 }
+
 const MAX_OUTPUT = 2 * 1024 * 1024
-const JAVA_OPTION_VARS = ['JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS']
-const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_'
 const TAGGED = new Set(['plantuml', 'puml', 'uml'])
 const UNTAGGED_START = new RegExp(`^@start(${PLANTUML_KINDS})\\b`, 'i')
-const SYNTAX_ERROR = /^ERROR(?=\r?\n|$)(?:\r?\n(\d+))?(?:\r?\n([^\r\n]*))?/
 const MESSAGE_LIMIT = 160
+const NO_IMAGES = 'plantuml diagrams require an image-capable terminal'
 
 const failure = (note: string): PlantUmlEntry => ({ kind: 'error', note })
 
-export const plantumlJobs = background<PlantUmlEntry>({ limit: 100, concurrency: Infinity, crashed: failure('plantuml CLI failed') })
+export const plantumlJobs = background<PlantUmlEntry>({ limit: 100, concurrency: 1, crashed: failure('plantuml worker failed') })
 
 // PlantUML's pipe mode matches markers with an untrimmed startsWith, so an indented marker reads as diagram content.
 const normalize = (lines: string[]): string =>
@@ -53,132 +44,102 @@ export const plantumlOf = (block: Block): string | null => {
   return source.trim() === '' ? null : source
 }
 
-const SEQUENCE = /\b(participant|actor|boundary|control|collections|queue|autonumber)\b|<?-{1,2}>+|<-{1,2}/i
-const NOT_SEQUENCE =
-  /\b(class|interface|enum|abstract|state|component|package|node|cloud|frame|folder|artifact|storage|usecase|object|map|start|stop|partition|fork|split|repeat|while)\b|\[\*\]|\b(entity|database)\b[^{;\n]*\{|^\s*:[^:\n]+;\s*$/im
+type Reply = { png: Uint8Array } | { error: string; line?: number } | { failed: string }
 
-export const isSequenceDiagram = (source: string): boolean => {
-  const code = source.replace(/\/'[\s\S]*?'\//g, '').replace(/^\s*'.*$/gm, '').replace(/"[^"\n]*"/g, '""')
-  return SEQUENCE.test(code) && !NOT_SEQUENCE.test(code)
+type Waiting = { settle: (reply: Reply) => void; timer: NodeJS.Timeout }
+
+let worker: Worker | null = null
+let lastId = 0
+const waiting = new Map<number, Waiting>()
+
+// A worker that times out or dies is dropped, so the next render starts a fresh one.
+const stopWorker = (failed: string): void => {
+  const stale = worker
+  worker = null
+  stale?.terminate().catch(() => {})
+  const pending = [...waiting.values()]
+  waiting.clear()
+  for (const { settle, timer } of pending) {
+    clearTimeout(timer)
+    settle({ failed })
+  }
 }
 
-const imageEntry = (bytes: Buffer, source: string): PlantUmlEntry | null => {
-  const png = bytes.toString('base64')
+const startWorker = (): Worker => {
+  const started = new Worker(new URL('./vendor/plantuml.js', import.meta.url))
+  started.on('message', (message: { id: number; png?: Uint8Array; error?: string; line?: number }) => {
+    const entry = waiting.get(message.id)
+    if (!entry) return
+    waiting.delete(message.id)
+    clearTimeout(entry.timer)
+    entry.settle(message.png ? { png: message.png } : { error: message.error ?? 'diagram failed to render', line: message.line })
+  })
+  const died = () => {
+    if (worker === started) stopWorker('plantuml worker failed')
+  }
+  started.on('error', died)
+  started.on('exit', died)
+  // Listening for 'message' references the worker again, so unref comes after the listeners.
+  started.unref()
+  return started
+}
+
+const ask = (source: string): Promise<Reply> =>
+  new Promise(resolve => {
+    const id = ++lastId
+    let current: Worker
+    try {
+      current = worker ??= startWorker()
+    } catch {
+      return resolve({ failed: 'plantuml worker failed' })
+    }
+    const timer = setTimeout(() => stopWorker('plantuml render timed out'), plantumlTimeout.ms)
+    waiting.set(id, { settle: resolve, timer })
+    current.postMessage({ id, source })
+  })
+
+const imageEntry = (bytes: Uint8Array, source: string): PlantUmlEntry => {
+  if (bytes.length > MAX_OUTPUT) return failure('diagram image is too large')
+  const png = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64')
   const size = pngSize(png)
-  if (!size || size.width <= 0 || size.height <= 0) return null
+  if (!size || size.width <= 0 || size.height <= 0) return failure('plantuml worker failed')
   return fitsImage(png) ? { kind: 'image', png, ...size, source } : failure('diagram image is too large')
 }
 
-const artEntry = (text: string, source: string): PlantUmlEntry | null => {
-  const art = text.replace(/[ \t]+$/gm, '').replace(/^\n+|\n+$/g, '')
-  return art === '' ? null : { kind: 'art', text: art, source }
+// The engine reads a diagram only when the source opens with @start, and reports lines of what it was sent.
+const prepare = (source: string): { sent: string; shift: number } => {
+  const trimmed = source.replace(/^(?:[ \t]*\r?\n)+/, '')
+  if (/^@start/i.test(trimmed)) return { sent: trimmed, shift: source.split('\n').length - trimmed.split('\n').length }
+  return { sent: `@startuml\n${source}@enduml\n`, shift: -1 }
 }
 
-type CliResult = { code: number | null; out: Buffer } | 'missing' | 'failed'
-
-const cliEnv = (): NodeJS.ProcessEnv => {
-  const env = { ...process.env }
-  for (const name of JAVA_OPTION_VARS) delete env[name]
-  env.PLANTUML_SECURITY_PROFILE = 'SANDBOX'
-  return env
+const render = async (source: string): Promise<PlantUmlEntry> => {
+  const { sent, shift } = prepare(source)
+  const reply = await ask(sent)
+  if ('failed' in reply) return failure(reply.failed)
+  if ('png' in reply) return imageEntry(reply.png, source)
+  const place = reply.line === undefined ? '' : ` (line ${Math.max(1, reply.line + shift)})`
+  const message = reply.error.trim().slice(0, MESSAGE_LIMIT)
+  return failure(`plantuml error${place}${message === '' ? '' : `: ${message}`}`)
 }
 
-const runCli = (source: string, mode: PlantUmlMode, isDark: boolean): Promise<CliResult> =>
-  new Promise(resolve => {
-    const args = ['-pipe', '-pipeNoStderr', mode === 'png' ? '-tpng' : '-tutxt', ...(mode === 'png' && isDark ? ['-darkmode'] : [])]
-    const child = spawn('plantuml', args, { env: cliEnv(), stdio: ['pipe', 'pipe', 'ignore'] })
-    const chunks: Buffer[] = []
-    let size = 0
-    let settled = false
-    const finish = (result: CliResult, kill = false) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      if (kill) {
-        child.kill('SIGKILL')
-        child.stdout.destroy()
-      }
-      resolve(result)
-    }
-    const timer = setTimeout(() => finish('failed', true), CLI_TIMEOUT_MS)
-    child.on('error', (error: NodeJS.ErrnoException) => finish(error.code === 'ENOENT' ? 'missing' : 'failed'))
-    child.stdin.on('error', () => {})
-    child.stdout.on('data', (chunk: Buffer) => {
-      size += chunk.length
-      if (size > MAX_OUTPUT) finish('failed', true)
-      else chunks.push(chunk)
-    })
-    child.on('close', code => finish({ code, out: Buffer.concat(chunks) }))
-    child.stdin.end(source)
-  })
-
-const viaCli = async (source: string, mode: PlantUmlMode, isDark: boolean): Promise<PlantUmlEntry | 'missing' | 'failed'> => {
-  const result = await runCli(source, mode, isDark)
-  if (typeof result === 'string') return result
-  const syntax = SYNTAX_ERROR.exec(result.out.subarray(0, 1024).toString('utf8'))
-  if (syntax) {
-    const synthesized = /^@start/im.test(source) ? 0 : 1
-    const place = syntax[1] === undefined ? '' : ` (line ${Math.max(1, Number(syntax[1]) + 1 - synthesized)})`
-    const message = (syntax[2] ?? '').trim().slice(0, MESSAGE_LIMIT)
-    return failure(`plantuml error${place}${message === '' ? '' : `: ${message}`}`)
-  }
-  if (result.code !== 0) return 'failed'
-  return (mode === 'png' ? imageEntry(result.out, source) : artEntry(result.out.toString('utf8'), source)) ?? 'failed'
-}
-
-const encode = (source: string): string => {
-  const data = deflateRawSync(Buffer.from(source, 'utf8'), { level: 9 })
-  let out = ''
-  for (let i = 0; i < data.length; i += 3) {
-    const [b1, b2, b3] = [data[i]!, data[i + 1] ?? 0, data[i + 2] ?? 0]
-    out += ALPHABET[b1 >> 2]! + ALPHABET[((b1 & 3) << 4) | (b2 >> 4)]! + ALPHABET[((b2 & 15) << 2) | (b3 >> 6)]! + ALPHABET[b3 & 63]!
-  }
-  return out
-}
-
-const viaServer = async (base: string, source: string, mode: PlantUmlMode, isDark: boolean): Promise<PlantUmlEntry> => {
-  const endpoint = mode === 'utxt' ? 'txt' : isDark ? 'dpng' : 'png'
-  try {
-    const res = await fetch(`${base}/${endpoint}/${encode(source)}`, { signal: AbortSignal.timeout(SERVER_TIMEOUT_MS), redirect: 'error' })
-    if (res.status === 400 || res.headers.has('x-plantuml-diagram-error')) return failure('diagram failed to render')
-    if (res.status !== 200 || Number(res.headers.get('content-length')) > MAX_OUTPUT) return failure('plantumlServer request failed')
-    const body = Buffer.from(await res.arrayBuffer())
-    if (body.length > MAX_OUTPUT) return failure('plantumlServer request failed')
-    return (mode === 'png' ? imageEntry(body, source) : artEntry(body.toString('utf8'), source)) ?? failure('plantumlServer request failed')
-  } catch {
-    return failure('plantumlServer request failed')
-  }
-}
-
-const render = async (source: string, mode: PlantUmlMode, style: Style): Promise<PlantUmlEntry> => {
-  const cli = await viaCli(source, mode, style.isDark)
-  if (typeof cli === 'object') return cli
-  if (style.plantumlServer) return viaServer(style.plantumlServer, source, mode, style.isDark)
-  return failure(cli === 'missing' ? 'plantuml CLI is not installed' : 'plantuml CLI failed')
-}
-
-const NON_SEQUENCE = 'plantuml non-sequence diagrams require an image-capable terminal'
-
-export const drawPlantUml = (el: ElementTable, style: Style, blocks: Block[], columns: number, hooks: PlantUmlHooks): Drawn => {
+export const drawPlantUml = (el: ElementTable, blocks: Block[], columns: number, hooks: PlantUmlHooks): Drawn => {
   const drawn: Drawn = new Map()
   for (const [i, block] of blocks.entries()) {
     const source = plantumlOf(block)
     if (source === null) continue
-    const key = `${hooks.mode}:${style.isDark}:${style.plantumlServer ?? ''}:${source}`
-    if (hooks.mode === 'utxt' && !plantumlJobs.cache.has(key) && !isSequenceDiagram(source)) plantumlJobs.put(key, failure(NON_SEQUENCE))
-    const entry = plantumlJobs.get(key, () => render(source, hooks.mode, style), hooks)
+    const key = `${hooks.images}:${source}`
+    if (!hooks.images && !plantumlJobs.cache.has(key)) plantumlJobs.put(key, failure(NO_IMAGES))
+    const entry = plantumlJobs.get(key, () => render(source), hooks)
     if (!entry) continue
     if (entry.kind === 'error') {
       drawn.set(i, { note: entry.note })
-    } else if (entry.kind === 'image') {
+    } else {
       const fit = fitImage(entry, columns)
       drawn.set(i, {
         element: h(el.Image!, { key: `b${i}`, source: { png: entry.png }, columns: fit.columns, rows: fit.rows, alt: 'plantuml diagram' }),
         png: entry.png,
       })
-    } else {
-      const wide = Math.max(...entry.text.split('\n').map(width))
-      drawn.set(i, wide > columns - 2 ? { note: `diagram is ${wide} cols, terminal is ${columns}` } : { element: boxArt(el, style, entry.text, `b${i}`), art: entry.text })
     }
   }
   return drawn

@@ -920,8 +920,8 @@ export default function prismExtension(
 			mmdrEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
 		);
 		if (activeStyle.plantuml) {
-			const plantuml = drawPlantUml(EL, activeStyle, blocks, columns - markerRoom(activeStyle), {
-				mode: getCapabilities().images ? "png" : "utxt",
+			const plantuml = drawPlantUml(EL, blocks, columns - markerRoom(activeStyle), {
+				images: Boolean(getCapabilities().images),
 				requestRender,
 				onInvalidate: options?.onInvalidate,
 			});
