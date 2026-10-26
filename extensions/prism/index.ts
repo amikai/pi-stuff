@@ -172,8 +172,6 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
 	};
 }
 
-const isDarkTheme = (piTheme: PiTheme | undefined): boolean => (piTheme?.appearance ?? "dark") !== "light";
-
 function resolvePrismTheme(options: PrismOptions, piTheme: PiTheme | undefined): Theme {
 	const base = themeFromPiTheme(piTheme);
 	const overrides = Object.fromEntries(
@@ -662,7 +660,6 @@ export default function prismExtension(
 			style = {
 				...style,
 				theme: resolvePrismTheme(options, piTheme),
-				isDark: isDarkTheme(piTheme),
 			};
 		}
 		return style;
@@ -672,7 +669,7 @@ export default function prismExtension(
 		options = loadOptions();
 		const piTheme = getActivePiTheme();
 		lastPiColors = piTheme?.colors;
-		style = { ...resolveStyle(options, themeFromPiTheme(piTheme)), isDark: isDarkTheme(piTheme) };
+		style = resolveStyle(options, themeFromPiTheme(piTheme));
 		applyTerminalCapabilities(style, cwd ?? uiCtx?.cwd ?? process.cwd());
 	}
 
@@ -920,8 +917,8 @@ export default function prismExtension(
 			mmdrEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
 		);
 		if (activeStyle.plantuml) {
-			const plantuml = drawPlantUml(EL, activeStyle, blocks, columns - markerRoom(activeStyle), {
-				mode: getCapabilities().images ? "png" : "utxt",
+			const plantuml = drawPlantUml(EL, blocks, columns - markerRoom(activeStyle), {
+				images: Boolean(getCapabilities().images),
 				requestRender,
 				onInvalidate: options?.onInvalidate,
 			});

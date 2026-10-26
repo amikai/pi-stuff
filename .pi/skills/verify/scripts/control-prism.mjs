@@ -488,11 +488,9 @@ if (cmd === "drive") {
 	}
 
 	if (feature === "plantuml") {
-		assert.equal(spawnSync("which", ["plantuml"]).status, 0, "plantuml must be on PATH");
 		const plantuml = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/plantuml.ts")).href);
 		const waitForJobs = () => plantuml.plantumlJobs.idle();
-		const localFile = join(rt.workDir, "local.txt");
-		writeFileSync(localFile, "Alice -> Zed : LOCALFILE\n");
+		const count = (haystack, needle) => haystack.split(needle).length - 1;
 		const md = [
 			"```plantuml",
 			"@startuml",
@@ -518,136 +516,44 @@ if (cmd === "drive") {
 			"",
 			"```plantuml",
 			"@startuml",
-			`!include ${localFile}`,
+			"!include /etc/passwd",
 			"Alice -> Bob : after include",
 			"@enduml",
 			"```",
+			"",
+			"```plantuml",
+			"@startuml",
+			"foo bar baz",
+			"@enduml",
+			"```",
 		].join("\n");
+		const reply = (timestamp) =>
+			new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text: md }], timestamp });
 
 		setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-		const comp = new AssistantMessageComponent({
-			role: "assistant",
-			content: [{ type: "text", text: md }],
-			timestamp: 3000,
-		});
-		const firstPlain = comp.render(width).map(stripAnsi).join("\n");
-		assert.ok(firstPlain.includes("Alice -> Bob : hi"), "first frame shows the source while the CLI runs");
-		await waitForJobs();
-		const textLines = comp.render(width);
+		const text = reply(3000);
+		const textLines = text.render(width);
 		const textPlain = textLines.map(stripAnsi).join("\n");
-		assert.ok(textPlain.includes("│Alice│") && textPlain.includes("│Bob│"), "fenced sequence diagram drawn as text art");
-		assert.ok(textPlain.includes("│A│") && textPlain.includes("│B│"), "unfenced @startuml block drawn as text art");
-		assert.ok(textPlain.includes("│Carol│") && textPlain.includes("│Dave│"), "untagged fence opening with @startuml drawn as text art");
-		assert.ok(
-			textPlain.includes("plantuml non-sequence diagrams require an image-capable terminal"),
-			"class diagram refused in text mode",
-		);
-		assert.ok(textPlain.includes("plantuml error (line 2): cannot include"), "SANDBOX-blocked include shows PlantUML's reason");
-		assert.ok(!textPlain.includes("LOCALFILE"), "blocked include draws no content from the local file");
+		assert.equal(count(textPlain, "plantuml diagrams require an image-capable terminal"), 6, "every block gets the note on a terminal without images");
+		assert.equal(plantuml.plantumlJobs.pending.size, 0, "no render starts without images");
+		assert.ok(!textPlain.includes("│Alice│"), "no text art is drawn");
 
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
-		const png = new AssistantMessageComponent({
-			role: "assistant",
-			content: [{ type: "text", text: ["```plantuml", "@startuml", "Bob -> Carol : png", "@enduml", "```"].join("\n") }],
-			timestamp: 4000,
-		});
-		png.render(width);
+		const png = reply(4000);
+		const sourceLines = png.render(width);
+		assert.ok(sourceLines.map(stripAnsi).join("\n").includes("Alice -> Bob : hi"), "first frame shows the source while the engine runs");
 		await waitForJobs();
 		const pngLines = png.render(width);
-		assert.ok(pngLines.join("\n").includes("\x1b_G"), "png mode draws the image through the kitty protocol");
-		const pngEntry = [...plantuml.plantumlJobs.cache.entries()].find(([key]) => key.startsWith("png:true:"))?.[1];
-		assert.equal(pngEntry?.kind, "image", "png render is cached as an image under the dark-theme key");
+		const pngPlain = pngLines.map(stripAnsi).join("\n");
+		const imageIds = new Set([...pngLines.join("\n").matchAll(/\x1b_G[^\x1b]*?\bi=(\d+)/g)].map((m) => m[1]));
+		assert.equal(imageIds.size, 4, "the fenced, unfenced, untagged and class diagrams are kitty images");
+		assert.ok(pngPlain.includes("plantuml error (line 2): cannot include /etc/passwd"), "a blocked include shows PlantUML's reason");
+		assert.ok(pngPlain.includes("plantuml error (line 2): Syntax Error?"), "a syntax error names its line");
 		resetCapabilitiesCache();
 
-		writeArtifacts(outDir, "plantuml-text", textLines, { feature, mode: "utxt", width, lineCount: textLines.length });
-		writeArtifacts(outDir, "plantuml-png", pngLines, { feature, mode: "png", width, lineCount: pngLines.length });
+		writeArtifacts(outDir, "plantuml-text", textLines, { feature, images: false, width, lineCount: textLines.length });
+		writeArtifacts(outDir, "plantuml-png", pngLines, { feature, images: true, width, lineCount: pngLines.length });
 		console.log(JSON.stringify({ ok: true, feature, outDir }));
-		process.exit(0);
-	}
-
-	if (feature === "plantuml-live") {
-		for (const bin of ["tmux", "plantuml"]) {
-			assert.equal(spawnSync("which", [bin]).status, 0, `${bin} must be on PATH`);
-		}
-		const socket = `prism-verify-${args["run-id"]}`;
-		const tmux = (...rest) =>
-			execFileSync("tmux", ["-L", socket, ...rest], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-		const quote = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
-		const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
-		const screen = () => tmux("capture-pane", "-p", "-e", "-t", "live");
-		const waitFor = async (test, ms) => {
-			const start = Date.now();
-			for (;;) {
-				const ansi = screen();
-				if (test(stripAnsi(ansi))) return ansi;
-				if (Date.now() - start > ms) return null;
-				await sleep(100);
-			}
-		};
-		const ART = /┌───┐ *┌─────┐/;
-		const SOURCE = "You -> prism";
-		// Each case starts a fresh pi because a second /prism demo in one session hits the plantuml cache.
-		const runCase = async (name, before) => {
-			tmux(
-				"new-session", "-d", "-s", "live", "-x", "110", "-y", "60",
-				`TMPDIR=${quote(runDir)} ${quote(join(repoRoot, "test/prism.sh"))}`,
-			);
-			try {
-				assert.ok(await waitFor((s) => s.includes("escape interrupt"), 30000), `${name}: pi started`);
-				await sleep(1500);
-				await before?.();
-				tmux("send-keys", "-t", "live", "/prism demo", "Enter");
-				const start = Date.now();
-				let sourceAt = null;
-				let sourceFrame = null;
-				let artAt = null;
-				let artFrame = null;
-				while (artAt === null && Date.now() - start < 15000) {
-					const ansi = screen();
-					const plain = stripAnsi(ansi);
-					if (sourceAt === null && plain.includes(SOURCE)) {
-						sourceAt = Date.now() - start;
-						sourceFrame = ansi;
-					}
-					if (ART.test(plain)) {
-						artAt = Date.now() - start;
-						artFrame = ansi;
-					}
-					await sleep(100);
-				}
-				assert.ok(sourceAt !== null, `${name}: the first frame shows the plantuml source`);
-				assert.ok(artAt !== null, `${name}: the art replaces the source with no keypress within 15 s`);
-				assert.ok(sourceAt <= artAt, `${name}: the source shows before the art`);
-				writeArtifacts(outDir, `plantuml-live-${name}-source`, sourceFrame.split("\n"), { feature, case: name, sourceAtMs: sourceAt });
-				writeArtifacts(outDir, `plantuml-live-${name}-art`, artFrame.split("\n"), {
-					feature,
-					case: name,
-					sourceAtMs: sourceAt,
-					artAtMs: artAt,
-					keysAfterDemo: 0,
-				});
-				return { sourceAtMs: sourceAt, artAtMs: artAt };
-			} finally {
-				tmux("kill-session", "-t", "live");
-			}
-		};
-
-		try {
-			const redraw = await runCase("redraw");
-			const overlayClose = await runCase("overlay-close", async () => {
-				tmux("send-keys", "-t", "live", "/prism setup", "Enter");
-				assert.ok(await waitFor((s) => s.includes("Setup 1/7"), 10000), "overlay-close: setup overlay opened");
-				tmux("send-keys", "-t", "live", "Escape");
-				assert.ok(await waitFor((s) => !s.includes("Setup 1/7"), 10000), "overlay-close: setup overlay closed");
-			});
-			console.log(JSON.stringify({ ok: true, feature, outDir, redraw, overlayClose }));
-		} finally {
-			try {
-				tmux("kill-server");
-			} catch {
-			}
-			rmSync(join(process.env.TMUX_TMPDIR || "/tmp", `tmux-${process.getuid()}`, socket), { force: true });
-		}
 		process.exit(0);
 	}
 

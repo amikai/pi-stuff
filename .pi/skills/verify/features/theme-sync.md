@@ -7,7 +7,6 @@ Pi theme synchronization derives `prism`'s 20 semantic color slots directly from
 - `theme-derive` maps Pi's `Theme.colors` tokens (`accent`, `mdHeading`, `mdCode`, `syntax*`, etc.) into `prism`'s 20 color slots.
 - `theme-live-repaint` invalidates `PrismComponent` caches when `theme.colors` changes reference so switching between `dark` and `light` in Pi repaints immediately.
 - `theme-no-global-mutation` never calls `ctx.ui.setTheme`.
-- `theme-appearance` sets `isDark` from the Pi theme's `appearance` (dark when unknown). PlantUML uses it to choose `-darkmode` and `/dpng/`, and as part of its cache key. The `theme-sync` drive does not check it; the `plantuml` drive does.
 
 ## How to get to it (user POV)
 

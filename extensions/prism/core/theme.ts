@@ -82,8 +82,6 @@ export type Style = {
 	plantuml: boolean;
 	mmdr: boolean;
 	overSsh: boolean;
-	plantumlServer: string | null;
-	isDark: boolean;
 	cwd: string;
 	home: string;
 };
@@ -95,19 +93,6 @@ export const isColor = (value: unknown): value is string => typeof value === "st
 
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
 	allowed.includes(value as T) ? (value as T) : fallback;
-
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-
-const serverUrl = (value: unknown): string | null => {
-	if (typeof value !== "string") return null;
-	try {
-		const url = new URL(value);
-		const allowed = url.protocol === "https:" || (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname));
-		return allowed ? value.trim().replace(/\/+$/, "") : null;
-	} catch {
-		return null;
-	}
-};
 
 export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_THEME): Style => {
 	const fromFields = Object.fromEntries(
@@ -143,8 +128,6 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		plantuml: options.plantuml !== false,
 		mmdr: options.mmdr !== false,
 		overSsh: false,
-		plantumlServer: serverUrl(options.plantumlServer),
-		isDark: true,
 		cwd: "",
 		home: "",
 	};

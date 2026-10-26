@@ -1,0 +1,10 @@
+{
+  "name": "prism-plantuml-bundle",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@resvg/resvg-wasm": "2.6.2",
+    "@viz-js/viz": "3.31.0",
+    "esbuild": "0.28.2"
+  }
+}

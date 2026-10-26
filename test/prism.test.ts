@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { registerHooks } from "node:module";
-import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { crc32, deflateSync, inflateRawSync } from "node:zlib";
+import { crc32, deflateSync } from "node:zlib";
 
 import type { Desktop } from "../extensions/prism/desktop.ts";
 
@@ -62,7 +60,7 @@ const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
 const { headerWord, judge, MMDR_HINT, MMDR_KINDS, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
-const { isSequenceDiagram, plantumlJobs } = await import("../extensions/prism/core/plantuml.ts");
+const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 const { showcaseText } = await import("../extensions/prism/core/help.ts");
 
@@ -580,11 +578,6 @@ test("8. color slot overrides, table <br> line breaks, and probed loose path hyp
 	assert.ok(rawAfterTool.includes(`file://${projectDir}/later.ts`), "links file created after tool_result resets unfound probes");
 });
 
-const PNG_1X1 = Buffer.from(
-	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-	"base64",
-);
-
 const pngOf = (width: number, height: number) => {
 	const chunk = (type: string, data: Buffer) => {
 		const body = Buffer.concat([Buffer.from(type, "latin1"), data]);
@@ -607,31 +600,6 @@ const pngOf = (width: number, height: number) => {
 	]);
 };
 
-const FAKE_PLANTUML = `#!/bin/sh
-src=$(cat)
-printf '%s\\n' "$src" > "$FAKE_PLANTUML_DIR/stdin"
-printf 'args=%s profile=%s jto=%s jo=%s jdk=%s\\n' "$*" "\${PLANTUML_SECURITY_PROFILE-unset}" "\${JAVA_TOOL_OPTIONS-unset}" "\${_JAVA_OPTIONS-unset}" "\${JDK_JAVA_OPTIONS-unset}" >> "$FAKE_PLANTUML_DIR/calls.log"
-case "$src" in
-  *fake:sleep*) exec sleep 30 ;;
-  *fake:fail*) exit 1 ;;
-  *fake:syntax*) printf 'ERROR\\n3\\nSyntax Error?\\n'; exit 200 ;;
-  *fake:include*) printf 'ERROR\\n2\\ncannot include /tmp/prism/local.txt\\n'; exit 200 ;;
-  *fake:wide*) printf '%0200d\\n' 0 | tr 0 x; exit 0 ;;
-esac
-case "$*" in
-  *-tutxt*) cat <<'ART'
-┌─────┐ ┌───┐
-│Alice│ │Bob│
-└──┬──┘ └─┬─┘
-   │  hi  │
-   │─────►│
-ART
-  ;;
-  *) cat "$FAKE_PLANTUML_DIR/diagram.png" ;;
-esac
-`;
-
-const JAVA_VARS = ["JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS"];
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 async function until(condition: () => boolean, ms = 3000) {
@@ -649,77 +617,41 @@ const fittedAt = (columns: number) => columns + REPLY_INSET;
 const reply = (text: string) =>
 	new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any);
 
-function plantumlFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer } = {}) {
-	const dir = mkdtempSync(join(tmpdir(), "prism-plantuml-"));
-	const bin = join(dir, "bin");
-	mkdirSync(bin);
-	writeFileSync(join(dir, "diagram.png"), options.png ?? PNG_1X1);
-	writeFileSync(join(bin, "plantuml"), FAKE_PLANTUML, { mode: 0o755 });
-	const saved = Object.fromEntries(["PATH", "FAKE_PLANTUML_DIR", ...JAVA_VARS].map((k) => [k, process.env[k]]));
-	process.env.FAKE_PLANTUML_DIR = dir;
-	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
-	for (const name of JAVA_VARS) process.env[name] = "-DPLANTUML_SECURITY_PROFILE=INSECURE";
+function plantumlTerminal(options: { images?: "kitty" | "iterm2" | null } = {}) {
 	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
 	plantumlJobs.clear();
 	return {
-		calls: () => {
-			try {
-				return readFileSync(join(dir, "calls.log"), "utf8").trim().split("\n").filter(Boolean);
-			} catch {
-				return [];
-			}
-		},
-		stdin: () => readFileSync(join(dir, "stdin"), "utf8"),
 		restore: () => {
-			for (const [name, value] of Object.entries(saved)) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
 			resetCapabilitiesCache();
 			plantumlJobs.clear();
-			rmSync(dir, { recursive: true, force: true });
+			plantumlTimeout.ms = 5000;
 		},
 	};
 }
 
-async function plantumlServer(respond: (url: string, res: ServerResponse) => void) {
-	const urls: string[] = [];
-	const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-		urls.push(req.url ?? "");
-		respond(req.url ?? "", res);
-	});
-	await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
-	return {
-		urls,
-		url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-		close: () => new Promise<void>((done) => server.close(() => done())),
-	};
-}
+const cachedImages = () =>
+	[...plantumlJobs.cache.values()].flatMap((entry) => (entry.kind === "image" ? [entry] : []));
 
-const ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_";
-const decodeSource = (encoded: string) => {
-	const values = [...encoded].map((c) => ALPHABET.indexOf(c));
-	const bytes: number[] = [];
-	for (let i = 0; i < values.length; i += 4) {
-		const [a, b, c, d] = values.slice(i, i + 4) as [number, number, number, number];
-		bytes.push((a << 2) | (b >> 4), ((b & 15) << 4) | (c >> 2), ((c & 3) << 6) | d);
-	}
-	return inflateRawSync(Buffer.from(bytes)).toString("utf8");
+// The newest image the worker drew, as the exact bytes the terminal receives.
+const drawnPng = () => {
+	const entry = cachedImages().at(-1);
+	assert.ok(entry, "a plantuml image is cached");
+	return Buffer.from(entry.png, "base64");
 };
 
-const sendPng = (res: ServerResponse) => {
-	res.writeHead(200, { "content-type": "image/png" });
-	res.end(PNG_1X1);
-};
+// Kitty splits the PNG over several escape sequences; iTerm2 sends it in one.
+const sentPayload = (text: string) => [...text.matchAll(/\x1b_G[^;\x1b]*;([^\x1b]*)\x1b\\|\x1b\]1337;File=[^:]*:([^\x07]*)\x07/g)].map((m) => m[1] ?? m[2]).join("");
+
+const manyMessages = Array.from({ length: 12 }, (_, i) => `Alice -> Bob : step ${i}`).join("\n");
 
 const KITTY_IMAGE = "\x1b_G";
 const ITERM2_IMAGE = "\x1b]1337;File=";
 
-test("9. plantuml CLI success in png mode draws source first, then an image, sandboxed, and redraws the screen", async () => {
-	const fake = plantumlFixture();
+test("9. a plantuml block draws its source first, then an image, one job per block, and redraws the screen", async () => {
+	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
@@ -735,179 +667,144 @@ test("9. plantuml CLI success in png mode draws source first, then an image, san
 	const drawn = comp.render(100).join("\n");
 	assert.ok(drawn.includes(KITTY_IMAGE), "second frame draws the PNG");
 	assert.ok(!stripAnsi(drawn).includes("Alice -> Bob : hi"), "source is gone once the image is drawn");
-
-	const [call, ...rest] = fake.calls();
-	assert.equal(rest.length, 0, "spawns plantuml once");
-	assert.match(call!, /^args=-pipe -pipeNoStderr -tpng -darkmode /, "dark pi theme asks for dark mode");
-	assert.match(call!, /profile=SANDBOX jto=unset jo=unset jdk=unset$/, "child gets SANDBOX and no Java option variables");
-	assert.equal(process.env.JAVA_TOOL_OPTIONS, "-DPLANTUML_SECURITY_PROFILE=INSECURE", "parent environment is untouched");
-	assert.equal(fake.stdin(), "@startuml\n' png\nAlice -> Bob : hi\n@enduml\n", "markers are trimmed to column zero");
+	const png = drawnPng();
+	assert.deepEqual([...png.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "the terminal receives a PNG");
+	assert.equal(sentPayload(drawn), png.toString("base64"), "it is the PNG the worker made");
 
 	comp.invalidate();
 	comp.render(100);
-	assert.equal(fake.calls().length, 1, "later frames hit the cache");
+	assert.equal(plantumlJobs.pending.size, 0, "later frames hit the cache");
+	assert.equal(plantumlJobs.cache.size, 1);
+
+	const twice = diagram("twice");
+	reply([twice, "", twice, "", diagram("other")].join("\n")).render(100);
+	assert.equal(plantumlJobs.pending.size, 2, "a repeated block shares one job");
+	await plantumlJobs.idle();
+	assert.equal(plantumlJobs.cache.size, 3);
 });
 
-test("10. plantuml CLI success in utxt mode draws sequence art, skips a class diagram unspawned, and notes art wider than the terminal", async () => {
-	const fake = plantumlFixture({ images: null });
+test("10. a terminal without images shows a note and starts no job", async () => {
+	const terminal = plantumlTerminal({ images: null });
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
 
-	const comp = reply(diagram("art"));
-	comp.render(100);
-	await plantumlJobs.idle();
-	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("│Alice│ │Bob│"), "draws the text art");
-	assert.match(fake.calls()[0]!, /^args=-pipe -pipeNoStderr -tutxt profile=SANDBOX/, "asks for -tutxt without -darkmode");
-
-	const klass = reply(diagram("class", "class Foo {\n}\nFoo --> Bar"));
-	const note = stripAnsi(klass.render(100).join("\n"));
-	assert.ok(note.includes("plantuml non-sequence diagrams require an image-capable terminal"), "explains the refusal on the first frame");
+	const comp = reply(diagram("no images"));
+	const note = stripAnsi(comp.render(100).join("\n"));
+	assert.ok(note.includes("plantuml diagrams require an image-capable terminal"), "explains the refusal on the first frame");
 	assert.equal(plantumlJobs.pending.size, 0, "does not start a job");
-	assert.equal(fake.calls().length, 1, "does not spawn for a class diagram");
-
-	const wide = reply(diagram("fake:wide"));
-	wide.render(100);
-	await plantumlJobs.idle();
-	const wideDrawn = stripAnsi(wide.render(100).join("\n"));
-	assert.match(wideDrawn, /diagram is 200 cols, terminal is \d+/, "notes the width");
-	assert.ok(wideDrawn.includes("Alice -> Bob : hi"), "keeps the source");
+	await sleep(50);
+	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("image-capable terminal"), "the note stays");
+	assert.equal(cachedImages().length, 0);
 });
 
-test("11. plantuml CLI timeout, non-zero exit, and a missing CLI cache a note and release the in-flight key", async () => {
-	const slow = plantumlFixture();
+test("11. a stuck plantuml render times out with a note, and the next render gets a fresh worker", async () => {
+	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
-		slow.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
 
-	const comp = reply(diagram("fake:sleep"));
+	// Graphviz takes far longer than the timeout to lay out three thousand edges.
+	const edges = [];
+	for (let from = 0; from < 60; from++) for (let to = 0; to < 60; to++) if (from !== to) edges.push(`C${from} --> C${to}`);
+	const stuck = diagram("stuck", edges.join("\n"));
+
+	plantumlTimeout.ms = 1000;
+	const comp = reply([stuck, "", diagram("after the stuck one")].join("\n"));
 	comp.render(100);
-	assert.equal(plantumlJobs.pending.size, 1);
+	assert.equal(plantumlJobs.pending.size, 2);
+	const started = Date.now();
 	await plantumlJobs.idle(8000);
-	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml CLI failed"), "reports the timeout");
+	assert.ok(Date.now() - started < 4000, "the stuck render ends at the timeout");
+	const plain = stripAnsi(comp.render(100).join("\n"));
+	assert.ok(plain.includes("plantuml render timed out"), "reports the timeout");
+	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the block queued behind it still draws");
+	assert.equal(plantumlJobs.pending.size, 0, "no key is left in flight");
+
+	plantumlTimeout.ms = 5000;
+	comp.invalidate();
 	comp.render(100);
-	assert.equal(slow.calls().length, 1, "does not retry a cached failure");
+	assert.equal(plantumlJobs.pending.size, 0, "a timed-out render stays cached, not retried");
 
-	const failing = reply(diagram("fake:fail"));
-	failing.render(100);
+	const later = reply(diagram("later"));
+	later.render(100);
 	await plantumlJobs.idle();
-	assert.ok(stripAnsi(failing.render(100).join("\n")).includes("plantuml CLI failed"), "reports a non-zero exit");
-
-	slow.restore();
-	const missing = plantumlFixture({ installed: false });
-	cleanupFn = () => {
-		missing.restore();
-		h.cleanup();
-	};
-	const gone = reply(diagram("enoent"));
-	gone.render(100);
-	await plantumlJobs.idle();
-	assert.ok(stripAnsi(gone.render(100).join("\n")).includes("plantuml CLI is not installed"), "reports ENOENT");
-	assert.equal(plantumlJobs.pending.size, 0);
+	assert.ok(later.render(100).join("\n").includes(KITTY_IMAGE), "a render after the timeout draws");
 });
 
-test("12. plantumlServer renders when the CLI is missing, using /dpng/ and /txt/ with the source encoded", async () => {
-	const fake = plantumlFixture({ installed: false });
-	const server = await plantumlServer((url, res) => {
-		if (url.startsWith("/txt/")) {
-			res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
-			res.end("┌─────┐\n│Alice│\n└─────┘\n");
-		} else sendPng(res);
-	});
-	const h = createHarness({ plantumlServer: server.url });
+test("12. a plantuml syntax error reports the source line, with and without @startuml markers", async () => {
+	const terminal = plantumlTerminal();
+	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
-		void server.close();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
 
-	const text = diagram("remote png");
-	const comp = reply(text);
-	comp.render(100);
-	await plantumlJobs.idle();
-	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "draws the server PNG");
-	const [path, encoded] = server.urls[0]!.slice(1).split("/") as [string, string];
-	assert.equal(path, "dpng", "dark theme uses /dpng/");
-	assert.equal(decodeSource(encoded), `${text.split("\n").slice(1, -1).join("\n")}\n`, "sends the deflated, 6-bit encoded source");
-
-	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-	const art = reply(diagram("remote txt"));
-	art.render(100);
-	await plantumlJobs.idle();
-	assert.equal(server.urls[1]!.split("/")[1], "txt", "utxt mode uses /txt/");
-	assert.ok(stripAnsi(art.render(100).join("\n")).includes("│Alice│"), "draws the server art");
-});
-
-test("13. plantumlServer HTTP 400, HTTP 5xx, and a refused connection cache a note and release the in-flight key", async () => {
-	const fake = plantumlFixture({ installed: false });
-	const server = await plantumlServer((_url, res) => {
-		res.writeHead(server.urls.length === 1 ? 400 : 503);
-		res.end();
-	});
-	const h = createHarness({ plantumlServer: server.url });
-	cleanupFn = () => {
-		fake.restore();
-		void server.close();
-		h.cleanup();
-	};
-	await h.emit("session_start");
-
-	const noteFor = async (tag: string) => {
-		const comp = reply(diagram(tag));
+	const noteOf = async (markdown: string) => {
+		const comp = reply(markdown);
 		comp.render(100);
-		assert.equal(plantumlJobs.pending.size, 1);
 		await plantumlJobs.idle();
 		return stripAnsi(comp.render(100).join("\n"));
 	};
-	assert.ok((await noteFor("bad")).includes("diagram failed to render"), "HTTP 400");
-	assert.ok((await noteFor("down")).includes("plantumlServer request failed"), "HTTP 503");
-	assert.equal(server.urls.length, 2, "one request each, no retries");
-	assert.equal(plantumlJobs.cache.size, 2, "both failures are cached");
-
-	const rendersBefore = h.renders.screen;
-	await server.close();
-	assert.ok((await noteFor("refused")).includes("plantumlServer request failed"), "connection refused");
-	assert.ok(h.renders.screen > rendersBefore, "a failure still requests a redraw");
-	assert.equal(plantumlJobs.pending.size, 0, "no key is left in flight");
+	assert.ok((await noteOf(diagram("syntax", "foo bar baz"))).includes("plantuml error (line 3): Syntax Error?"), "markers and a comment put the fault on line 3");
+	assert.ok(
+		(await noteOf(["```plantuml", "' bare", "foo bar baz", "```"].join("\n"))).includes("plantuml error (line 2): Syntax Error?"),
+		"the markers prism adds do not shift the line",
+	);
+	assert.ok(
+		(await noteOf(["```plantuml", "", "", "@startuml", "foo bar baz", "@enduml", "```"].join("\n"))).includes("plantuml error (line 4): Syntax Error?"),
+		"blank lines before @startuml still count",
+	);
 });
 
-test("14. a plantuml syntax error reports the source line and never reaches plantumlServer", async () => {
-	const fake = plantumlFixture();
-	const server = await plantumlServer((_url, res) => sendPng(res));
-	const h = createHarness({ plantumlServer: server.url });
+test("13. a blocked plantuml include shows PlantUML's reason", async () => {
+	const terminal = plantumlTerminal();
+	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
-		void server.close();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
 
-	const comp = reply(diagram("fake:syntax"));
+	const noteOf = async (body: string) => {
+		const comp = reply(diagram("include", body));
+		comp.render(100);
+		await plantumlJobs.idle();
+		return stripAnsi(comp.render(100).join("\n"));
+	};
+	assert.ok((await noteOf("!include /etc/passwd")).includes("plantuml error (line 3): cannot include /etc/passwd"), "a file include names the file and its line");
+	assert.ok((await noteOf("!includeurl https://example.com/a.puml")).includes("plantuml error (line 3): cannot include https://example.com/a.puml"), "a URL include is refused too");
+	assert.equal(cachedImages().length, 0, "nothing was drawn");
+});
+
+test("14. other diagram kinds draw as images, including the ones Graphviz lays out", async () => {
+	const terminal = plantumlTerminal();
+	const h = createHarness();
+	cleanupFn = () => {
+		terminal.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const kinds = [
+		diagram("class", "class Foo {\n  +bar()\n}\nFoo --> Baz"),
+		diagram("state", "[*] --> Idle\nIdle --> Busy : go"),
+		["```plantuml", "@startmindmap", "* root", "** leaf", "@endmindmap", "```"].join("\n"),
+		["```plantuml", "@startgantt", "[Build] lasts 3 days", "@endgantt", "```"].join("\n"),
+	];
+	const comp = reply(kinds.join("\n\n"));
 	comp.render(100);
 	await plantumlJobs.idle();
-	assert.ok(stripAnsi(comp.render(100).join("\n")).includes("plantuml error (line 4): Syntax Error?"), "ERROR then 3 is line 4 with markers present");
-	assert.equal(server.urls.length, 0, "the server sees no request");
-
-	const bare = reply(["```plantuml", "' fake:syntax bare", "Alice -> Bob", "```"].join("\n"));
-	bare.render(100);
-	await plantumlJobs.idle();
-	assert.ok(stripAnsi(bare.render(100).join("\n")).includes("plantuml error (line 3): Syntax Error?"), "subtracts the line PlantUML synthesizes");
-
-	const blocked = reply(diagram("fake:include"));
-	blocked.render(100);
-	await plantumlJobs.idle();
-	assert.ok(
-		stripAnsi(blocked.render(100).join("\n")).includes("plantuml error (line 3): cannot include /tmp/prism/local.txt"),
-		"shows PlantUML's reason for a blocked include",
-	);
-	assert.equal(server.urls.length, 0, "a blocked include never reaches plantumlServer");
+	const lines = comp.render(100).join("\n");
+	assert.equal(lines.split("\x1b_Ga=T").length - 1, kinds.length, "every kind is an image");
+	assert.ok(!stripAnsi(lines).includes("plantuml error"), "no kind reports an error");
 });
 
 test("15. plantuml detection covers fences and unfenced blocks, and leaves unclosed and nested ones as text", async () => {
@@ -921,10 +818,10 @@ test("15. plantuml detection covers fences and unfenced blocks, and leaves unclo
 	assert.deepEqual(kinds("> @startuml\n> A -> B\n> @enduml"), ["quote"], "a quoted block is not detected");
 	assert.deepEqual(kinds("```puml\nA -> B\n```"), ["puml"]);
 
-	const fake = plantumlFixture();
+	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
@@ -947,11 +844,11 @@ test("15. plantuml detection covers fences and unfenced blocks, and leaves unclo
 	assert.ok(startEvent.systemPromptOptions.guidelines.some((g) => g.includes("!include")), "hints PlantUML when enabled");
 });
 
-test("16. plantuml:false renders PlantUML blocks as ordinary code, never spawns, and drops the hint", async () => {
-	const fake = plantumlFixture();
+test("16. plantuml:false renders PlantUML blocks as ordinary code, starts no job, and drops the hint", async () => {
+	const terminal = plantumlTerminal();
 	const h = createHarness({ plantuml: false });
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
@@ -960,8 +857,8 @@ test("16. plantuml:false renders PlantUML blocks as ordinary code, never spawns,
 	const plain = stripAnsi(comp.render(100).join("\n"));
 	assert.ok(plain.includes("Alice -> Bob : hi") && plain.includes("A -> B"), "draws both blocks as code");
 	await sleep(100);
-	assert.equal(plantumlJobs.pending.size, 0);
-	assert.equal(fake.calls().length, 0, "never spawns");
+	assert.equal(plantumlJobs.pending.size, 0, "starts no job");
+	assert.equal(plantumlJobs.cache.size, 0);
 
 	const startEvent = {
 		type: "before_agent_start",
@@ -972,35 +869,16 @@ test("16. plantuml:false renders PlantUML blocks as ordinary code, never spawns,
 	};
 	await h.emit("before_agent_start", startEvent);
 	assert.ok(startEvent.systemPromptOptions.guidelines.every((g) => !g.includes("!include")), "no PlantUML hint");
-});
 
-test("17. plantuml utxt sequence rule accepts sequence diagrams and rejects others, and plantumlServer is validated", () => {
-	assert.equal(isSequenceDiagram("@startuml\nparticipant A\nA -> B : hi\n@enduml\n"), true, "participants and arrows");
-	assert.equal(isSequenceDiagram("@startuml\nA -> B : hi\n@enduml\n"), true, "arrow alone");
-	assert.equal(isSequenceDiagram("@startuml\nclass Foo\nFoo --> Bar\n@enduml\n"), false, "class diagram");
-	assert.equal(isSequenceDiagram("@startuml\n[*] --> Idle\nIdle -> Busy\n@enduml\n"), false, "state diagram");
-	assert.equal(isSequenceDiagram("@startuml\n:Read;\n@enduml\n"), false, "activity diagram");
-	assert.equal(isSequenceDiagram("@startuml\nA -> B\n' class Foo\n/' state X '/\nB -> A : \"stop\"\n@enduml\n"), true, "comments and strings are ignored");
-	assert.equal(isSequenceDiagram("@startmindmap\n* root\n** leaf\n@endmindmap\n"), false, "no sequence keyword or arrow");
-
-	const server = (value: unknown) => resolveStyle({ plantumlServer: value }).plantumlServer;
-	assert.equal(server("https://plantuml.example.com/"), "https://plantuml.example.com");
-	assert.equal(server("http://localhost:8080"), "http://localhost:8080");
-	assert.equal(server("http://127.0.0.1:8080"), "http://127.0.0.1:8080");
-	assert.equal(server("http://[::1]:8080"), "http://[::1]:8080");
-	assert.equal(server("http://plantuml.example.com"), null, "plain http to a remote host");
-	assert.equal(server("ftp://plantuml.example.com"), null);
-	assert.equal(server("not a url"), null);
-	assert.equal(server(undefined), null);
 	assert.equal(resolveStyle({}).plantuml, true);
 	assert.equal(resolveStyle({ plantuml: false }).plantuml, false);
 });
 
-test("18. closing the setup overlay stops plantuml redraws from going to the stale overlay TUI", async () => {
-	const fake = plantumlFixture();
+test("17. closing the setup overlay stops plantuml redraws from going to the stale overlay TUI", async () => {
+	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
@@ -1021,20 +899,39 @@ test("18. closing the setup overlay stops plantuml redraws from going to the sta
 	assert.equal(h.renders.overlay, overlayRenders, "stale overlay handle is not used");
 });
 
+test("18. five plantuml blocks share one worker and each draws its own picture", async () => {
+	const terminal = plantumlTerminal();
+	const h = createHarness();
+	cleanupFn = () => {
+		terminal.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(Array.from({ length: 5 }, (_, i) => diagram(`many ${i}`, Array.from({ length: i + 1 }, (_, j) => `Alice -> Bob : m${j}`).join("\n"))).join("\n\n"));
+	comp.render(100);
+	assert.equal(plantumlJobs.pending.size, 5);
+	await plantumlJobs.idle();
+	const images = cachedImages();
+	assert.equal(images.length, 5, "all five end as images");
+	assert.equal(new Set(images.map((image) => image.png)).size, 5, "no reply went to the wrong block");
+	assert.deepEqual(images.map((image) => image.height), images.map((image) => image.height).sort((a, b) => a - b), "a longer diagram is taller, in block order");
+});
+
 test("19. a plantuml image reserves a line per image row, so the text after it is never drawn under it", async () => {
-	const png = pngOf(320, 280);
 	for (const images of ["kitty", "iterm2"] as const) {
-		const fake = plantumlFixture({ images, png });
+		const terminal = plantumlTerminal({ images });
 		const h = createHarness();
 		cleanupFn = () => {
-			fake.restore();
+			terminal.restore();
 			h.cleanup();
 		};
 		await h.emit("session_start");
 
-		const comp = reply([diagram(images), "", "After the diagram"].join("\n"));
+		const comp = reply([diagram(images, manyMessages), "", "After the diagram"].join("\n"));
 		comp.render(100);
 		await plantumlJobs.idle();
+		const png = drawnPng();
 		const lines = comp.render(100);
 		const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
 		assert.ok(at >= 0, `${images}: the diagram is drawn as an image`);
@@ -1048,23 +945,22 @@ test("19. a plantuml image reserves a line per image row, so the text after it i
 		const after = lines.findIndex((line) => stripAnsi(line).includes("After the diagram"));
 		assert.ok(after >= top + rows, `${images}: text after the image starts on row ${after - top} of a ${rows}-row image`);
 		if (images === "kitty") assert.match(lines[at]!, /[,;]C=1[,;]/, "the terminal is told not to move the cursor past the image");
-		const end = images === "kitty" ? "\x1b\\" : "\x07";
-		assert.ok(lines[at]!.includes(`${png.toString("base64")}${end}`), `${images}: the terminal receives the whole PNG and the end of its escape sequence`);
+		assert.equal(sentPayload(lines[at]!), png.toString("base64"), `${images}: the terminal receives the whole PNG`);
 		cleanupFn();
 		cleanupFn = undefined;
 	}
 });
 
 test("20. a drawn image keeps one Kitty image id across redraws and streaming updates, and each reply gets its own", async () => {
-	const fake = plantumlFixture({ png: pngOf(320, 280) });
+	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
 
-	const text = diagram("ids");
+	const text = diagram("ids", manyMessages);
 	const message = { role: "assistant", content: [{ type: "text", text }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
@@ -1084,16 +980,16 @@ test("21. an image drawn before the terminal reports its cell size lays out like
 	const savedCell = getCellDimensions();
 	for (const images of ["kitty", "iterm2"] as const) {
 		setCellDimensions({ widthPx: 9, heightPx: 18 });
-		const fake = plantumlFixture({ images, png: pngOf(320, 280) });
+		const terminal = plantumlTerminal({ images });
 		const h = createHarness();
 		cleanupFn = () => {
-			fake.restore();
+			terminal.restore();
 			h.cleanup();
 			setCellDimensions(savedCell);
 		};
 		await h.emit("session_start");
 
-		const text = diagram(`cell ${images}`);
+		const text = diagram(`cell ${images}`, manyMessages);
 		const comp = reply(text);
 		comp.render(100);
 		await plantumlJobs.idle();
@@ -1114,10 +1010,10 @@ test("21. an image drawn before the terminal reports its cell size lays out like
 });
 
 test("22. a plantuml diagram replaces its source after a streaming update that arrived while it rendered", async () => {
-	const fake = plantumlFixture({ png: pngOf(320, 280) });
+	const terminal = plantumlTerminal();
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
@@ -1172,12 +1068,11 @@ function press(comp: any, width: number, label: string, hover: boolean) {
 }
 
 test("23. a plantuml image offers source, image and preview, and each button hands its payload to the desktop", async () => {
-	const png = pngOf(320, 280);
 	for (const copyButtonStyle of ["inline", "hover"] as const) {
-		const fake = plantumlFixture({ png });
+		const terminal = plantumlTerminal();
 		const h = createHarness({ copyButtonStyle });
 		cleanupFn = () => {
-			fake.restore();
+			terminal.restore();
 			h.cleanup();
 		};
 		await h.emit("session_start");
@@ -1185,6 +1080,7 @@ test("23. a plantuml image offers source, image and preview, and each button han
 		const comp = reply(text);
 		comp.render(100);
 		await plantumlJobs.idle();
+		const png = drawnPng();
 		const hover = copyButtonStyle === "hover";
 
 		assert.deepEqual(shownLabels(comp, 100, hover), ["⧉ source", "⧉ image", "⧉ preview"], `${copyButtonStyle}: three buttons, in order`);
@@ -1214,12 +1110,11 @@ test("23. a plantuml image offers source, image and preview, and each button han
 });
 
 test("24. picture buttons drop at narrow widths, vanish with copyButtons:false, and are absent where the desktop cannot show pictures", async () => {
-	const png = pngOf(320, 280);
 	const drawnReply = async (config: Record<string, unknown>, recording = recordingDesktop()) => {
-		const fake = plantumlFixture({ png });
+		const terminal = plantumlTerminal();
 		const h = createHarness(config, recording);
 		cleanupFn = () => {
-			fake.restore();
+			terminal.restore();
 			h.cleanup();
 		};
 		await h.emit("session_start");
@@ -1415,15 +1310,15 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 });
 
 test("26. a plantuml image stays drawn while its top rows are scrolled above pi's fullscreen viewport", async () => {
-	const fake = plantumlFixture({ images: "kitty", png: pngOf(320, 600) });
+	const terminal = plantumlTerminal({ images: "kitty" });
 	const h = createHarness();
 	cleanupFn = () => {
-		fake.restore();
+		terminal.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
 
-	const comp = reply(diagram("scroll"));
+	const comp = reply(diagram("scroll", manyMessages));
 	comp.render(100);
 	await plantumlJobs.idle();
 	const lines = comp.render(100);
