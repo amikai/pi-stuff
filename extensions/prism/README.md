@@ -77,9 +77,13 @@ Any of the 20 semantic color slots (`accentColor`, `headingColor`, `tableHeaderC
 
 PlantUML runs in a worker thread that `prism` starts on the first diagram. Diagrams render one at a time, the first about 0.3 s after the worker starts and later ones in 15 to 70 ms. A render that takes more than 5 s ends with the note `plantuml render timed out`, and the next diagram gets a fresh worker. If the worker fails, the note is `plantuml worker failed`.
 
-The engine reads no files and makes no requests. `!include`, `!includeurl`, and `%getenv` do nothing, and a blocked `!include` shows PlantUML's reason as the note.
+The engine reads no files and makes no requests. It declines every `!include`, `!includeurl`, and `!theme ... from` except the C4-PlantUML ones below, and a declined line shows PlantUML's reason as the note, as in `cannot include /etc/passwd`. `%getenv` does nothing.
 
-Diagrams draw in PlantUML's light theme on a white background, whatever Pi's theme is. Dark mode is not available. Terminals without images show the note `plantuml diagrams require an image-capable terminal`, because there is no text art.
+C4-PlantUML v2.14.0 is bundled, so C4 diagrams draw offline. `!include <C4/C4_Container>` loads it, and so do `C4`, `C4_Context`, `C4_Component`, `C4_Deployment`, `C4_Dynamic`, and `C4_Sequence`. Themes load with `!theme C4_united from C4-PlantUML/themes`, before or after the include. A model that writes the usual link works too. Before the render, `prism` points a line such as `!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml` (also `!include_once`, `!include_many`, and `!includeurl`) at the bundle, and does the same for `!theme NAME from https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/themes`. It does so for any GitHub owner, including a fork, and any ref. The bundle is always v2.14.0, so a fork's own changes, or a newer or older tag, do not show. Other URLs and other libraries stay declined.
+
+C4's default `Person` shape is a bitmap sprite, and the engine cannot draw bitmaps: the whole render fails with `Rendering failed: java.lang.UnsupportedOperationException`. To avoid it, `prism` adds the line `SHOW_PERSON_OUTLINE()` after the first C4 include, which switches `Person` to its outline shape. Error line numbers still count the lines you wrote. A sprite you name yourself, with `$sprite=` or `$legendSprite=`, fails the same way, so leave those out.
+
+Diagrams draw in PlantUML's light theme on an opaque white background, whatever Pi's theme is. Dark mode is not available. Terminals without images show the note `plantuml diagrams require an image-capable terminal`, because there is no text art.
 
 Text is drawn with fonts read from the system: Helvetica and Hiragino Sans GB on macOS, and Liberation Sans, DejaVu Sans, and Noto Sans CJK on Linux. Characters that none of the installed fonts cover are left out. With none of them installed, the note is `plantuml error: no system font found to draw text`.
 
@@ -87,7 +91,7 @@ Results, including failures, are cached for the session. Edit the source to retr
 
 ## PlantUML engine
 
-[`core/vendor/plantuml.js`](core/vendor/plantuml.js) is a generated file, 8.6 MB of ESM. [`core/vendor/plantuml/build.sh`](core/vendor/plantuml/build.sh) makes it, and [`core/vendor/plantuml/worker.js`](core/vendor/plantuml/worker.js) is the worker source that `core/plantuml.ts` starts.
+[`core/vendor/plantuml.js`](core/vendor/plantuml.js) is a generated file, 8.4 MB of ESM. [`core/vendor/plantuml/build.sh`](core/vendor/plantuml/build.sh) makes it, and [`core/vendor/plantuml/worker.js`](core/vendor/plantuml/worker.js) is the worker source that `core/plantuml.ts` starts.
 
 The engine is PlantUML itself, compiled to JavaScript. It comes from a [PlantUML source checkout](https://github.com/plantuml/plantuml) at commit `e6c3adc2be7a50daa5f04b2b0f9d24928aa08efa`, which reports `PlantUML version 1.2026.10beta1 / e6c3adc`. Its subproject `plantuml-mcp-js` has a headless entry, `net.sourceforge.plantuml.teavm.js.headless.PlantUMLHeadless`, which TeaVM compiles with:
 
@@ -95,11 +99,12 @@ The engine is PlantUML itself, compiled to JavaScript. It comes from a [PlantUML
 ./gradlew :plantuml-mcp-js:npmPackage -Pfast
 ```
 
-`build.sh` runs that command (`-Pfast` builds only the GPL jar, which is the license this bundle carries) and then bundles the result with esbuild 0.28.2 into the single file. The bundle holds:
+`build.sh` first makes a throwaway `git worktree` of the checkout's `HEAD`, so the checkout is untouched and its uncommitted changes are ignored. It applies [`core/vendor/plantuml/patches/*.patch`](core/vendor/plantuml/patches) to that worktree. Today there is one, `space-width.patch`, which sets the width of U+0020 to 44 in `UnicodeFontWidthSansSerif`. The TeaVM engine measures text with that table, and upstream has 0 for the space, so wrapped words ran together. `build.sh` then runs the command above in the worktree (`-Pfast` builds only the GPL jar, which is the license this bundle carries) and bundles the result with esbuild 0.28.2 into the single file. The bundle holds:
 
 - the compiled engine, `engine.js`,
-- `worker.js`, which loads the engine and the fonts and answers `{ id, source }` messages with `{ id, png }` or `{ id, error, line }`,
+- `worker.js`, which loads the engine and the fonts, serves the bundled C4 library and its themes to the engine and declines every other file, paints the SVG's CSS background, which `resvg` ignores, behind the picture, and answers `{ id, source }` messages with `{ id, png }` or `{ id, error, line }`,
 - PlantUML's `src/main/teavm/generated/themes.js`,
+- PlantUML's `src/main/teavm/stdlib/c4.min.js`, the C4-PlantUML v2.14.0 library, as text,
 - `@viz-js/viz` 3.31.0, which is Graphviz compiled to WebAssembly and does the layout,
 - `@resvg/resvg-wasm` 2.6.2, which turns the SVG into a PNG at twice its size.
 
