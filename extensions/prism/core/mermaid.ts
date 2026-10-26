@@ -354,8 +354,6 @@ const fallback = (verdict: GaveUp, picture: Picture): { note: string } | { png: 
       return picture;
     case 'pending':
       return { note: PENDING_NOTE };
-    case 'failed':
-      return { note: `${textNote(verdict)} (mmdr ${picture.reason})` };
     case 'declined':
       return { note: textNote(verdict) };
   }

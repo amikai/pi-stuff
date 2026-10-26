@@ -692,10 +692,9 @@ if (cmd === "drive") {
 		assert.equal(count(drawnPlain, "[ ⧉ preview ]"), buttons ? 2 : 0, "preview buttons appear where the desktop shows pictures");
 		assert.ok(drawnPlain.includes("notADiagram diagrams draw as source for now"), "a header mmdr misread keeps main's note");
 		assert.ok(!drawnPlain.includes("notADiagram diagrams draw as source for now (mmdr"), "and blames no one");
-		assert.ok(
-			drawnPlain.includes("diagram is 81 cols, terminal is 80 (mmdr misread it)"),
-			"the hyphenated fan-out keeps its text note and says why mmdr did not help",
-		);
+		assert.ok(drawnPlain.includes("diagram is 81 cols, terminal is 80"), "the hyphenated fan-out keeps main's text note");
+		assert.ok(!drawnPlain.includes("(mmdr"), "and no note carries an mmdr suffix");
+		assert.ok(drawnPlain.includes("child-0[Child number 0]"), "and its code block shows the source");
 
 		const widePlain = comp.render(wide).map(stripAnsi).join("\n");
 		assert.equal(count(widePlain, "Child number 3"), 2, "at 140 columns both fan-outs are box art");

@@ -1667,7 +1667,7 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
 	assert.equal(fake.runs(), 1, "one run served all three widths");
 });
 
-test("31. mmdr's refusals keep the text note, its failures add a reason, and a missing mmdr changes nothing", async () => {
+test("31. every way mmdr cannot draw keeps the text note and the source, and a missing mmdr changes nothing", async () => {
 	const fake = mmdrFixture();
 	const h = createHarness();
 	cleanupFn = () => {
@@ -1691,23 +1691,17 @@ test("31. mmdr's refusals keep the text note, its failures add a reason, and a m
 	assert.ok(!misread.plain.includes("(mmdr"), "and says nothing about mmdr");
 	assert.equal(misread.images, 0);
 
-	const reasons: [string, string][] = [
-		["fake:syntax", "misread it"],
-		["fake:empty", "found nothing to draw"],
-		["fake:fail", "failed"],
-		["fake:nolayout", "failed"],
-		["fake:huge", "image is 8141×4530 px, over the 2 MiB limit"],
-	];
-	for (const [marker, reason] of reasons) {
+	for (const marker of ["fake:syntax", "fake:empty", "fake:fail", "fake:nolayout", "fake:huge"]) {
 		const result = await noteOf(timeline(marker));
-		assert.ok(result.plain.includes(`${give} (mmdr ${reason})`), `${marker}: ${reason}`);
+		assert.ok(result.plain.includes(give), `${marker}: main's note`);
+		assert.ok(!result.plain.includes("mmdr") && result.plain.includes(`2020 : ${marker}`), `${marker}: no mmdr suffix, and the code block shows the source`);
 		assert.equal(result.images, 0, `${marker}: no picture`);
 	}
 	assert.deepEqual(fake.leftovers(), [], "every job directory is removed, failures included");
 
 	const before = fake.runs();
 	const long = await noteOf(timeline("x".repeat(20000)));
-	assert.ok(long.plain.includes(`${give} (mmdr skipped a source over 20000 chars)`), "a huge source is not sent");
+	assert.ok(long.plain.includes(give) && !long.plain.includes("mmdr"), "a huge source keeps main's note and is not sent");
 	assert.equal(fake.runs(), before, "and starts no run");
 
 	fake.restore();
@@ -1736,7 +1730,8 @@ test("32. an mmdr render past 5 s is killed and noted", async () => {
 	const comp = reply(mermaidFence("timeline\n  2020 : fake:sleep"));
 	comp.render(100);
 	await mmdrJobs.idle(8000);
-	assert.ok(plainText(comp).includes("timeline diagrams draw as source for now (mmdr timed out after 5 s)"));
+	const frame = plainText(comp);
+	assert.ok(frame.includes("timeline diagrams draw as source for now") && !frame.includes("mmdr"), "a timeout leaves main's note");
 	assert.deepEqual(fake.leftovers(), [], "the job directory is removed after the kill");
 });
 
@@ -1811,7 +1806,7 @@ test("35. judge accepts what mmdr drew faithfully and refuses what it misread, o
 	for (const [source, word] of words) assert.equal(headerWord(source), word, JSON.stringify(source));
 });
 
-test("36. fallback shows the picture, the pending note, or today's note with mmdr's reason, for every verdict", () => {
+test("36. fallback shows the picture, the pending note, or today's note, for every verdict", () => {
 	const verdicts = [
 		{ fits: false, why: "unsupported", word: "timeline" },
 		{ fits: false, why: "too-wide", narrowest: 95, columns: 78 },
@@ -1824,7 +1819,6 @@ test("36. fallback shows the picture, the pending note, or today's note with mmd
 		assert.deepEqual(fallback(verdict, png), png, "a picture wins");
 		assert.deepEqual(fallback(verdict, { state: "pending" }), { note: "drawing with mmdr…" });
 		assert.deepEqual(fallback(verdict, { state: "declined" }), { note: notes[i] });
-		assert.deepEqual(fallback(verdict, { state: "failed", reason: "timed out after 5 s" }), { note: `${notes[i]} (mmdr timed out after 5 s)` });
 	});
 	const style = resolveStyle({});
 	const fits = textVerdict("flowchart TD\n  A --> B", style, 80, 0);
@@ -1866,6 +1860,6 @@ test("37. real mmdr: an unknown header reads as a flowchart, a timeline does not
 	};
 	assert.deepEqual(await ask("notADiagram\n  foo"), { state: "declined" });
 	assert.equal((await ask("timeline\n  2020 : a")).state, "drawn");
-	assert.deepEqual(await ask("flowchart TD\n  api-gateway --> auth-service"), { state: "failed", reason: "misread it" });
+	assert.deepEqual(await ask("flowchart TD\n  api-gateway --> auth-service"), { state: "declined" });
 	mmdrJobs.clear();
 });
