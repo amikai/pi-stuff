@@ -2309,3 +2309,109 @@ test("64. the help screen names ▣ png, with the platforms it shows on", () => 
 	assert.ok(showcaseText().includes("`▣ png`"));
 	assert.ok(helpText().includes("PNG image (macOS/Windows)"));
 });
+
+const { diagramPalette } = await import("../extensions/prism/core/mermaid.ts");
+
+const PIE = mermaidFence('pie title Pets\n  "Dogs" : 386\n  "Cats" : 85\n  "Rats" : 15');
+const PIE_RADIUS = 6;
+const PIE_SIDE = 2 * PIE_RADIUS * 40;
+
+function pieTerminal(images: "kitty" | "iterm2" | null) {
+	setCapabilities({ images, trueColor: true, hyperlinks: false });
+	return () => resetCapabilitiesCache();
+}
+
+// Every IDAT chunk inflated, with the filter byte of each scanline checked to be 0 so rows are raw RGBA.
+function decodePng(png: Buffer) {
+	assert.equal(png.toString("latin1", 1, 4), "PNG", "a PNG signature");
+	assert.deepEqual([png[24], png[25]], [8, 6], "8-bit RGBA");
+	const [width, height] = [png.readUInt32BE(16), png.readUInt32BE(20)];
+	const idat: Buffer[] = [];
+	for (let at = 8; at < png.length; ) {
+		const length = png.readUInt32BE(at);
+		if (png.toString("latin1", at + 4, at + 8) === "IDAT") idat.push(png.subarray(at + 8, at + 8 + length));
+		at += length + 12;
+	}
+	const raw = inflateSync(Buffer.concat(idat));
+	assert.equal(raw.length, (width * 4 + 1) * height);
+	for (let y = 0; y < height; y++) assert.equal(raw[y * (width * 4 + 1)], 0, `row ${y} is unfiltered`);
+	return { width, height, at: (x: number, y: number) => [...raw.subarray(y * (width * 4 + 1) + 1 + x * 4).subarray(0, 4)] };
+}
+
+const hexRgb = (hex: string) => [1, 3, 5].map((k) => Number.parseInt(hex.slice(k, k + 2), 16));
+const hasTextPie = (plain: string) => /[▘▝▀▖▌▞▛▗▚▐▜▄▙▟]/.test(plain);
+
+
+test("65. with images on, a round pie draws as a smooth PNG beside its legend", async () => {
+	const restoreTerminal = pieTerminal("kitty");
+	const h = createHarness();
+	cleanupFn = () => {
+		restoreTerminal();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const lines = reply(PIE).render(100);
+	const plain = lines.map(onScreen).join("\n");
+	const png = decodePng(Buffer.from(sentPayload(lines.join("\n")), "base64"));
+	assert.deepEqual([png.width, png.height], [PIE_SIDE, PIE_SIDE], "the picture is 40 px per terminal row");
+	assert.deepEqual(png.at(0, 0), [0, 0, 0, 0], "outside the circle is transparent");
+	const dogs = hexRgb(diagramPalette(themeFromPiTheme(activePiGlobalTheme))[0]);
+	assert.deepEqual(png.at(PIE_SIDE * 0.75, PIE_SIDE / 2), [...dogs, 255], "the biggest slice, to the right of the center, has the first palette color");
+	assert.ok(!hasTextPie(plain), plain);
+	for (const label of ["Pets", "Dogs", "Cats", "Rats"]) assert.ok(plain.includes(label), `${label} is drawn: ${plain}`);
+	assert.equal([...plain.matchAll(/██/g)].length, 3, "one swatch per slice");
+});
+
+for (const [name, images, text, options] of [
+	["images off", null, PIE, undefined],
+	["an open block", "kitty", PIE.replace(/\n```$/, ""), undefined],
+	["a Hebrew label", "kitty", PIE.replace('"Dogs"', '"כלבים גדולים"'), undefined],
+	["a slice color that is the terminal's own", "kitty", PIE, { linkColor: "cyan" }],
+] as const) {
+	test(`66. a round pie stays text with ${name}`, async () => {
+		const restoreTerminal = pieTerminal(images);
+		const h = createHarness(options);
+		cleanupFn = () => {
+			restoreTerminal();
+			h.cleanup();
+		};
+		await h.emit("session_start");
+
+		const lines = reply(text).render(100);
+		assert.ok(!lines.join("\n").includes("\x1b_G"), "no picture reaches the terminal");
+		assert.ok(hasTextPie(lines.map(onScreen).join("\n")), "the circle is drawn from quadrant glyphs");
+	});
+}
+
+test("67. a picture pie keeps ⧉ art and ▣ png for the text circle and offers no ⧉ image", async () => {
+	const restoreHost = clipboardHost("windows");
+	const restoreTerminal = pieTerminal("kitty");
+	const h = createHarness();
+	cleanupFn = () => {
+		restoreTerminal();
+		h.cleanup();
+		restoreHost();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(PIE);
+	assert.ok(comp.render(100).join("\n").includes("\x1b_G"), "the pie is a picture");
+	assert.deepEqual(shownLabels(comp, 100, false).filter((label) => label !== "⧉ copy reply"), ["⧉ source", "⧉ art", "▣ png"]);
+	copiedTexts.length = 0;
+	press(comp, 100, "⧉ art", false);
+	assert.ok(hasTextPie(copiedTexts[0]!) && copiedTexts[0]!.includes("Dogs"), `the text circle and its legend are copied: ${copiedTexts[0]}`);
+});
+
+test("68. the markdown transformer keeps the text pie, since it rewrites text and cannot hold a picture", async () => {
+	const restoreTerminal = pieTerminal("kitty");
+	const h = createHarness();
+	cleanupFn = () => {
+		restoreTerminal();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+
+	const transformed = h.markdownTransformers[0]!(PIE, { messageType: "assistant", isStreaming: false, availableWidth: 100 });
+	assert.ok(hasTextPie(transformed) && transformed.includes("Dogs"), transformed);
+});

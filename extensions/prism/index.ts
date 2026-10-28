@@ -903,7 +903,7 @@ export default function prismExtension(
 		const fold = makeFolder(options?.onInvalidate);
 		const drawn = drawDiagrams(
 			EL,
-			activeStyle,
+			{ ...activeStyle, images: Boolean(getCapabilities().images) },
 			blocks,
 			columns - markerRoom(activeStyle),
 			mermanEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,

@@ -185,7 +185,7 @@ xychart-beta
     line "west" [12, 18, 25, 20, 14]
 \`\`\`
 
-A pie draws round with a legend. Set \`pieStyle\` to \`bars\` in \`~/.pi/agent/prism.json\` for one bar per slice:
+A pie draws round with a legend, as a smooth picture in terminals that show images. Set \`pieStyle\` to \`bars\` in \`~/.pi/agent/prism.json\` for one bar per slice:
 
 \`\`\`mermaid
 pie showData title Time per reply stage
@@ -568,7 +568,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
 		name: "pies",
 		key: "pieStyle",
 		title: "Pie charts",
-		note: "How mermaid `pie` charts draw. `round` falls back to bars in ascii mode, with more slices than the theme has distinct colors or in a narrow terminal.",
+		note: "How mermaid `pie` charts draw. `round` draws a smooth picture in terminals that show images and text elsewhere, and falls back to bars in ascii mode, with more slices than the theme has distinct colors or in a narrow terminal.",
 		options: ["round", "bars"],
 		sample: '```mermaid\npie title Time per reply stage\n    "Draw" : 9\n    "Paint" : 5\n    "Parse" : 3\n```',
 	},

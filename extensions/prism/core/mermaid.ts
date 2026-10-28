@@ -1,9 +1,9 @@
 import { Fragment, h } from "./jsx.ts";
 import type { ElementTable, RenderElement } from "./jsx.ts"
-import type { ChartArt } from "./charts.ts"
-import { ganttText, pieText } from "./charts.ts"
+import type { ChartArt, Pie, Rgb } from "./charts.ts"
+import { ganttText, pieRgba, pieText, rgbaPng } from "./charts.ts"
 import { drawFigure, isFigureLang } from "./figure.ts"
-import { fitImage } from "./latex.ts"
+import { fitImage, ratexColor } from "./latex.ts"
 import { mermanPicture } from "./merman.ts"
 import type { Picture } from "./merman.ts"
 import type { Wake } from "./background.ts"
@@ -320,8 +320,46 @@ quoted !== undefined ? `${open}"${cap(quoted, max)}"${close}` : `|${cap(piped, m
 
 const pieColorsOf = (style) => style.pieStyle === 'round' ? diagramPalette(style.theme).length : 0;
 
+const PIE_ROW_PX = 40;
+
+const exact = (color: string) => /^(#|rgb\()/i.test(color.trim()) || Number(/^ansi256\((\d+)\)$/i.exec(color.trim())?.[1]) >= 16;
+
+const rgbOf = (color: string): Rgb | null => {
+  const hex = exact(color) ? /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(ratexColor(color))?.[1] : undefined;
+  if (!hex) return null;
+  const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex;
+  return [0, 2, 4].map((k) => Number.parseInt(full.slice(k, k + 2), 16)) as unknown as Rgb;
+};
+
+const pictures = new Map<string, string>();
+
+const piePicture = ({ Box, Text, Image }, style: Style, pie: Pie, key: string) => {
+  const palette = diagramPalette(style.theme);
+  const colors = palette.map(rgbOf);
+  if (colors.some((c) => c === null)) return null;
+  const side = 2 * pie.radius * PIE_ROW_PX;
+  const png = remember(pictures, `${side}:${pie.bounds}:${colors}`, () => rgbaPng(pieRgba(pie.bounds, colors as Rgb[], side), side).toString('base64'), 8);
+  const lead = Math.floor((2 * pie.radius - pie.legend.length) / 2);
+  return (
+    h(Box, { key: key, flexDirection: "column", paddingLeft: 2 },
+    pie.title ? h(Text, { color: style.theme.diagramText }, pie.title) : null,
+    h(Box, { flexDirection: "row" },
+    h(Image, { source: { png }, columns: 4 * pie.radius, rows: 2 * pie.radius, alt: "pie chart" }),
+    h(Box, { flexDirection: "column", paddingLeft: 3 },
+    Array.from({ length: lead }, (_, i) => h(Text, { key: `s${i}` }, ' ')),
+    pie.legend.map((line, i) =>
+    h(Text, { key: `l${i}`, color: style.theme.diagramText },
+    h(Text, { color: palette[i % palette.length] }, '██'),
+    ` ${line}`))))));
+
+};
+
+const chartElement = (el, style: Style, art: ChartArt, block: Extract<Block, { kind: 'code' }>, source: string, key: string) =>
+(art.pie && style.images && !block.isOpen && !mirrored(style) && !hasRtl(art.text) ? piePicture(el, style, art.pie, key) : null) ??
+boxArt(el, style, art.text, key, inlineMarks(source), art.slices, art.series);
+
 type TextVerdict =
-{ fits: true; art: { text: string; slices?: unknown; series?: unknown } } |
+{ fits: true; art: ChartArt } |
 { fits: false; why: 'unsupported'; word: string } |
 { fits: false; why: 'too-wide'; narrowest: number; columns: number } |
 { fits: false; why: 'no-art' };
@@ -364,7 +402,7 @@ const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>,
   const verdict = textVerdict(source, style, columns, pieColors);
   if (verdict.fits) {
     const { art } = verdict;
-    return { element: boxArt(el, style, art.text, `b${i}`, inlineMarks(source), art.slices, art.series), art: art.text };
+    return { element: chartElement(el, style, art, block, source, `b${i}`), art: art.text };
   }
   if (block.isOpen) return undefined;
   const picture: Picture = images ? mermanPicture(source.replace(INLINE_TAG, ''), images) : { state: 'declined' };

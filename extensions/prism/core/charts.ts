@@ -1,3 +1,4 @@
+import { crc32, deflateSync } from "node:zlib"
 import { graphemes, width } from "./render.ts"
 
 const DAY = 86400000
@@ -22,7 +23,9 @@ const pad = (text: string, size: number) => text + ' '.repeat(Math.max(0, size -
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
 
-export type ChartArt = { text: string; slices?: number[][]; series?: number[][] }
+export type Pie = { bounds: number[]; radius: number; legend: string[]; title?: string }
+
+export type ChartArt = { text: string; slices?: number[][]; series?: number[][]; pie?: Pie }
 
 const QUADRANTS = ' ▘▝▀▖▌▞▛▗▚▐▜▄▙▟█'
 
@@ -61,7 +64,74 @@ const roundPie = (colors: number, title: string | undefined, slices: Slice[], le
     rows[offset + i] += `   ██ ${line}`
     hues[offset + i]!.push(-1, -1, -1, i, i)
   })
-  return { text: [...(title ? [title.trim()] : []), ...rows.map(r => r.trimEnd())].join('\n'), slices: [...(title ? [[]] : []), ...hues] }
+  return { text: [...(title ? [title.trim()] : []), ...rows.map(r => r.trimEnd())].join('\n'), slices: [...(title ? [[]] : []), ...hues], pie: { bounds, radius, legend, title: title?.trim() || undefined } }
+}
+
+export type Rgb = readonly [number, number, number]
+
+type Ray = readonly [number, number]
+
+const sliceOf = (bounds: number[], dx: number, dy: number) => {
+  const turn = (Math.atan2(dx, -dy) / (2 * Math.PI) + 1) % 1
+  let i = 0
+  while (i < bounds.length - 1 && turn >= bounds[i]!) i++
+  return i
+}
+
+const raysOf = (bounds: number[]): Ray[] => (bounds.length > 1 ? bounds.map(b => [Math.sin(2 * Math.PI * b), -Math.cos(2 * Math.PI * b)] as const) : [])
+
+const nearRay = (rays: readonly Ray[], dx: number, dy: number) => rays.some(([ux, uy]) => dx * ux + dy * uy > -1 && Math.abs(dx * uy - dy * ux) < 1)
+
+const SUBSAMPLES = 4
+
+type Raster = { out: Uint8Array; bounds: number[]; rays: Ray[]; colors: readonly Rgb[]; radius: number }
+
+const paintPixel = ({ out, bounds, rays, colors, radius }: Raster, at: number, dx: number, dy: number) => {
+  const steps = Math.abs(Math.hypot(dx, dy) - radius) < 1 || nearRay(rays, dx, dy) ? SUBSAMPLES : 1
+  let r = 0
+  let g = 0
+  let b = 0
+  let inside = 0
+  for (let sy = 0; sy < steps; sy++)
+    for (let sx = 0; sx < steps; sx++) {
+      const x = dx + (sx + 0.5) / steps - 0.5
+      const y = dy + (sy + 0.5) / steps - 0.5
+      if (x * x + y * y > radius * radius) continue
+      const color = colors[sliceOf(bounds, x, y) % colors.length]!
+      r += color[0]
+      g += color[1]
+      b += color[2]
+      inside++
+    }
+  if (inside === 0) return
+  out.set([Math.round(r / inside), Math.round(g / inside), Math.round(b / inside), Math.round((255 * inside) / (steps * steps))], at)
+}
+
+export const pieRgba = (bounds: number[], colors: readonly Rgb[], side: number): Uint8Array => {
+  const center = side / 2
+  const raster: Raster = { out: new Uint8Array(side * side * 4), bounds, rays: raysOf(bounds), colors, radius: center - 1 }
+  for (let y = 0; y < side; y++) for (let x = 0; x < side; x++) paintPixel(raster, (y * side + x) * 4, x + 0.5 - center, y + 0.5 - center)
+  return raster.out
+}
+
+const pngChunk = (type: string, data: Buffer) => {
+  const body = Buffer.concat([Buffer.from(type, "latin1"), data])
+  const head = Buffer.alloc(4)
+  head.writeUInt32BE(data.length)
+  const tail = Buffer.alloc(4)
+  tail.writeUInt32BE(crc32(body))
+  return Buffer.concat([head, body, tail])
+}
+
+export const rgbaPng = (rgba: Uint8Array, side: number): Buffer => {
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(side, 0)
+  header.writeUInt32BE(side, 4)
+  header.set([8, 6, 0, 0, 0], 8)
+  const stride = side * 4
+  const scanlines = Buffer.alloc((stride + 1) * side)
+  for (let y = 0; y < side; y++) scanlines.set(rgba.subarray(y * stride, (y + 1) * stride), y * (stride + 1) + 1)
+  return Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), pngChunk("IHDR", header), pngChunk("IDAT", deflateSync(scanlines)), pngChunk("IEND", Buffer.alloc(0))])
 }
 
 const shares = (slices: Slice[], showData: boolean): { label: string; tail: string }[] => {
