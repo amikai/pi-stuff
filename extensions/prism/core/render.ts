@@ -222,7 +222,7 @@ const launches = (href) => {
 
 const isHyperlink = (href, reach) =>
 	(reach.httpLinks ? /^https?:/i : /^(https:|http:\/\/localhost(:\d+)?([/?#]|$))/i).test(href) ||
-	(reach.editorLinks && /^vscode(-insiders)?:\/\/file\//i.test(href)) ||
+	(reach.editorLinks && /^(vscode(-insiders)?|cursor|windsurf|zed):\/\/file\//i.test(href)) ||
 	(reach.fileLinks !== null && /^file:/i.test(href) && !launches(href));
 
 const plainLink = (text, href) => {

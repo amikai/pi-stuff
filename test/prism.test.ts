@@ -2065,3 +2065,39 @@ test("54. on iTerm a shell block with a line that opens with Hebrew keeps the sh
 	assert.equal(new Set(plain).size, 4, `command, flag, string and comment each have a color: ${plain}`);
 	assert.deepEqual(held, plain);
 });
+
+test("55. editor file links are terminal hyperlinks, and the editors' other links draw as text and target", async () => {
+	const prevForce = process.env.FORCE_HYPERLINK;
+	process.env.FORCE_HYPERLINK = "1";
+	const h = createHarness();
+	cleanupFn = () => {
+		h.cleanup();
+		if (prevForce === undefined) delete process.env.FORCE_HYPERLINK;
+		else process.env.FORCE_HYPERLINK = prevForce;
+	};
+	await h.emit("session_start");
+
+	const reply = [
+		"[note](vscode://file/C:/src/notes.md:12)",
+		"[insiders](vscode-insiders://file/home/me/app.ts)",
+		"[cursor](cursor://file/C:/src/app.ts:3:5)",
+		"[windsurf](windsurf://file/home/me/run.py:7)",
+		"[zed](zed://file/home/me/main.rs:9:2)",
+		"[clone](vscode://vscode.git/clone?url=https://example.com/x.git)",
+		"[zclone](zed://git/clone?repo=https://example.com/x.git)",
+		"[settings](zed://settings)",
+	].join(" ");
+	const comp = new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text: reply }], timestamp: 1000 } as any);
+	const rendered = comp.render(400).join("\n");
+	const linked = [...rendered.matchAll(/\x1b\]8;;([^\x07\x1b]+)/g)].map((m) => m[1]);
+	assert.deepEqual(linked, [
+		"vscode://file/C:/src/notes.md:12",
+		"vscode-insiders://file/home/me/app.ts",
+		"cursor://file/C:/src/app.ts:3:5",
+		"windsurf://file/home/me/run.py:7",
+		"zed://file/home/me/main.rs:9:2",
+	]);
+	const plain = stripAnsi(rendered);
+	assert.ok(plain.includes("zclone (zed://git/clone?repo=https://example.com/x.git)"), "a zed clone link shows its target");
+	assert.ok(plain.includes("settings (zed://settings)"), "a zed settings link shows its target");
+});
