@@ -4,8 +4,8 @@ import type { ChartArt } from "./charts.ts"
 import { ganttText, pieText } from "./charts.ts"
 import { drawFigure, isFigureLang } from "./figure.ts"
 import { fitImage } from "./latex.ts"
-import { mmdrPicture } from "./mmdr.ts"
-import type { Picture } from "./mmdr.ts"
+import { mermanPicture } from "./merman.ts"
+import type { Picture } from "./merman.ts"
 import type { Wake } from "./background.ts"
 import type { Block } from "./markdown.ts"
 import type { Drawn, DrawnBlock } from "./render.ts"
@@ -346,7 +346,7 @@ verdict.why === 'unsupported' ? `${verdict.word} diagrams draw as source for now
 verdict.why === 'no-art' ? 'diagram failed to render' :
 `diagram is ${verdict.narrowest} cols, terminal is ${verdict.columns}`;
 
-const PENDING_NOTE = 'drawing with mmdr…';
+const PENDING_NOTE = 'drawing with merman…';
 
 const fallback = (verdict: GaveUp, picture: Picture): { note: string } | { png: string; width: number; height: number } => {
   switch (picture.state) {
@@ -367,7 +367,7 @@ const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>,
     return { element: boxArt(el, style, art.text, `b${i}`, inlineMarks(source), art.slices, art.series), art: art.text };
   }
   if (block.isOpen) return undefined;
-  const picture: Picture = images ? mmdrPicture(source.replace(INLINE_TAG, ''), images) : { state: 'declined' };
+  const picture: Picture = images ? mermanPicture(source.replace(INLINE_TAG, ''), images) : { state: 'declined' };
   const out = fallback(verdict, picture);
   if ('note' in out) return out;
   const fit = fitImage(out, columns);

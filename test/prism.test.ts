@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -59,7 +59,7 @@ const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts"
 const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
-const { headerWord, judge, MMDR_HINT, MMDR_KINDS, mmdrJobs, mmdrPicture, parseLayout } = await import("../extensions/prism/core/mmdr.ts");
+const { headerWord, MERMAN_HINT, MERMAN_KINDS, mermanJobs, mermanPicture } = await import("../extensions/prism/core/merman.ts");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 const { showcaseText } = await import("../extensions/prism/core/help.ts");
@@ -1426,27 +1426,23 @@ const hugePng = (width: number, height: number, bytes: number) => {
 	return png;
 };
 
-function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; rsvg?: boolean; png?: Buffer } = {}) {
-	const dir = mkdtempSync(join(tmpdir(), "prism-fake-mmdr-"));
+function mermanFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer } = {}) {
+	const dir = mkdtempSync(join(tmpdir(), "prism-fake-merman-"));
 	const bin = join(dir, "bin");
 	mkdirSync(bin);
 	writeFileSync(join(dir, "fixture.png"), options.png ?? pngOf(320, 280));
 	writeFileSync(join(dir, "big.png"), hugePng(2000, 1500, 2.5 * 1024 * 1024));
 	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 3 * 1024 * 1024 + 1));
-	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-mmdr.sh"), join(bin, "mmdr"));
-	chmodSync(join(bin, "mmdr"), 0o755);
-	if (options.rsvg !== false) {
-		copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-rsvg-convert.sh"), join(bin, "rsvg-convert"));
-		chmodSync(join(bin, "rsvg-convert"), 0o755);
-	}
-	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MMDR_DIR", "SSH_CONNECTION", "SSH_TTY"].map((k) => [k, process.env[k]]));
+	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-merman.sh"), join(bin, "merman-cli"));
+	chmodSync(join(bin, "merman-cli"), 0o755);
+	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MERMAN_DIR", "SSH_CONNECTION", "SSH_TTY"].map((k) => [k, process.env[k]]));
 	delete process.env.SSH_CONNECTION;
 	delete process.env.SSH_TTY;
-	process.env.FAKE_MMDR_DIR = dir;
+	process.env.FAKE_MERMAN_DIR = dir;
 	process.env.TMPDIR = dir;
-	process.env.PATH = options.installed === false ? join(dir, "empty") : options.rsvg === false ? bin : `${bin}:${saved.PATH}`;
+	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
 	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
-	mmdrJobs.clear();
+	mermanJobs.clear();
 	const read = (name: string) => {
 		try {
 			return readFileSync(join(dir, name), "utf8");
@@ -1460,16 +1456,13 @@ function mmdrFixture(options: { images?: "kitty" | "iterm2" | null; installed?: 
 		runs: () => read("calls.log").split("\n").filter((line) => line === "start").length,
 		stdin: () => read("last-stdin.txt"),
 		args: () => read("last-args.txt").trim(),
-		rsvgArgs: () => read("rsvg-args.txt").trim(),
-		cwd: () => read("last-cwd.txt").trim(),
-		leftovers: () => readdirSync(dir).filter((name) => name.startsWith("prism-mmdr-")),
 		restore: () => {
 			for (const [name, value] of Object.entries(saved)) {
 				if (value === undefined) delete process.env[name];
 				else process.env[name] = value;
 			}
 			resetCapabilitiesCache();
-			mmdrJobs.clear();
+			mermanJobs.clear();
 			rmSync(dir, { recursive: true, force: true });
 		},
 	};
@@ -1481,9 +1474,9 @@ const fanOut = (id: (n: number) => string = (n) => `c${n}`) =>
 const plainText = (comp: any, width = 100) => stripAnsi(comp.render(width).join("\n"));
 const drawnImages = (comp: any, width = 100) => shownLabels(comp, width, false).filter((label) => label === "⧉ preview").length;
 
-test("28. a timeline the text renderer cannot draw shows a pending note, then the mmdr picture with source, image and preview", async () => {
+test("28. a timeline the text renderer cannot draw shows a pending note, then the merman picture with source, image and preview", async () => {
 	const png = pngOf(320, 280);
-	const fake = mmdrFixture({ png });
+	const fake = mermanFixture({ png });
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1494,12 +1487,12 @@ test("28. a timeline the text renderer cannot draw shows a pending note, then th
 	const source = "timeline\n  2020 : <i>start</i>\n  2021 : end";
 	const comp = reply(mermaidFence(source));
 	const first = plainText(comp);
-	assert.ok(first.includes("drawing with mmdr…"), "the first frame says mmdr is drawing");
+	assert.ok(first.includes("drawing with merman…"), "the first frame says merman is drawing");
 	assert.ok(!first.includes("timeline diagrams draw as source"), "the pending note replaces the give-up note");
 	assert.ok(first.includes("2020 : <i>start</i>"), "the source stays visible meanwhile");
-	assert.equal(mmdrJobs.pending.size, 1);
+	assert.equal(mermanJobs.pending.size, 1);
 
-	await mmdrJobs.idle();
+	await mermanJobs.idle();
 	assert.ok(h.renders.screen > 0, "the settled job asks pi to paint");
 	const drawn = comp.render(100).join("\n");
 	assert.ok(drawn.includes(KITTY_IMAGE), "the next frame draws the PNG");
@@ -1510,20 +1503,18 @@ test("28. a timeline the text renderer cannot draw shows a pending note, then th
 	press(comp, 100, "⧉ source", false);
 	assert.deepEqual(copiedTexts, [source], "source copies the mermaid text as written, tags included");
 	press(comp, 100, "⧉ image", false);
-	assert.deepEqual(h.desktop.pngs, [png], "image copies the PNG mmdr drew");
+	assert.deepEqual(h.desktop.pngs, [png], "image copies the PNG merman drew");
 	press(comp, 100, "⧉ preview", false);
-	assert.deepEqual(h.desktop.previews, [png], "preview opens the PNG mmdr drew");
+	assert.deepEqual(h.desktop.previews, [png], "preview opens the PNG merman drew");
 
-	assert.equal(fake.stdin(), "timeline\n  2020 : start\n  2021 : end\n", "mmdr gets the source without inline tags");
-	assert.ok(basename(fake.cwd()).startsWith("prism-mmdr-"), "mmdr runs in its own job directory");
-	assert.deepEqual(fake.leftovers(), [], "the job directory is removed");
+	assert.equal(fake.stdin(), "timeline\n  2020 : start\n  2021 : end\n", "merman gets the source without inline tags");
 	comp.invalidate();
 	comp.render(100);
 	assert.equal(fake.runs(), 1, "later frames hit the cache");
 });
 
-test("29. mmdr never runs for art that fits, an open fence, a terminal without images, or the markdown transformer", async () => {
-	const fake = mmdrFixture();
+test("29. merman never runs for art that fits, an open fence, a terminal without images, or the markdown transformer", async () => {
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1536,24 +1527,24 @@ test("29. mmdr never runs for art that fits, an open fence, a terminal without i
 	assert.deepEqual(shownLabels(art, 100, false), ["⧉ source", "⧉ art"]);
 
 	const open = reply("```mermaid\ntimeline\n  2020 : a");
-	assert.ok(!plainText(open).includes("mmdr") && !plainText(open).includes("draw as source"), "an open fence is plain source with no note");
+	assert.ok(!plainText(open).includes("merman") && !plainText(open).includes("draw as source"), "an open fence is plain source with no note");
 
 	const transformed = h.markdownTransformers[0]!(mermaidFence("timeline\n  2020 : a"), { messageType: "assistant", isStreaming: false, availableWidth: 80 });
 	assert.ok(transformed.includes("timeline diagrams draw as source for now"), "the transformer keeps the give-up note");
-	assert.ok(!transformed.includes("mmdr"), "the transformer never mentions mmdr");
+	assert.ok(!transformed.includes("merman"), "the transformer never mentions merman");
 
-	assert.equal(mmdrJobs.pending.size, 0);
+	assert.equal(mermanJobs.pending.size, 0);
 	assert.deepEqual(fake.calls(), [], "no run started");
 
 	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
 	const text = reply(mermaidFence("timeline\n  2020 : a"));
 	assert.ok(plainText(text).includes("timeline diagrams draw as source for now"), "a terminal without images keeps the give-up note");
-	assert.equal(mmdrJobs.pending.size, 0);
+	assert.equal(mermanJobs.pending.size, 0);
 	assert.deepEqual(fake.calls(), [], "no run started without images");
 });
 
 test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from one run", async () => {
-	const fake = mmdrFixture();
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1562,8 +1553,8 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
 	await h.emit("session_start");
 
 	const comp = reply(fanOut());
-	assert.ok(plainText(comp, fittedAt(80)).includes("drawing with mmdr…"), "80 columns are too few for the 81-column art");
-	await mmdrJobs.idle();
+	assert.ok(plainText(comp, fittedAt(80)).includes("drawing with merman…"), "80 columns are too few for the 81-column art");
+	await mermanJobs.idle();
 	assert.equal(drawnImages(comp, fittedAt(80)), 1, "80 columns show the picture");
 
 	assert.ok(plainText(comp, fittedAt(130)).includes("Child number 3"), "130 columns show the text art");
@@ -1574,8 +1565,8 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
 	assert.equal(fake.runs(), 1, "one run served all three widths");
 });
 
-test("31. every way mmdr cannot draw keeps the text note and the source, and a missing mmdr changes nothing", async () => {
-	const fake = mmdrFixture();
+test("31. every way merman cannot draw keeps the text note and the source, and a missing merman changes nothing", async () => {
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1586,50 +1577,44 @@ test("31. every way mmdr cannot draw keeps the text note and the source, and a m
 	const noteOf = async (source: string) => {
 		const comp = reply(mermaidFence(source));
 		comp.render(100);
-		await mmdrJobs.idle();
+		await mermanJobs.idle();
 		const plain = plainText(comp);
 		return { plain, images: drawnImages(comp) };
 	};
 	const timeline = (marker: string) => `timeline\n  2020 : ${marker}`;
 	const give = "timeline diagrams draw as source for now";
 
-	const misread = await noteOf("notADiagram\n  fake:flowchart");
-	assert.ok(misread.plain.includes("notADiagram diagrams draw as source for now"), "a header mmdr misread as a flowchart keeps the note");
-	assert.ok(!misread.plain.includes("(mmdr"), "and says nothing about mmdr");
-	assert.equal(misread.images, 0);
-
-	for (const marker of ["fake:syntax", "fake:empty", "fake:fail", "fake:nolayout", "fake:huge"]) {
+	for (const marker of ["fake:fail", "fake:huge"]) {
 		const result = await noteOf(timeline(marker));
 		assert.ok(result.plain.includes(give), `${marker}: main's note`);
-		assert.ok(!result.plain.includes("mmdr") && result.plain.includes(`2020 : ${marker}`), `${marker}: no mmdr suffix, and the code block shows the source`);
+		assert.ok(!result.plain.includes("merman") && result.plain.includes(`2020 : ${marker}`), `${marker}: no merman suffix, and the code block shows the source`);
 		assert.equal(result.images, 0, `${marker}: no picture`);
 	}
-	assert.deepEqual(fake.leftovers(), [], "every job directory is removed, failures included");
 
 	const before = fake.runs();
 	const long = await noteOf(timeline("x".repeat(100000)));
-	assert.ok(long.plain.includes(give) && !long.plain.includes("mmdr"), "a source over 100000 characters keeps main's note and is not sent");
+	assert.ok(long.plain.includes(give) && !long.plain.includes("merman"), "a source over 100000 characters keeps main's note and is not sent");
 	assert.equal(fake.runs(), before, "and starts no run");
 	const large = await noteOf(timeline("x".repeat(99000)));
 	assert.equal(large.images, 1, "a source under the cap draws");
 	assert.equal(fake.runs(), before + 1);
 
 	fake.restore();
-	const absent = mmdrFixture({ installed: false });
+	const absent = mermanFixture({ installed: false });
 	cleanupFn = () => {
 		absent.restore();
 		h.cleanup();
 	};
 	const comp = reply(mermaidFence(timeline("absent")));
 	const frame = plainText(comp);
-	assert.ok(frame.includes(give), "without mmdr the note is today's");
-	assert.ok(!frame.includes("mmdr"), "and never mentions mmdr");
-	assert.equal(mmdrJobs.pending.size, 0);
+	assert.ok(frame.includes(give), "without merman the note is today's");
+	assert.ok(!frame.includes("merman"), "and never mentions merman");
+	assert.equal(mermanJobs.pending.size, 0);
 	assert.deepEqual(absent.calls(), []);
 });
 
-test("32. an mmdr render past 5 s is killed and noted", async () => {
-	const fake = mmdrFixture();
+test("32. a merman render past 5 s is killed and noted", async () => {
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1639,14 +1624,13 @@ test("32. an mmdr render past 5 s is killed and noted", async () => {
 
 	const comp = reply(mermaidFence("timeline\n  2020 : fake:sleep"));
 	comp.render(100);
-	await mmdrJobs.idle(8000);
+	await mermanJobs.idle(8000);
 	const frame = plainText(comp);
-	assert.ok(frame.includes("timeline diagrams draw as source for now") && !frame.includes("mmdr"), "a timeout leaves main's note");
-	assert.deepEqual(fake.leftovers(), [], "the job directory is removed after the kill");
+	assert.ok(frame.includes("timeline diagrams draw as source for now") && !frame.includes("merman"), "a timeout leaves main's note");
 });
 
 test("33. five slow blocks run one at a time and all end as pictures", async () => {
-	const fake = mmdrFixture();
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1656,8 +1640,8 @@ test("33. five slow blocks run one at a time and all end as pictures", async () 
 
 	const comp = reply([0, 1, 2, 3, 4].map((n) => mermaidFence(`timeline\n  2020 : fake:slow ${n}`)).join("\n\n"));
 	comp.render(100);
-	assert.equal(mmdrJobs.pending.size, 5);
-	await mmdrJobs.idle();
+	assert.equal(mermanJobs.pending.size, 5);
+	await mermanJobs.idle();
 	assert.equal(drawnImages(comp), 5);
 	let open = 0;
 	let most = 0;
@@ -1666,8 +1650,8 @@ test("33. five slow blocks run one at a time and all end as pictures", async () 
 	assert.equal(fake.calls().length, 10, "five runs started and ended");
 });
 
-test("34. a reply rebuilt while mmdr draws shows the picture once it settles, with no further nudge", async () => {
-	const fake = mmdrFixture();
+test("34. a reply rebuilt while merman draws shows the picture once it settles, with no further nudge", async () => {
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1678,33 +1662,16 @@ test("34. a reply rebuilt while mmdr draws shows the picture once it settles, wi
 	const message = { role: "assistant", content: [{ type: "text", text: [mermaidFence("timeline\n  2020 : fake:slow"), "", "After"].join("\n") }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
-	assert.equal(mmdrJobs.pending.size, 1);
+	assert.equal(mermanJobs.pending.size, 1);
 	comp.updateContent(message);
-	assert.ok(plainText(comp).includes("drawing with mmdr…"), "the rebuilt frame still shows the pending note");
-	assert.equal(mmdrJobs.pending.size, 1, "the rebuild joins the job");
-	await mmdrJobs.idle();
+	assert.ok(plainText(comp).includes("drawing with merman…"), "the rebuilt frame still shows the pending note");
+	assert.equal(mermanJobs.pending.size, 1, "the rebuild joins the job");
+	await mermanJobs.idle();
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the picture");
 	assert.equal(fake.runs(), 1, "the rebuild did not start a second run");
 });
 
-test("35. judge accepts what mmdr drew faithfully and refuses what it misread, over layouts recorded from mmdr 0.2.2", () => {
-	const corpus = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "mmdr-layouts.json"), "utf8")) as Record<
-		string,
-		{ source: string; layout: { kind: string; width: number; height: number; nodes: string[]; edges: number }; expect: string }
-	>;
-	const judged = Object.fromEntries(
-		Object.entries(corpus).map(([name, { source, layout }]) => {
-			const raw = JSON.stringify({ ...layout, nodes: layout.nodes.map((id) => ({ id })), edges: Array.from({ length: layout.edges }, () => ({})) });
-			const parsed = parseLayout(raw);
-			return [name, parsed ? judge(headerWord(source), parsed, source) : "unparsed"];
-		}),
-	);
-	assert.deepEqual(judged, Object.fromEntries(Object.entries(corpus).map(([name, { expect }]) => [name, expect])));
-
-	for (const odd of ["", "null", "[]", "{}", '{"kind":"Flowchart","width":1,"height":1}', '{"kind":"Flowchart","width":"1","height":1,"nodes":[],"edges":[]}', '{"kind":"Flowchart","width":1,"height":1,"nodes":[{"id":3}],"edges":[]}', '{"kind":"Flowchart","width":1,"height":1,"nodes":[1],"edges":[]}']) {
-		assert.equal(parseLayout(odd), null, `a layout of ${JSON.stringify(odd)} fails closed`);
-	}
-
+test("35. headerWord reads the diagram word past front matter, comments and blank lines", () => {
 	const words: [string, string][] = [
 		["flowchart TD\n  A --> B", "flowchart"],
 		["  \n%% note\n%%{init: {}}%%\ntimeline\n  2020 : a", "timeline"],
@@ -1727,7 +1694,7 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
 	const png = { state: "drawn", png: "AAAA", width: 3, height: 4 } as const;
 	verdicts.forEach((verdict, i) => {
 		assert.deepEqual(fallback(verdict, png), png, "a picture wins");
-		assert.deepEqual(fallback(verdict, { state: "pending" }), { note: "drawing with mmdr…" });
+		assert.deepEqual(fallback(verdict, { state: "pending" }), { note: "drawing with merman…" });
 		assert.deepEqual(fallback(verdict, { state: "declined" }), { note: notes[i] });
 	});
 	const style = resolveStyle({});
@@ -1738,44 +1705,34 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
 	assert.deepEqual(textVerdict("graph TD;\n  A-->B;", style, 80, 0), { fits: false, why: "no-art" }, "valid syntax the text parser lacks gives 'no-art'");
 });
 
-const hasMmdr = (() => {
+const hasMerman = (() => {
 	try {
-		execFileSync("which", ["mmdr"]);
+		execFileSync("which", ["merman-cli"]);
 		return true;
 	} catch {
 		return false;
 	}
 })();
+const skipWithoutMerman = hasMerman ? false : "merman-cli is not on PATH";
 
-test("37. real mmdr: an unknown header reads as a flowchart, a timeline does not, and a hyphenated id is refused", { skip: hasMmdr ? false : "mmdr is not on PATH" }, async () => {
-	mmdrJobs.clear();
+const drawnBy = async (source: string) => {
 	const wake = { requestRender: () => {} };
-	const kindOf = (source: string) => {
-		const dir = mkdtempSync(join(tmpdir(), "prism-real-mmdr-"));
-		try {
-			spawnSync("mmdr", ["-i", "-", "-e", "png", "-o", join(dir, "d.png"), "--dumpLayout", join(dir, "l.json")], { input: source, cwd: dir });
-			return parseLayout(readFileSync(join(dir, "l.json"), "utf8"))?.kind;
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	};
-	assert.match(kindOf("notADiagram\n  foo")!, /flowchart/i, "mmdr reads an unknown word as a flowchart");
-	assert.doesNotMatch(kindOf("timeline\n  2020 : a")!, /flowchart/i, "and a timeline as its own kind");
+	assert.equal(mermanPicture(source, wake).state, "pending");
+	await mermanJobs.idle();
+	return mermanPicture(source, wake);
+};
 
-	const ask = async (source: string) => {
-		const picture = mmdrPicture(source, wake);
-		assert.equal(picture.state, "pending");
-		await mmdrJobs.idle();
-		return mmdrPicture(source, wake);
-	};
-	assert.deepEqual(await ask("notADiagram\n  foo"), { state: "declined" });
-	assert.equal((await ask("timeline\n  2020 : a")).state, "drawn");
-	assert.deepEqual(await ask("flowchart TD\n  api-gateway --> auth-service"), { state: "declined" });
-	mmdrJobs.clear();
+test("37. real merman declines an unknown header word and a broken flowchart, and draws a timeline and a hyphenated flowchart", { skip: skipWithoutMerman }, async () => {
+	mermanJobs.clear();
+	assert.deepEqual(await drawnBy("notADiagram\n  foo"), { state: "declined" });
+	assert.deepEqual(await drawnBy("flowchart TD\n  A -->"), { state: "declined" });
+	assert.equal((await drawnBy("timeline\n  2020 : a")).state, "drawn");
+	assert.equal((await drawnBy("flowchart TD\n  api-gateway --> auth-service")).state, "drawn", "a hyphenated id is read whole");
+	mermanJobs.clear();
 });
 
-test("38. an mmdr picture between 2 and 3 MiB reaches the terminal and the clipboard whole, and one over 3 MiB keeps the old note", async () => {
-	const fake = mmdrFixture();
+test("38. a merman picture between 2 and 3 MiB reaches the terminal and the clipboard whole, and one over 3 MiB keeps the old note", async () => {
+	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1787,7 +1744,7 @@ test("38. an mmdr picture between 2 and 3 MiB reaches the terminal and the clipb
 
 	const comp = reply(mermaidFence("timeline\n  2020 : fake:big"));
 	comp.render(100);
-	await mmdrJobs.idle();
+	await mermanJobs.idle();
 	const drawn = comp.render(100).join("\n");
 	const sent = [...drawn.matchAll(/\x1b_G[^;\x1b]*;([^\x1b]*)\x1b\\/g)].map((m) => m[1]).join("");
 	assert.equal(sent, png.toString("base64"), "every chunk of the picture is sent to the terminal");
@@ -1797,22 +1754,22 @@ test("38. an mmdr picture between 2 and 3 MiB reaches the terminal and the clipb
 
 	const over = reply(mermaidFence("timeline\n  2020 : fake:huge"));
 	over.render(100);
-	await mmdrJobs.idle();
+	await mermanJobs.idle();
 	assert.ok(plainText(over).includes("timeline diagrams draw as source for now"), "a picture over 3 MiB keeps main's note");
 	assert.equal(drawnImages(over), 0);
 });
 
-test("39. mmdr:false or an SSH session keeps every block the text renderer cannot draw as source and never starts mmdr", async () => {
-	assert.equal(resolveStyle({}).mmdr, true);
-	assert.equal(resolveStyle({ mmdr: false }).mmdr, false);
+test("39. merman:false or an SSH session keeps every block the text renderer cannot draw as source and never starts merman", async () => {
+	assert.equal(resolveStyle({}).merman, true);
+	assert.equal(resolveStyle({ merman: false }).merman, false);
 
 	const cases: [string, Record<string, unknown>, Record<string, string>][] = [
-		["mmdr:false", { mmdr: false }, {}],
+		["merman:false", { merman: false }, {}],
 		["SSH_CONNECTION", {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }],
 		["SSH_TTY", {}, { SSH_TTY: "/dev/pts/0" }],
 	];
 	for (const [name, config, env] of cases) {
-		const fake = mmdrFixture();
+		const fake = mermanFixture();
 		Object.assign(process.env, env);
 		const h = createHarness(config);
 		try {
@@ -1821,10 +1778,10 @@ test("39. mmdr:false or an SSH session keeps every block the text renderer canno
 			const plain = plainText(comp, fittedAt(80));
 			assert.ok(plain.includes("timeline diagrams draw as source for now"), `${name}: the timeline keeps main's note`);
 			assert.ok(plain.includes("diagram is 81 cols, terminal is 80"), `${name}: the wide flowchart keeps main's note`);
-			assert.ok(!plain.includes("mmdr"), `${name}: nothing mentions mmdr`);
+			assert.ok(!plain.includes("merman"), `${name}: nothing mentions merman`);
 			await sleep(100);
-			assert.equal(mmdrJobs.pending.size, 0, name);
-			assert.deepEqual(fake.calls(), [], `${name}: mmdr is never called`);
+			assert.equal(mermanJobs.pending.size, 0, name);
+			assert.deepEqual(fake.calls(), [], `${name}: merman is never called`);
 		} finally {
 			fake.restore();
 			h.cleanup();
@@ -1832,7 +1789,7 @@ test("39. mmdr:false or an SSH session keeps every block the text renderer canno
 	}
 });
 
-test("40. the mmdr hint reaches the model only when mermaid, mmdr, images, the command and a local session are all there", async () => {
+test("40. the merman hint reaches the model only when mermaid, merman, images, the command and a local session are all there", async () => {
 	const startEvent = () => ({
 		type: "before_agent_start",
 		messageType: "user",
@@ -1840,8 +1797,8 @@ test("40. the mmdr hint reaches the model only when mermaid, mmdr, images, the c
 		systemPrompt: "",
 		systemPromptOptions: { guidelines: [] as string[] },
 	});
-	const hinted = async (config: Record<string, unknown>, fixture: Parameters<typeof mmdrFixture>[0] = {}, env: Record<string, string> = {}) => {
-		const fake = mmdrFixture(fixture);
+	const hinted = async (config: Record<string, unknown>, fixture: Parameters<typeof mermanFixture>[0] = {}, env: Record<string, string> = {}) => {
+		const fake = mermanFixture(fixture);
 		Object.assign(process.env, env);
 		const h = createHarness(config);
 		try {
@@ -1857,12 +1814,12 @@ test("40. the mmdr hint reaches the model only when mermaid, mmdr, images, the c
 	assert.equal(await hinted({}), true, "every gate holds");
 	assert.equal(await hinted({ diagramHints: false }), false, "diagramHints off");
 	assert.equal(await hinted({ mermaid: false }), false, "mermaid off");
-	assert.equal(await hinted({ mmdr: false }), false, "mmdr off");
+	assert.equal(await hinted({ merman: false }), false, "merman off");
 	assert.equal(await hinted({}, { images: null }), false, "the terminal shows no images");
-	assert.equal(await hinted({}, { installed: false }), false, "mmdr is not installed");
+	assert.equal(await hinted({}, { installed: false }), false, "merman is not installed");
 	assert.equal(await hinted({}, {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }), false, "over SSH");
 	assert.equal(await hinted({}, {}, { SSH_TTY: "/dev/pts/0" }), false, "over SSH on a tty");
-	assert.ok(MMDR_HINT.includes("```mermaid") && MMDR_HINT.includes("not hyphens"), "the hint names the fence and the id rule");
+	assert.ok(MERMAN_HINT.includes("```mermaid"), "the hint names the fence");
 });
 
 const demoKinds = () =>
@@ -1870,83 +1827,54 @@ const demoKinds = () =>
 		.filter((block) => block.kind === "code" && block.lang === "mermaid")
 		.map((block) => (block as { lines: string[] }).lines.join("\n"));
 
-test("41. /prism demo shows a sample of every kind the mmdr hint names, small and without hyphenated ids", () => {
+test("41. /prism demo shows a sample of every kind the merman hint names, and each is small", () => {
 	const samples = demoKinds();
-	for (const kind of MMDR_KINDS) {
+	for (const kind of MERMAN_KINDS) {
 		const own = samples.filter((source) => headerWord(source) === kind);
 		assert.equal(own.length, 1, `one ${kind} sample`);
 		assert.ok(own[0]!.split("\n").length <= 12, `${kind} is small`);
 	}
-	for (const source of samples.filter((source) => /^(flowchart|graph)\b/.test(source))) assert.doesNotMatch(source.replace(/\[[^\]]*\]/g, ""), /\w-\w/, "flowchart ids have no hyphens");
 });
 
-test("42. real mmdr draws every /prism demo sample as a picture", { skip: hasMmdr ? false : "mmdr is not on PATH" }, async () => {
-	mmdrJobs.clear();
+test("42. real merman draws every /prism demo sample as a picture", { skip: skipWithoutMerman }, async () => {
+	mermanJobs.clear();
 	const wake = { requestRender: () => {} };
-	for (const source of demoKinds().filter((source) => MMDR_KINDS.includes(headerWord(source) as never))) {
-		assert.equal(mmdrPicture(source, wake).state, "pending", headerWord(source));
-		await mmdrJobs.idle();
-		assert.equal(mmdrPicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
+	for (const source of demoKinds().filter((source) => MERMAN_KINDS.includes(headerWord(source) as never))) {
+		assert.equal(mermanPicture(source, wake).state, "pending", headerWord(source));
+		await mermanJobs.idle();
+		assert.equal(mermanPicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
 	}
-	mmdrJobs.clear();
+	mermanJobs.clear();
 });
 
-const drawnBy = async (source: string) => {
-	const wake = { requestRender: () => {} };
-	assert.equal(mmdrPicture(source, wake).state, "pending");
-	await mmdrJobs.idle();
-	return mmdrPicture(source, wake);
-};
 const pngWidth = (png: string) => Buffer.from(png, "base64").readUInt32BE(16);
 
-test("43. with rsvg-convert, mmdr writes SVG and rsvg-convert draws it at 2x, under librsvg's side limit, at the 1x size on screen", async () => {
-	const fake = mmdrFixture({ png: pngOf(320, 280) });
+test("43. a picture is reported at half its pixels, so it fills the columns a 1x image would", async () => {
+	const fake = mermanFixture({ png: pngOf(320, 280) });
 	cleanupFn = fake.restore;
 
 	const picture = await drawnBy("timeline\n  2020 : start");
-	assert.match(fake.args(), /-o \S+\/d\.svg --dumpLayout/, "mmdr writes SVG");
-	assert.doesNotMatch(fake.args(), /-e png/);
-	assert.match(fake.rsvgArgs(), /^-z 2 -o \S+\/d\.png \S+\/d\.svg$/, "rsvg-convert draws the SVG at 2x");
 	assert.ok(picture.state === "drawn");
-	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 160, height: 140 }, "the picture keeps the size of mmdr's 1x layout");
-
-	await drawnBy("timeline\n  2020 : fake:tall");
-	assert.match(fake.rsvgArgs(), /^-z 0\.8 /, "a 40000 px tall layout zooms to 32000 px");
-
-	assert.deepEqual(await drawnBy("timeline\n  2020 : fake:rsvg-fail"), { state: "declined" }, "a failed rsvg-convert keeps the old note");
-	assert.deepEqual(fake.leftovers(), []);
+	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 160, height: 140 });
 });
 
-test("44. without rsvg-convert, mmdr writes its own 1x PNG", async () => {
-	const fake = mmdrFixture({ png: pngOf(320, 280), rsvg: false });
-	cleanupFn = fake.restore;
-
-	const picture = await drawnBy("timeline\n  2020 : start");
-	assert.match(fake.args(), /-e png -o \S+\/d\.png --dumpLayout/);
-	assert.equal(fake.rsvgArgs(), "", "rsvg-convert never runs");
-	assert.ok(picture.state === "drawn");
-	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 320, height: 280 });
-});
-
-const hasRsvg = (() => {
-	try {
-		execFileSync("which", ["rsvg-convert"]);
-		return true;
-	} catch {
-		return false;
-	}
-})();
-
-test("45. real rsvg-convert gives every /prism demo sample twice the pixels of mmdr's own PNG, in the same columns", { skip: hasMmdr && hasRsvg ? false : "mmdr or rsvg-convert is not on PATH" }, async () => {
-	mmdrJobs.clear();
-	for (const source of demoKinds().filter((source) => MMDR_KINDS.includes(headerWord(source) as never))) {
-		const own = spawnSync("mmdr", ["-i", "-", "-e", "png", "-o", "/dev/stdout"], { input: source }).stdout.toString("base64");
+test("44. real merman draws every /prism demo sample at twice the width it reports", { skip: skipWithoutMerman }, async () => {
+	mermanJobs.clear();
+	for (const source of demoKinds().filter((source) => MERMAN_KINDS.includes(headerWord(source) as never))) {
 		const picture = await drawnBy(source);
 		assert.ok(picture.state === "drawn", headerWord(source));
-		assert.ok(Math.abs(pngWidth(picture.png) - 2 * pngWidth(own)) <= 2, `${headerWord(source)}: ${pngWidth(picture.png)} px against mmdr's ${pngWidth(own)}`);
-		assert.ok(Math.abs(picture.width - pngWidth(own)) <= 1, `${headerWord(source)} fills the columns mmdr's own PNG did`);
+		assert.equal(pngWidth(picture.png), picture.width * 2, `${headerWord(source)}: the PNG is 2x the reported width`);
 	}
-	mmdrJobs.clear();
+	mermanJobs.clear();
+});
+
+test("45. real merman draws a hyphenated flowchart the text renderer cannot fit", { skip: skipWithoutMerman }, async () => {
+	mermanJobs.clear();
+	const hyphenated = fanOut((n) => `child-${n}`).split("\n").slice(1, -1).join("\n");
+	const style = resolveStyle({});
+	assert.equal(textVerdict(hyphenated, style, 80, 0).fits, false, "80 columns are too few for the text art");
+	assert.equal((await drawnBy(hyphenated)).state, "drawn");
+	mermanJobs.clear();
 });
 
 const C4_RAW = "https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML";

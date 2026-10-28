@@ -206,14 +206,14 @@ gantt
     Release  :milestone, 2026-10-12, 0d
 \`\`\`
 
-A diagram wider than the terminal stays source, with a dim line saying why. Where the terminal shows images and the \`mmdr\` command is installed, \`mmdr\` draws it as a picture instead, after a moment (\`mmdr: false\` in \`~/.pi/agent/prism.json\` leaves it as source):
+A diagram wider than the terminal stays source, with a dim line saying why. Where the terminal shows images and the \`merman-cli\` command is installed, merman draws it as a picture instead, after a moment (\`merman: false\` in \`~/.pi/agent/prism.json\` leaves it as source):
 
 \`\`\`mermaid
 flowchart TD
     Q[Queue] --> W1[Worker 1] & W2[Worker 2] & W3[Worker 3] & W4[Worker 4] & W5[Worker 5] & W6[Worker 6] & W7[Worker 7] & W8[Worker 8] & W9[Worker 9] & W10[Worker 10] & W11[Worker 11] & W12[Worker 12] & W13[Worker 13] & W14[Worker 14] & W15[Worker 15] & W16[Worker 16]
 \`\`\`
 
-The Mermaid kinds below draw as pictures where the terminal shows images and the \`mmdr\` command is installed, and otherwise stay source with a note.
+The Mermaid kinds below draw as pictures where the terminal shows images and the \`merman-cli\` command is installed, and otherwise stay source with a note.
 
 \`timeline\`
 
@@ -291,9 +291,9 @@ C4Context
     title Reply rendering
     Person(user, "User", "Reads replies")
     System(pi, "Pi", "Terminal agent")
-    System_Ext(mmdr, "mmdr", "Draws diagrams")
+    System_Ext(merman, "merman", "Draws diagrams")
     Rel(user, pi, "Prompts")
-    Rel(pi, mmdr, "Sends source")
+    Rel(pi, merman, "Sends source")
 \`\`\`
 
 \`architecture-beta\`
