@@ -1,6 +1,7 @@
 // Loaded into the Quick Look helper with DYLD_INSERT_LIBRARIES by test/prism-quicklook.test.ts.
 // It runs the JSON steps in QLF_PROBE_STEPS against the open panel, writes what it saw to QLF_PROBE_OUT and exits.
 // With QLF_PROBE_SHOTS set to a directory, each named layout or scale step also saves the panel there as <name>.png.
+// With QLF_SCREEN set, the panel moves to the screen whose name contains it before the steps run, fullscreen included.
 
 import Cocoa
 import QuickLookUI
@@ -39,6 +40,15 @@ final class Probe {
 
   // Quick Look adds its own Share and Open buttons about 250 ms after the panel opens, after the helper's zoom pill.
   private func waitUntilReady() {
+    if let name = env["QLF_SCREEN"], let panel = panel {
+      guard let screen = NSScreen.screens.first(where: { $0.localizedName.contains(name) }) else {
+        return finish(error: "no screen named \(name) among \(NSScreen.screens.map(\.localizedName))")
+      }
+      if panel.screen != screen {
+        let area = screen.visibleFrame
+        panel.setFrameOrigin(NSPoint(x: area.midX - panel.frame.width / 2, y: area.midY - panel.frame.height / 2))
+      }
+    }
     if let bar = titleBar, find(in: bar, where: { action(of: $0) == "share:" }) != nil {
       after(0.5) { self.run(0) }
     } else if Date().timeIntervalSince(started) > 15 {
