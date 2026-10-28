@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { registerHooks } from "node:module";
+import childProcess, { execFileSync } from "node:child_process";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -63,7 +63,8 @@ const { headerWord, MERMAN_HINT, MERMAN_KINDS, mermanJobs, mermanPicture } = awa
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 const { holdEngine, holdRow } = await import("../extensions/prism/core/rtl.ts");
-const { showcaseText } = await import("../extensions/prism/core/help.ts");
+const { imageCommand, MAC_IMAGE_COPY, WIN_IMAGE_COPY } = await import("../extensions/prism/core/clipboard.ts");
+const { helpText, showcaseText } = await import("../extensions/prism/core/help.ts");
 
 const stripAnsi = (s: string) =>
 	s
@@ -1513,11 +1514,13 @@ test("28. a timeline the text renderer cannot draw shows a pending note, then th
 });
 
 test("29. merman never runs for art that fits, an open fence, a terminal without images, or the markdown transformer", async () => {
+	const restoreHost = clipboardHost("linux");
 	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
 		h.cleanup();
+		restoreHost();
 	};
 	await h.emit("session_start");
 
@@ -1543,11 +1546,13 @@ test("29. merman never runs for art that fits, an open fence, a terminal without
 });
 
 test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from one run", async () => {
+	const restoreHost = clipboardHost("linux");
 	const fake = mermanFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
 		h.cleanup();
+		restoreHost();
 	};
 	await h.emit("session_start");
 
@@ -2100,4 +2105,207 @@ test("55. editor file links are terminal hyperlinks, and the editors' other link
 	const plain = stripAnsi(rendered);
 	assert.ok(plain.includes("zclone (zed://git/clone?repo=https://example.com/x.git)"), "a zed clone link shows its target");
 	assert.ok(plain.includes("settings (zed://settings)"), "a zed settings link shows its target");
+});
+
+test("56. the image helper gets each glyph at its terminal column, and the theme colors as RGB, on stdin", () => {
+	const text = "┌──┬──┐\n│苹│ab│\n└──┴──┘";
+	const mac = imageCommand("macos", text, { foreground: "#cdd6f4", background: "#1e1e2e" });
+	assert.deepEqual(mac.argv, ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_IMAGE_COPY]);
+	const row = (line: string) => [...line].map((glyph, at) => ({ at, text: glyph }));
+	assert.deepEqual(JSON.parse(mac.stdin), {
+		lines: [
+			row("┌──┬──┐"),
+			[{ at: 0, text: "│" }, { at: 1, text: "苹" }, { at: 3, text: "│" }, { at: 4, text: "a" }, { at: 5, text: "b" }, { at: 6, text: "│" }],
+			row("└──┴──┘"),
+		],
+		columns: 7,
+		foreground: [205, 214, 244],
+		background: [30, 30, 46],
+	});
+	const win = imageCommand("windows", text, { foreground: "ansi256(15)", background: "#fff" }, "C:\\Windows");
+	assert.deepEqual(win.argv, ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-Command", WIN_IMAGE_COPY]);
+	assert.match(win.stdin, /^[\x00-\x7e]*$/, "PowerShell reads ASCII only");
+	assert.deepEqual(JSON.parse(win.stdin), { ...JSON.parse(mac.stdin), foreground: [0, 0, 0], background: [255, 255, 255] });
+	const colors = (colorSet: { foreground?: string; background?: string }) => JSON.parse(imageCommand("macos", "x", colorSet).stdin);
+	assert.deepEqual([colors({ foreground: "cyan" }).foreground, colors({ foreground: "cyan" }).background], [[0, 0, 0], [255, 255, 255]], "a color it cannot read falls back to black on white");
+	assert.deepEqual(colors({ foreground: "#c9d4f2" }).foreground, [0, 0, 0], "light text on the white default turns black");
+	assert.deepEqual(colors({ foreground: "#202020", background: "#1e1e2e" }).foreground, [255, 255, 255], "dark text on a dark background turns white");
+});
+
+test("57. the image helper gets right-to-left cell text in drawn order, each letter in its own column, borders kept in place", () => {
+	const lines = JSON.parse(imageCommand("macos", "│ שלום │ 3 │\n│ Pears אגסים │", {}).stdin).lines;
+	assert.deepEqual(lines[0], [
+		{ at: 0, text: "│" }, { at: 2, text: "ם" }, { at: 3, text: "ו" }, { at: 4, text: "ל" }, { at: 5, text: "ש" },
+		{ at: 7, text: "│" }, { at: 9, text: "3" }, { at: 11, text: "│" },
+	]);
+	assert.equal(lines[1].map((g: { text: string }) => g.text).join(""), "│Pearsםיסגא│");
+	assert.deepEqual(lines[1].at(-1), { at: 14, text: "│" });
+});
+
+type ClipboardHost = "macos" | "windows" | "linux" | "none";
+
+function clipboardHost(kind: ClipboardHost) {
+	const keys = ["SSH_CONNECTION", "SSH_TTY", "OS", "SystemRoot", "DISPLAY", "WAYLAND_DISPLAY"];
+	const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+	const platform = process.platform;
+	for (const key of keys) delete process.env[key];
+	if (kind === "windows") Object.assign(process.env, { OS: "Windows_NT", SystemRoot: "C:\\Windows" });
+	if (kind === "linux") process.env.DISPLAY = ":0";
+	Object.defineProperty(process, "platform", { value: kind === "macos" ? "darwin" : kind === "windows" ? platform : "linux" });
+	return () => {
+		Object.defineProperty(process, "platform", { value: platform });
+		for (const [key, value] of Object.entries(saved)) {
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	};
+}
+
+function recordHelpers(result: { status: number; stderr?: string } = { status: 0 }) {
+	const real = childProcess.spawnSync;
+	const calls: { bin: string; args: string[]; input: string; timeout: number }[] = [];
+	(childProcess as any).spawnSync = (bin: string, args: string[], options: { input: string; timeout: number }) => {
+		calls.push({ bin, args, input: options.input, timeout: options.timeout });
+		return { status: result.status, stderr: result.stderr ?? "" };
+	};
+	syncBuiltinESMExports();
+	return {
+		calls,
+		restore: () => {
+			(childProcess as any).spawnSync = real;
+			syncBuiltinESMExports();
+		},
+	};
+}
+
+const hasOsascript = existsSync("/usr/bin/osascript");
+const pictureHosts: ClipboardHost[] = ["windows", ...(hasOsascript ? (["macos"] as const) : [])];
+const FIGURE_SOURCE = "```figure\n┌─ box ─┐\n│ ok    │\n└───────┘\n```";
+const TABLE_SOURCE = "| Item | Qty |\n|--|--:|\n| 苹果 | 3 |";
+const FLOWCHART_SOURCE = mermaidFence("flowchart TD\n  A[User] --> B[Gateway]");
+const blockLabels = (text: string) => shownLabels(reply(text), 100, false).filter((label) => label !== "⧉ copy reply");
+
+for (const host of ["windows", "macos", "linux", "none"] as const) {
+	test(`58. a table, a text diagram and a figure ${host === "windows" || host === "macos" ? "offer" : "hide"} ▣ png on ${host}`, { skip: host === "macos" && !hasOsascript }, async () => {
+		const restoreHost = clipboardHost(host);
+		const h = createHarness();
+		cleanupFn = () => {
+			h.cleanup();
+			restoreHost();
+		};
+		await h.emit("session_start");
+
+		const png = host === "windows" || host === "macos" ? ["▣ png"] : [];
+		const html = host === "none" ? [] : ["⧉ html"];
+		assert.deepEqual(blockLabels(TABLE_SOURCE), ["⧉ md", "⧉ art", ...html, ...png]);
+		assert.deepEqual(blockLabels(FLOWCHART_SOURCE), ["⧉ source", "⧉ art", ...png]);
+		assert.deepEqual(blockLabels(FIGURE_SOURCE), ["⧉ source", "⧉ art", ...png]);
+		assert.deepEqual(blockLabels("```ts\nconst x = 1;\n```"), ["⧉ copy"], "a plain code block has no picture to copy");
+	});
+}
+
+test("59. a block drawn as a picture keeps ⧉ image and gets no ▣ png", { skip: !hasOsascript }, async () => {
+	const restoreHost = clipboardHost("macos");
+	const fake = mermanFixture();
+	const h = createHarness();
+	cleanupFn = () => {
+		fake.restore();
+		h.cleanup();
+		restoreHost();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(mermaidFence("timeline\n  2020 : start\n  2021 : end"));
+	comp.render(100);
+	await mermanJobs.idle();
+	assert.deepEqual(shownLabels(comp, 100, false), ["⧉ source", "⧉ image", "⧉ preview"]);
+});
+
+test("60. ▣ png hands the helper the drawn art without fences, in the pi theme's background, and says it copied an image", { skip: !hasOsascript }, async () => {
+	const restoreHost = clipboardHost("macos");
+	const helper = recordHelpers();
+	const h = createHarness();
+	cleanupFn = () => {
+		helper.restore();
+		setTheme("dark");
+		h.cleanup();
+		restoreHost();
+	};
+	await h.emit("session_start");
+
+	const comp = reply(TABLE_SOURCE);
+	copiedTexts.length = 0;
+	press(comp, 100, "⧉ art", false);
+	assert.equal(helper.calls.length, 0, "the plain art button starts no helper");
+	press(comp, 100, "▣ png", false);
+	assert.equal(helper.calls.length, 1);
+	const [call] = helper.calls;
+	assert.deepEqual([call!.bin, ...call!.args], ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_IMAGE_COPY]);
+	assert.equal(call!.timeout, 5000);
+	const drawnRows = JSON.parse(call!.input).lines.map((glyphs: { text: string }[]) => glyphs.map((g) => g.text).join(""));
+	assert.ok(copiedTexts[0]!.startsWith("```"), "the art button copies the fenced art");
+	assert.deepEqual(drawnRows, copiedTexts[0]!.split("\n").slice(1, -1).map((row) => row.replace(/ /g, "")), "the image draws the art without its fences");
+	assert.deepEqual(JSON.parse(call!.input).background, [0, 0, 0], "a dark pi theme draws on black");
+	assert.ok(h.notifications.some((n) => n.text === "Copied as image"), JSON.stringify(h.notifications));
+
+	setTheme("light");
+	press(reply(TABLE_SOURCE), 100, "▣ png", false);
+	assert.deepEqual(JSON.parse(helper.calls[1]!.input).background, [255, 255, 255], "a light pi theme draws on white");
+});
+
+test("61. ▣ png on a figure and a diagram draws their art, and a cold PowerShell gets 15 s", async () => {
+	const restoreHost = clipboardHost("windows");
+	const helper = recordHelpers();
+	const h = createHarness();
+	cleanupFn = () => {
+		helper.restore();
+		h.cleanup();
+		restoreHost();
+	};
+	await h.emit("session_start");
+
+	press(reply(FLOWCHART_SOURCE), 100, "▣ png", false);
+	press(reply(FIGURE_SOURCE), 100, "▣ png", false);
+	const drawn = helper.calls.map((call) => JSON.parse(call.input).lines.flat().map((g: { text: string }) => g.text).join(""));
+	assert.ok(drawn[0]!.includes("Gateway"), drawn[0]);
+	assert.ok(drawn[1]!.includes("ok") && drawn[1]!.includes("┌─box─┐"), drawn[1]);
+	for (const call of helper.calls) {
+		assert.equal(call.bin, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+		assert.equal(call.timeout, 15000);
+	}
+});
+
+test("62. a failed image copy falls back to the drawn text and says why", async () => {
+	const restoreHost = clipboardHost("windows");
+	const helper = recordHelpers({ status: 1, stderr: "Cannot draw image\n" });
+	const h = createHarness();
+	cleanupFn = () => {
+		helper.restore();
+		h.cleanup();
+		restoreHost();
+	};
+	await h.emit("session_start");
+
+	copiedTexts.length = 0;
+	press(reply(TABLE_SOURCE), 100, "▣ png", false);
+	assert.ok(copiedTexts[0]!.includes("│ 苹果 │"), copiedTexts[0]);
+	assert.ok(!copiedTexts[0]!.includes("`"), "the fallback text has no fences");
+	assert.deepEqual(h.notifications.at(-1), { text: "Copied as plain text (Cannot draw image)", level: "warning" });
+});
+
+test("63. copyButtons:false draws no ▣ png", async () => {
+	const restoreHost = clipboardHost("windows");
+	const h = createHarness({ copyButtons: false });
+	cleanupFn = () => {
+		h.cleanup();
+		restoreHost();
+	};
+	await h.emit("session_start");
+
+	assert.deepEqual(blockLabels(TABLE_SOURCE), []);
+});
+
+test("64. the help screen names ▣ png, with the platforms it shows on", () => {
+	assert.ok(showcaseText().includes("`▣ png`"));
+	assert.ok(helpText().includes("PNG image (macOS/Windows)"));
 });

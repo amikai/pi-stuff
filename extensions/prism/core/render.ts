@@ -38,7 +38,7 @@ export type CopyButton = (
 	text: string | (() => string),
 	key: string,
 	label?: string,
-	html?: () => string,
+	rich?: (() => string) | "png",
 ) => RenderElement | null;
 /** `art` and `png` exclude each other: a drawing is text art or a picture of a known PNG (base64). */
 export type DrawnBlock =
@@ -990,7 +990,7 @@ const tableSize = (block) => {
 	return { natural: column(widestLine), words: column(longestWord) };
 };
 
-const tableArt = (block) => {
+const tableGrid = (block) => {
 	const cells = [block.header, ...block.rows].map((r) => block.header.map((_, c) => displayText(r[c] ?? [])));
 	const { natural, words } = tableSize(block);
 	const widths = columnWidths(natural, ART_WIDTH - 4, 3, words);
@@ -1012,8 +1012,10 @@ const tableArt = (block) => {
 		...cells.slice(1).flatMap((r) => [line("├", "┼", "┤"), ...row(r, false)]),
 		line("└", "┴", "┘"),
 	];
-	return ["```", ...art, "```"].join("\n");
+	return art.join("\n");
 };
+
+const tableArt = (block) => ["```", tableGrid(block), "```"].join("\n");
 
 const clip = ({ Box }, w, drawn, key) =>
 	h(Box, { key: key, flexDirection: "column", minWidth: w }, h(Box, { height: 0, flexGrow: 1, overflow: "hidden" }, drawn));
@@ -1574,21 +1576,24 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
 	const buttons = blocks.map((block, b) => {
 		const text = hover && holdsOnlyEmptyCode(block) ? undefined : copySource(style, block);
 		const isPlainCode = block.kind === "code" && !drawn.get(b)?.element;
-		const art = drawn.get(b)?.art ?? (block.kind === "table" ? () => tableArt(block) : undefined);
-		const png = drawn.get(b)?.png;
+		const drawnArt = drawn.get(b)?.art;
+		const art = drawnArt ?? (block.kind === "table" ? () => tableArt(block) : undefined);
+		const grid = drawnArt ?? (block.kind === "table" ? () => tableGrid(block) : undefined);
+		const bitmap = drawn.get(b)?.png;
 		const first =
 			text === undefined || isPlainCode
 				? null
 				: copy?.(
 						text,
 						`copy${b}`,
-						block.kind === "table" ? "⧉ md" : art === undefined && png === undefined ? undefined : "⧉ source",
+						block.kind === "table" ? "⧉ md" : art === undefined && bitmap === undefined ? undefined : "⧉ source",
 					);
 		if (!first) return { first, more: [] };
 		const more = [
 			art !== undefined ? copy?.(art, `art${b}`, "⧉ art") : null,
 			block.kind === "table" ? copy?.(() => tableText(block), `html${b}`, "⧉ html", () => tableHtml(block)) : null,
-			...(png === undefined ? [] : (picture?.(png, b) ?? [])),
+			grid !== undefined ? copy?.(grid, `png${b}`, "▣ png", "png") : null,
+			...(bitmap === undefined ? [] : (picture?.(bitmap, b) ?? [])),
 		].filter(Boolean);
 		return { first, more };
 	});

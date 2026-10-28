@@ -52,6 +52,7 @@ export const DEFAULT_THEME: Theme = {
 
 export type Style = {
 	theme: Theme;
+	background?: string;
 	headingStyle: "bold" | "underline" | "uppercase" | "banner";
 	tableStyle: "box" | "rules" | "grid" | "minimal";
 	taskStyle: "checks" | "ticks" | "box" | "progress";
