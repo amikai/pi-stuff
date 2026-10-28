@@ -62,6 +62,7 @@ const { fallback, textNote, textVerdict } = await import("../extensions/prism/co
 const { headerWord, MERMAN_HINT, MERMAN_KINDS, mermanJobs, mermanPicture } = await import("../extensions/prism/core/merman.ts");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
+const { holdEngine, holdRow } = await import("../extensions/prism/core/rtl.ts");
 const { showcaseText } = await import("../extensions/prism/core/help.ts");
 
 const stripAnsi = (s: string) =>
@@ -1993,4 +1994,52 @@ test("50. a space between words widens a label, so words are not run together", 
 	const joined = await widthOf("wordwordword");
 	const spaced = await widthOf("word word word");
 	assert.ok(spaced - joined >= 4, `${spaced} px with spaces against ${joined} px without`);
+});
+
+const hebrewFigureRows = async (rtl: string, figure: string) => {
+	const h = createHarness({ rtl });
+	cleanupFn = h.cleanup;
+	await h.emit("session_start");
+	const comp = new AssistantMessageComponent({
+		role: "assistant",
+		content: [{ type: "text", text: `\`\`\`figure\n${figure}\n\`\`\`` }],
+		timestamp: 1000,
+	} as any);
+	return comp
+		.render(120)
+		.map((line) => stripAnsi(line))
+		.filter((line) => /[א-ת]/.test(line))
+		.join("\n");
+};
+
+for (const [rtl, label, note] of [
+	["iterm", "⠀Saved Tabs-נעלם מ⠀", "(Recent Sessions-נמצא ב)"],
+	["warp", " Saved Tabs-מ םלענ ", "(Recent Sessions-ב אצמנ)"],
+] as const) {
+	test(`51. a figure label that mixes Hebrew with two English words stays one label on ${rtl}, so the English words and the brackets stay together`, async () => {
+		const rows = await hebrewFigureRows(rtl, "רגיל  ──► נעלם מ-Saved Tabs ──► סוף\n          (נמצא ב-Recent Sessions)");
+		assert.ok(rows.includes(label), `label in ${JSON.stringify(rows)}`);
+		assert.ok(rows.includes(note), `note in ${JSON.stringify(rows)}`);
+	});
+}
+
+test("52. a single space keeps English words in a Hebrew figure label only between letters, so boxes, members and connectors still split as before", () => {
+	for (const [row, held] of [
+		["[בנייה] [בדיקה] [Deploy]", "[בנייה]\u2800[בדיקה]\u2800[Deploy]"],
+		["│ +שם: String  │", "│\u2800+שם:\u2800String\u2800\u2800│"],
+		["עברית -- English words", "עברית --\u2800English\u2800words"],
+		["אבג──►Saved Tabs", "Saved►──אבג\u2800Tabs"],
+		["│ שלב │──►│ ArgoCD sync │", "│\u2800שלב\u2800│──►│\u2800ArgoCD\u2800sync\u2800│"],
+		["A B──►C שלב", "A\u2800B──►C שלב"],
+		["Saved Tabs-נעלם  ──►  x", "Saved Tabs-נעלם\u2800\u2800──►\u2800\u2800x"],
+		["שלב 1 2 3 4", "שלב 1\u28002\u28003\u28004"],
+		["בִּ Foo", "Foo בִּ"],
+	] as const) {
+		assert.equal(holdRow([...row]).cells.join(""), held, row);
+	}
+});
+
+test("53. Windows Terminal keeps English words in a Hebrew figure label together too", () => {
+	assert.ok(holdEngine([...("רגיל  ──► נעלם מ-Saved Tabs ──► סוף")]).cells.join("").includes("\u200e Saved Tabs-נעלם מ\u200e "));
+	assert.equal(holdEngine([...("(נמצא ב-Recent Sessions)")]).cells.join(""), "(Recent Sessions-נמצא ב)");
 });
