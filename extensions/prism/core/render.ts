@@ -1702,26 +1702,24 @@ const formatDuration = (ms) => {
 	return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 };
 
-const renderTurnDuration = ({ Text }, style, word, durationMs, time) =>
+const renderTurnDuration = ({ Text }, style, word, durationMs) =>
 	h(
 		Text,
 		{ color: style.theme.codeComment },
 		`✻ ${word} for `,
 		h(Text, { color: style.theme.number }, formatDuration(durationMs)),
-		time === undefined ? null : " · ",
-		time === undefined ? null : h(Text, { color: style.theme.number }, time),
 	);
 
 const boxedPrompt = (style) => style.promptStyle === "bubble" || style.promptStyle === "wide";
 
 const widePrompt = (style, hebrew) => style.promptStyle === "wide" || (hebrew && mirrored(style));
 
-const renderUserPrompt = (el, style, typed, columns, time) => {
+const renderUserPrompt = (el, style, typed, columns) => {
 	const { Box, Text } = el;
 	const t = style.theme;
 	const color = style.promptStyle === "chevron" ? t.accent : t.heading;
 	const rows = typed.split("\n");
-	const lines = rows.map((line) => flowOf(style, [{ kind: "text", text: line }], columns - 4 - (time === undefined ? 0 : time.length + 1)));
+	const lines = rows.map((line) => flowOf(style, [{ kind: "text", text: line }], columns - 4));
 	const hebrew = lines.some((l) => l?.base === "R");
 	const rtl = hebrew && !mirrored(style);
 	const body = h(
@@ -1735,8 +1733,6 @@ const renderUserPrompt = (el, style, typed, columns, time) => {
 		}),
 	);
 
-	const stamp = time === undefined ? null : h(Text, { color: t.codeComment }, rtl ? ` ${time}` : `${time} `);
-	const content = stamp === null ? body : h(Box, { flexDirection: "row" }, rtl ? body : stamp, rtl ? stamp : body);
 	if (boxedPrompt(style)) {
 		return h(
 			Box,
@@ -1744,11 +1740,11 @@ const renderUserPrompt = (el, style, typed, columns, time) => {
 				{ borderStyle: "round", borderColor: t.accent, paddingX: 1, alignSelf: rtl ? "flex-end" : "flex-start" },
 				widePrompt(style, hebrew) ? { width: "100%" } : {},
 			),
-			content,
+			body,
 		);
 	}
 	const mark = h(Text, { color: t.accent, bold: true }, style.promptStyle === "bar" ? (rtl ? " ▐" : "▌ ") : rtl ? " ‹" : "› ");
-	return h(Box, _extends({ flexDirection: "row" }, rtl ? { justifyContent: "flex-end" } : {}), rtl ? content : mark, rtl ? mark : content);
+	return h(Box, _extends({ flexDirection: "row" }, rtl ? { justifyContent: "flex-end" } : {}), rtl ? body : mark, rtl ? mark : body);
 };
 
 export {

@@ -32,7 +32,6 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { clipboardCommand, type ClipboardBackend } from "./core/clipboard.ts";
-import { clockText, promptKey, sentAt, withRecord, type Sent } from "./core/clock.ts";
 import { FIGURE_HINT } from "./core/figure.ts";
 import {
 	findSetup,
@@ -124,7 +123,6 @@ const DEFAULT_OPTIONS: PrismOptions = {
 	headingStyle: "banner",
 	tableStyle: "box",
 	promptStyle: "bubble",
-	clock: "off",
 	taskStyle: "checks",
 	pieStyle: "round",
 	rtl: "auto",
@@ -312,7 +310,7 @@ function codeSpan(line: string): string {
 type ActiveMessageHooks = {
 	isEnabled: () => boolean;
 	renderAssistantText: (text: string, isFirstOfReply: boolean, messageId: string, outputPad: number, images: ImageStore) => Component;
-	renderUserText: (text: string, messageId: string, outputPad: number) => Component | null;
+	renderUserText: (text: string, outputPad: number) => Component | null;
 };
 
 let activeHooks: ActiveMessageHooks | null = null;
@@ -355,7 +353,7 @@ function ensureMessagePrototypesPatched() {
 			if (!activeHooks?.isEnabled()) {
 				return prevRebuild.call(this);
 			}
-			const custom = activeHooks.renderUserText(this.text, `user:${this.text.slice(0, 64)}`, this.outputPad ?? 1);
+			const custom = activeHooks.renderUserText(this.text, this.outputPad ?? 1);
 			if (!custom) {
 				return prevRebuild.call(this);
 			}
@@ -371,7 +369,6 @@ function ensureMessagePrototypesPatched() {
 const SETUP_LIST_COLUMNS = 28;
 const SETUP_HEAD_ROWS = 8;
 const SETUP_TABLE = "| Item | Qty |\n|:-----|----:|\n| Apples | 3 |\n| Pears | 5 |";
-const SETUP_SENT = new Date(2026, 0, 15, 14, 32).getTime();
 
 function copySample(style: Style, value: string, id: string, columns: number): RenderElement[] {
 	const label: CopyButton = (_text, key, name = "⧉ copy", html) =>
@@ -387,18 +384,6 @@ function copySample(style: Style, value: string, id: string, columns: number): R
 	return [
 		h(EL.Box, { key: `${id}t`, flexDirection: "column" }, ...table),
 		...(value === "hover" ? [h(EL.Text, { key: `${id}h`, dimColor: true }, "Its buttons show only while the pointer is on its ⧉.")] : []),
-	];
-}
-
-function clockSample(style: Style, value: string, id: string, columns: number): RenderElement[] {
-	const time = value === "24h" || value === "12h" ? clockText(SETUP_SENT, SETUP_SENT, value) : undefined;
-	const prompt =
-		style.promptStyle === "off"
-			? h(EL.Text, { dimColor: true }, `> ${time === undefined ? "" : `[${time}] `}fix the failing test`)
-			: renderUserPrompt(EL, style, "fix the failing test", columns, time);
-	return [
-		h(EL.Box, { key: `${id}p` }, prompt),
-		h(EL.Box, { key: `${id}d` }, renderTurnDuration(EL, style, TURN_WORD, 115000, time)),
 	];
 }
 
@@ -424,7 +409,6 @@ export function drawSetupElements(
 			];
 		}
 		if (key === "copyButtonStyle") return copySample(style, value, id, columns);
-		if (key === "clock") return clockSample(style, value, id, columns);
 		return [];
 	};
 	const picks = found.parts.options.map(({ value, text }, i) => {
@@ -630,9 +614,7 @@ export default function prismExtension(
 
 	const parsedCache = new Map<string, ReturnType<typeof parse>>();
 	const unfolded = new Set<string>();
-	const firstDrawnMap = new Map<string, number>();
 	const pathChecks: PathChecks = { asked: new Set<string>(), found: new Set<string>() };
-	let sentRecords: Sent[] = [];
 	let formulasStore: Record<string, Formula> = {};
 	const pictureCache = new Map<string, LoadedPicture | null>();
 	const latexSuffix = randomUUID();
@@ -674,18 +656,6 @@ export default function prismExtension(
 	}
 
 	refreshFromDisk();
-
-	function firstDrawn(id: string): number {
-		const hit = firstDrawnMap.get(id);
-		if (hit !== undefined) return hit;
-		const now = Date.now();
-		firstDrawnMap.set(id, now);
-		if (firstDrawnMap.size > 1000) {
-			const oldest = firstDrawnMap.keys().next().value;
-			if (oldest !== undefined) firstDrawnMap.delete(oldest);
-		}
-		return now;
-	}
 
 	function notify(text: string, level: "info" | "warning" | "error" = "info"): void {
 		uiCtx?.ui.notify(text, level);
@@ -998,16 +968,11 @@ export default function prismExtension(
 			}, outputPad, images);
 			return comp;
 		},
-		renderUserText: (text, messageId, outputPad) => {
-			if (style.promptStyle === "off" && style.clock === "off") return null;
+		renderUserText: (text, outputPad) => {
+			if (style.promptStyle === "off") return null;
 			return new PrismComponent((columns) => {
 				syncThemeFromPi();
-				const at = style.clock === "off" ? undefined : sentAt(sentRecords, text, firstDrawn(messageId));
-				const time = at === undefined ? undefined : clockText(at, Date.now(), style.clock);
-				if (style.promptStyle === "off") {
-					return h(EL.Text, { dimColor: true }, `> ${time ? `[${time}] ` : ""}${text}`);
-				}
-				return renderUserPrompt(EL, style, text, columns, time);
+				return renderUserPrompt(EL, style, text, columns);
 			}, outputPad);
 		},
 	};
@@ -1082,14 +1047,12 @@ export default function prismExtension(
 		return container;
 	});
 
-	pi.registerEntryRenderer<{ durationMs: number; at: number }>(TURN_ENTRY_TYPE, (entry, _renderOptions, piTheme) => {
+	pi.registerEntryRenderer<{ durationMs: number }>(TURN_ENTRY_TYPE, (entry, _renderOptions, piTheme) => {
 		if (options.enabled === false) return undefined;
 		const durationMs = entry.data?.durationMs ?? 0;
-		const recordedAt = entry.data?.at ?? Date.now();
 		return new PrismComponent(() => {
 			syncThemeFromPi(piTheme);
-			const time = style.clock === "off" ? undefined : clockText(recordedAt, Date.now(), style.clock);
-			return renderTurnDuration(EL, style, TURN_WORD, durationMs, time);
+			return renderTurnDuration(EL, style, TURN_WORD, durationMs);
 		}, 1);
 	});
 
@@ -1133,13 +1096,6 @@ export default function prismExtension(
 		pathChecks.asked = new Set(pathChecks.found);
 	});
 
-	pi.on("input", (event, ctx) => {
-		uiCtx = ctx;
-		if (event.source !== "extension" && style.clock !== "off") {
-			sentRecords = withRecord(sentRecords, { text: promptKey(event.text), at: Date.now() });
-		}
-	});
-
 	pi.on("before_agent_start", (event, ctx) => {
 		uiCtx = ctx;
 		refreshFromDisk(ctx.cwd);
@@ -1167,9 +1123,8 @@ export default function prismExtension(
 		uiCtx = ctx;
 		if (options.enabled === false) return;
 		const durationMs = Math.max(0, Date.now() - turnStartedAt);
-		const at = Date.now();
 		if (durationMs >= 1000) {
-			pi.appendEntry(TURN_ENTRY_TYPE, { durationMs, at });
+			pi.appendEntry(TURN_ENTRY_TYPE, { durationMs });
 		}
 	});
 

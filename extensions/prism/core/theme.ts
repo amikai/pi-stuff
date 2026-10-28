@@ -50,15 +50,12 @@ export const DEFAULT_THEME: Theme = {
 	diagramText: "#cdd6f4",
 };
 
-export type Clock = "off" | "24h" | "12h";
-
 export type Style = {
 	theme: Theme;
 	headingStyle: "bold" | "underline" | "uppercase" | "banner";
 	tableStyle: "box" | "rules" | "grid" | "minimal";
 	taskStyle: "checks" | "ticks" | "box" | "progress";
 	promptStyle: "bubble" | "wide" | "bar" | "chevron" | "off";
-	clock: Clock;
 	inside?: "quote" | "alert";
 	noteKey?: string;
 	pieStyle: "round" | "bars";
@@ -107,7 +104,6 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		tableStyle: pick(options.tableStyle, ["box", "rules", "grid", "minimal"] as const, "box"),
 		taskStyle: pick(options.taskStyle, ["checks", "ticks", "box", "progress"] as const, "checks"),
 		promptStyle: pick(options.promptStyle, ["bubble", "wide", "bar", "chevron", "off"] as const, "bubble"),
-		clock: pick(options.clock, ["off", "24h", "12h"] as const, "off"),
 		pieStyle: pick(options.pieStyle, ["round", "bars"] as const, "round"),
 		highlightNumbers: options.highlightNumbers !== false,
 		highlightPaths: options.highlightPaths !== false,
