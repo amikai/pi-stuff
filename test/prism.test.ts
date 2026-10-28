@@ -329,17 +329,15 @@ test("2. AssistantMessageComponent renders tables, headings, code folding, diagr
 	assert.ok(expandedPlain.includes("[ show less ]"), "shows show less button when unfolded");
 });
 
-test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles and clock times", async () => {
-	const h = createHarness({ promptStyle: "bubble", clock: "24h" });
+test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles", async () => {
+	const h = createHarness({ promptStyle: "bubble" });
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
-	await h.emit("input", { text: "fix the failing test", source: "interactive" });
 
 	const userComp = new UserMessageComponent("fix the failing test");
 	const bubblePlain = stripAnsi(userComp.render(80).join("\n"));
 	assert.ok(bubblePlain.includes("╭─"), "draws bubble border around user prompt");
 	assert.ok(bubblePlain.includes("fix the failing test"), "draws prompt text");
-	assert.match(bubblePlain, /\d{2}:\d{2}/, "draws 24h clock timestamp");
 
 	await h.commands.get("prism")!.handler("setup prompts wide", h.ctx);
 	userComp.rebuild();
@@ -354,7 +352,7 @@ test("3. UserMessageComponent renders bubble, wide, bar, chevron prompt styles a
 
 test("4. /prism commands, interactive setup pane, pi theme tracking, and turn duration entry work", async () => {
 	setTheme("dark");
-	const h = createHarness({ clock: "24h" });
+	const h = createHarness();
 	cleanupFn = h.cleanup;
 	await h.emit("session_start");
 	assert.equal(h.getActivePiTheme(), "system", "prism never calls ctx.ui.setTheme");
@@ -400,14 +398,14 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
 	const overlay = h.getOverlay();
 	assert.ok(overlay, "opens interactive setup overlay in TUI mode");
 	const initialOverlayPlain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(initialOverlayPlain.includes("Setup 1/7: Tables"), "renders step 1 (Tables) in 7-step setup overlay");
+	assert.ok(initialOverlayPlain.includes("Setup 1/6: Tables"), "renders step 1 (Tables) in 6-step setup overlay");
 	overlay.handleInput("\x1b[B");
 	overlay.handleInput("\r");
 	assert.equal(h.readConfig().tableStyle, "rules", "saves selected tableStyle to prism.json");
 	assert.equal(h.readConfig().theme, undefined, "does not write theme to prism.json");
 	assert.equal(h.readConfig().syncPiTheme, undefined, "does not write syncPiTheme to prism.json");
 	const step2Plain = stripAnsi(overlay.render(90).join("\n"));
-	assert.ok(step2Plain.includes("Setup 2/7: Tasks"), "advances to step 2 (Tasks) after Enter");
+	assert.ok(step2Plain.includes("Setup 2/6: Tasks"), "advances to step 2 (Tasks) after Enter");
 	overlay.handleInput("\x1b");
 	assert.equal(h.getOverlay(), null, "Escape closes setup overlay");
 
@@ -434,7 +432,7 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
 
 	const entryRenderer = h.entryRenderers.get("prism-turn")!;
 	const turnComp = entryRenderer(
-		{ type: "custom", customType: "prism-turn", data: { durationMs: 125000, at: Date.now() } },
+		{ type: "custom", customType: "prism-turn", data: { durationMs: 125000 } },
 		{ expanded: false },
 		activePiGlobalTheme,
 	);

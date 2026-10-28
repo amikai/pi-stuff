@@ -64,7 +64,7 @@ Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatt
 
 ### Your prompts
 
-Scroll up: what you typed draws in a bubble. \`promptStyle\` switches to \`wide\`, \`bar\`, \`chevron\` or \`off\` in \`~/.pi/agent/prism.json\`. Set \`clock\` to \`24h\` or \`12h\` and each prompt shows when you sent it, and each turn's last line when it finished.
+Scroll up: what you typed draws in a bubble. \`promptStyle\` switches to \`wide\`, \`bar\`, \`chevron\` or \`off\` in \`~/.pi/agent/prism.json\`.
 
 ### Quotes and rules
 
@@ -516,7 +516,7 @@ export const languageShowcase = (lang: string): string => (/^ko/i.test(lang) ? K
 
 export type SetupStep = {
 	name: string;
-	key: "tableStyle" | "taskStyle" | "headingStyle" | "copyButtonStyle" | "promptStyle" | "clock" | "pieStyle";
+	key: "tableStyle" | "taskStyle" | "headingStyle" | "copyButtonStyle" | "promptStyle" | "pieStyle";
 	title: string;
 	note: string;
 	options: readonly string[];
@@ -562,14 +562,6 @@ export const SETUP_STEPS: readonly SetupStep[] = [
 		title: "Your prompts",
 		note: "How what you type draws in the transcript. `off` keeps Pi's own look.",
 		options: ["bubble", "wide", "bar", "chevron", "off"],
-		sample: "",
-	},
-	{
-		name: "times",
-		key: "clock",
-		title: "Times",
-		note: "Whether your prompts show when you sent them and the line that closes each turn when it finished. A time from another day gets its date.",
-		options: ["off", "24h", "12h"],
 		sample: "",
 	},
 	{

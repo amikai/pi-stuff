@@ -1,6 +1,6 @@
 # prism
 
-`prism` is a Pi terminal rendering extension inspired by [NahumLitvin/prismantis](https://github.com/NahumLitvin/prismantis). It strips away the upstream tool-row, diff-card, bash-output, and standalone theme-management layers to focus on rendering Markdown, LaTeX math, right-to-left prose, charts, and diagrams with interactive copy buttons.
+`prism` is a Pi terminal rendering extension inspired by the [upstream project](https://github.com/NahumLitvin/prismantis). It strips away the upstream tool-row, diff-card, bash-output, and standalone theme-management layers to focus on rendering Markdown, LaTeX math, right-to-left prose, charts, and diagrams with interactive copy buttons.
 
 Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch between `system`, `dark`, `light`, or a custom theme in Pi's `/settings`, `prism` updates its 20 semantic color slots automatically without mutating global Pi settings.
 
@@ -21,7 +21,7 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 - [`index.ts`](index.ts) registers the `/prism` command, hooks `AssistantMessageComponent` and `UserMessageComponent`, maps `ctx.ui.theme.colors` into `prism`'s 20 color slots, and injects diagram/figure/LaTeX guidelines into the system prompt.
 - [`renderer.ts`](renderer.ts) lays out virtual `Box`, `Text`, `Button`, `Link`, and `Image` element trees into ANSI terminal lines and mouse hit regions (`PrismComponent`).
 - [`desktop.ts`](desktop.ts) owns the picture side effects behind `Desktop`: the PNG pasteboard write, the Quick Look helper build, and the Quick Look launch.
-- [`core/`](core) holds the self-contained parsing and rendering modules (`markdown.ts`, `render.ts`, `mermaid.ts`, `merman.ts`, `background.ts`, `plantuml.ts`, `charts.ts`, `figure.ts`, `latex.ts`, `rtl.ts`, `html.ts`, `clipboard.ts`, `clock.ts`, `theme.ts`, `help.ts`, `jsx.ts`).
+- [`core/`](core) holds the self-contained parsing and rendering modules (`markdown.ts`, `render.ts`, `mermaid.ts`, `merman.ts`, `background.ts`, `plantuml.ts`, `charts.ts`, `figure.ts`, `latex.ts`, `rtl.ts`, `html.ts`, `clipboard.ts`, `theme.ts`, `help.ts`, `jsx.ts`).
 
 ## Commands
 
@@ -45,7 +45,6 @@ Settings live in `~/.pi/agent/prism.json` (or `$PI_CODING_AGENT_DIR/prism.json`)
 	"tableStyle": "box",
 	"taskStyle": "checks",
 	"promptStyle": "bubble",
-	"clock": "off",
 	"pieStyle": "round",
 	"copyButtons": true,
 	"copyButtonStyle": "inline",
