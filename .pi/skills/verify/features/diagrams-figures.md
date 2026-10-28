@@ -1,6 +1,6 @@
 # Diagrams and figures
 
-Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, `xychart-beta` bar/line charts, pie charts, and Gantt schedules) and ` ```figure ` blocks as colored terminal graphics. A mermaid block the text renderer cannot draw goes to `mmdr` instead when the terminal shows images and `mmdr` is on `PATH`, which the [mmdr feature](./mmdr.md) covers.
+Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, `xychart-beta` bar/line charts, pie charts, and Gantt schedules) and ` ```figure ` blocks as colored terminal graphics. A mermaid block the text renderer cannot draw goes to `merman-cli` instead when the terminal shows images and it is on `PATH`, which the [merman feature](./merman.md) covers.
 
 ## Sub-features
 
@@ -24,6 +24,6 @@ Preconditions:
 
 ## Gotchas
 
-- A Mermaid diagram wider than the current terminal width stays as source code with a dim note `diagram is <N> cols, terminal is <M>` above the fence so lines do not wrap and corrupt the box art. With a terminal that shows images and `mmdr` on `PATH`, the block is drawn as a picture instead. Every diagram in this drive fits, so it never starts `mmdr`.
+- A Mermaid diagram wider than the current terminal width stays as source code with a dim note `diagram is <N> cols, terminal is <M>` above the fence so lines do not wrap and corrupt the box art. With a terminal that shows images and `merman-cli` on `PATH`, the block is drawn as a picture instead. Every diagram in this drive fits, so it never starts merman.
 - A Mermaid kind outside the supported set stays as source with the note `<kind> diagrams draw as source for now`, under the same rule.
-- `mmdr` can add ` (mmdr <reason>)` to either note when it ran and could not help, or replace it with `drawing with mmdr…` while it runs. See [mmdr diagrams](./mmdr.md).
+- merman can replace either note with `drawing with merman…` while it runs. When it cannot draw the block, the note stays as main wrote it. See [merman diagrams](./merman.md).
