@@ -52,6 +52,7 @@ export const DEFAULT_THEME: Theme = {
 
 export type Style = {
 	theme: Theme;
+	background?: string;
 	headingStyle: "bold" | "underline" | "uppercase" | "banner";
 	tableStyle: "box" | "rules" | "grid" | "minimal";
 	taskStyle: "checks" | "ticks" | "box" | "progress";
@@ -66,6 +67,7 @@ export type Style = {
 	copyButtons: boolean;
 	copyButtonStyle: "inline" | "hover";
 	htmlCopy: ClipboardBackend | null;
+	images: boolean;
 	httpLinks: boolean;
 	editorLinks: boolean;
 	fileLinks: string | null;
@@ -112,6 +114,7 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		copyButtons: options.copyButtons !== false,
 		copyButtonStyle: pick(options.copyButtonStyle, ["inline", "hover"] as const, "inline"),
 		htmlCopy: null,
+		images: false,
 		httpLinks: false,
 		editorLinks: false,
 		fileLinks: null,

@@ -38,7 +38,7 @@ Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 
 ### Copy tables
 
-Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatted table. \`⧉ html\` shows in a local macOS, Linux or Windows terminal and writes HTML and tab-separated plain text together; Linux needs CopyQ running. Pasted into Slack it makes a native table; Slack keeps cell text but drops bold, links and alignment. If that fails, it copies the plain text alone. Set \`copyButtonStyle\` to \`hover\` in \`~/.pi/agent/prism.json\` and each block shows a dim ⧉ instead: point at it for its buttons.
+Use \`⧉ md\` for Markdown, \`⧉ art\` for chat, or \`⧉ html\` for a formatted table. \`⧉ html\` shows in a local macOS, Linux or Windows terminal and writes HTML and tab-separated plain text together; Linux needs CopyQ running. Pasted into Slack it makes a native table; Slack keeps cell text but drops bold, links and alignment. If that fails, it copies the plain text alone. \`▣ png\` puts a picture of the drawn table, diagram or chart on the clipboard in the theme's colors, ready to paste into Slack, docs or slides; it shows in a local macOS or Windows terminal. Set \`copyButtonStyle\` to \`hover\` in \`~/.pi/agent/prism.json\` and each block shows a dim ⧉ instead: point at it for its buttons.
 
 | Item | Quantity[^count] | Status |
 |:-----|---------:|:------:|
@@ -185,7 +185,7 @@ xychart-beta
     line "west" [12, 18, 25, 20, 14]
 \`\`\`
 
-A pie draws round with a legend. Set \`pieStyle\` to \`bars\` in \`~/.pi/agent/prism.json\` for one bar per slice:
+A pie draws round with a legend, as a smooth picture in terminals that show images. Set \`pieStyle\` to \`bars\` in \`~/.pi/agent/prism.json\` for one bar per slice:
 
 \`\`\`mermaid
 pie showData title Time per reply stage
@@ -424,7 +424,7 @@ Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 ### Task lists
 
 - [x] Tables, diagrams and charts drawn in the terminal
-- [x] Copy tables as Markdown, art or HTML (macOS/Linux)
+- [x] Copy tables as Markdown, art or HTML (macOS/Linux), and tables, diagrams and charts as a PNG image (macOS/Windows)
 - [ ] Pick a \`taskStyle\` in \`~/.pi/agent/prism.json\`: checks, ticks, box or progress
 
 \`\`\`mermaid
@@ -568,7 +568,7 @@ export const SETUP_STEPS: readonly SetupStep[] = [
 		name: "pies",
 		key: "pieStyle",
 		title: "Pie charts",
-		note: "How mermaid `pie` charts draw. `round` falls back to bars in ascii mode, with more slices than the theme has distinct colors or in a narrow terminal.",
+		note: "How mermaid `pie` charts draw. `round` draws a smooth picture in terminals that show images and text elsewhere, and falls back to bars in ascii mode, with more slices than the theme has distinct colors or in a narrow terminal.",
 		options: ["round", "bars"],
 		sample: '```mermaid\npie title Time per reply stage\n    "Draw" : 9\n    "Paint" : 5\n    "Parse" : 3\n```',
 	},

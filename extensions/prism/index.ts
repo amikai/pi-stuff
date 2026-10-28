@@ -31,7 +31,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { clipboardCommand, type ClipboardBackend } from "./core/clipboard.ts";
+import { clipboardCommand, drawsImages, imageCommand, type ClipboardBackend, type HelperCommand } from "./core/clipboard.ts";
 import { FIGURE_HINT } from "./core/figure.ts";
 import {
 	findSetup,
@@ -170,6 +170,12 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
 	};
 }
 
+export function backgroundFromPiTheme(piTheme: PiTheme | undefined): string | undefined {
+	if (!piTheme || !piTheme.colors) return undefined;
+	if (piTheme.name === "mono" || piTheme.getColorMode?.() === "none") return undefined;
+	return piTheme.appearance === "light" ? "#ffffff" : "#000000";
+}
+
 function resolvePrismTheme(options: PrismOptions, piTheme: PiTheme | undefined): Theme {
 	const base = themeFromPiTheme(piTheme);
 	const overrides = Object.fromEntries(
@@ -280,9 +286,9 @@ function applyTerminalCapabilities(style: Style, cwd: string): Terminal | null {
 	return terminal;
 }
 
-function copyHtmlTableSync(backend: ClipboardBackend, html: string, text: string): string | null {
+function runHelperSync(backend: ClipboardBackend, build: (systemRoot?: string) => HelperCommand): string | null {
 	const systemRoot = backend === "windows" ? process.env.SystemRoot : undefined;
-	const command = clipboardCommand(backend, html, text, systemRoot);
+	const command = build(systemRoot);
 	if (backend === "windows" && !systemRoot) return command.failure;
 	const [bin, ...args] = command.argv;
 	if (!bin) return command.failure;
@@ -290,7 +296,7 @@ function copyHtmlTableSync(backend: ClipboardBackend, html: string, text: string
 		const res = spawnSync(bin, args, {
 			input: command.stdin,
 			encoding: "utf8",
-			timeout: 5000,
+			timeout: backend === "windows" ? 15000 : 5000,
 		});
 		if (res.error) return command.failure;
 		return res.status === 0 ? null : (res.stderr || "").trim() || command.failure;
@@ -298,6 +304,21 @@ function copyHtmlTableSync(backend: ClipboardBackend, html: string, text: string
 		return command.failure;
 	}
 }
+
+function richCommand(style: Style, backend: ClipboardBackend, content: string, rich: (() => string) | "png") {
+	return (systemRoot?: string): HelperCommand =>
+		rich === "png"
+			? imageCommand(
+					backend,
+					content,
+					{ foreground: style.theme.diagramText ?? style.theme.codeText, background: style.background },
+					systemRoot,
+				)
+			: clipboardCommand(backend, rich(), content, systemRoot);
+}
+
+const offers = (style: Style, rich?: (() => string) | "png"): boolean =>
+	!rich || (rich === "png" ? drawsImages(style.htmlCopy) : !!style.htmlCopy);
 
 function codeSpan(line: string): string {
 	const content = line || "\u00a0";
@@ -371,8 +392,8 @@ const SETUP_HEAD_ROWS = 8;
 const SETUP_TABLE = "| Item | Qty |\n|:-----|----:|\n| Apples | 3 |\n| Pears | 5 |";
 
 function copySample(style: Style, value: string, id: string, columns: number): RenderElement[] {
-	const label: CopyButton = (_text, key, name = "⧉ copy", html) =>
-		html && !style.htmlCopy ? null : h(EL.Text, { key, bold: true }, `[ ${name} ]`);
+	const label: CopyButton = (_text, key, name = "⧉ copy", rich) =>
+		offers(style, rich) ? h(EL.Text, { key, bold: true }, `[ ${name} ]`) : null;
 	const table = renderBlocks(
 		EL,
 		style,
@@ -642,6 +663,7 @@ export default function prismExtension(
 			style = {
 				...style,
 				theme: resolvePrismTheme(options, piTheme),
+				background: backgroundFromPiTheme(piTheme),
 			};
 		}
 		return style;
@@ -651,7 +673,7 @@ export default function prismExtension(
 		options = loadOptions();
 		const piTheme = getActivePiTheme();
 		lastPiColors = piTheme?.colors;
-		style = resolveStyle(options, themeFromPiTheme(piTheme));
+		style = { ...resolveStyle(options, themeFromPiTheme(piTheme)), background: backgroundFromPiTheme(piTheme) };
 		applyTerminalCapabilities(style, cwd ?? uiCtx?.cwd ?? process.cwd());
 	}
 
@@ -696,18 +718,18 @@ export default function prismExtension(
 	}
 
 	function makeCopyButton(): CopyButton {
-		return (text, key, label = "⧉ copy", html) => {
-			if (!style.copyButtons || (html && !style.htmlCopy)) return null;
+		return (text, key, label = "⧉ copy", rich) => {
+			if (!style.copyButtons || !offers(style, rich)) return null;
 			return h(EL.Button, {
 				key,
 				variant: "primary",
 				label,
 				onPress: () => {
 					const content = typeof text === "function" ? text() : text;
-					if (html && style.htmlCopy) {
-						const failure = copyHtmlTableSync(style.htmlCopy, html(), content);
+					if (rich && style.htmlCopy) {
+						const failure = runHelperSync(style.htmlCopy, richCommand(style, style.htmlCopy, content, rich));
 						if (failure === null) {
-							toast("Copied formatted table", "info");
+							toast(rich === "png" ? "Copied as image" : "Copied formatted table", "info");
 							return;
 						}
 						try {
@@ -881,7 +903,7 @@ export default function prismExtension(
 		const fold = makeFolder(options?.onInvalidate);
 		const drawn = drawDiagrams(
 			EL,
-			activeStyle,
+			{ ...activeStyle, images: Boolean(getCapabilities().images) },
 			blocks,
 			columns - markerRoom(activeStyle),
 			mermanEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
