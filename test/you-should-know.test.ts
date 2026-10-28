@@ -548,10 +548,10 @@ test("Hovering a widget button highlights it, and only one component is highligh
 	prism.render(40);
 	row.handleMouse(move(x + 2, 0));
 	assert.deepEqual(prism.handleMouse(move(3, 0)), { handled: true, render: true });
-	assert.ok(!row.render(120).join("").includes(INVERSE), "entering a prismantis button clears the widget button");
-	assert.ok(prism.render(40).join("").includes(INVERSE), "the prismantis button is highlighted");
+	assert.ok(!row.render(120).join("").includes(INVERSE), "entering a prism button clears the widget button");
+	assert.ok(prism.render(40).join("").includes(INVERSE), "the prism button is highlighted");
 	row.handleMouse(move(x + 2, 0));
-	assert.ok(!prism.render(40).join("").includes(INVERSE), "entering a widget button clears the prismantis button");
+	assert.ok(!prism.render(40).join("").includes(INVERSE), "entering a widget button clears the prism button");
 	assert.ok(row.render(120).join("").includes(`${INVERSE}[Plain words]`));
 	clearHover();
 });

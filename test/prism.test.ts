@@ -438,8 +438,8 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
 	);
 	const turnPlain = stripAnsi(turnComp.render(80).join("\n"));
 	assert.ok(
-		turnPlain.includes("✻ prismantis rendering for 2m 5s"),
-		`expected prismantis rendering duration footer, got: ${turnPlain}`,
+		turnPlain.includes("✻ prism rendering for 2m 5s"),
+		`expected prism rendering duration footer, got: ${turnPlain}`,
 	);
 
 	const transformer = h.markdownTransformers[0]!;
@@ -550,7 +550,7 @@ test("8. color slot overrides, table <br> line breaks, and probed loose path hyp
 	} as any);
 
 	const rawRendered = comp.render(100).join("\n");
-	assert.ok(rawRendered.includes("38;2;255;0;255"), "applies headingColor override from prismantis.json");
+	assert.ok(rawRendered.includes("38;2;255;0;255"), "applies headingColor override from the legacy settings file");
 	const plainRendered = stripAnsi(rawRendered);
 	assert.ok(plainRendered.includes("x<br>y"), "keeps <br> literal inside inline code");
 	for (const linePart of ["│ a", "│ b", "│ c", "│ d"]) {

@@ -97,7 +97,7 @@ import { PrismComponent, renderNode, type ImageStore } from "./renderer.ts";
 
 const CUSTOM_MESSAGE_TYPE = "prism-output";
 const TURN_ENTRY_TYPE = "prism-turn";
-const TURN_WORD = "prismantis rendering";
+const TURN_WORD = "prism rendering";
 const PI_THEME_SYMBOL = Symbol.for("@earendil-works/pi-coding-agent:theme");
 const LATEX_HINT =
 	"This terminal typesets LaTeX math: a formula in $$…$$ on lines of its own, or in a ```math block, renders as an image (KaTeX syntax). Inline $…$ does not render, so write inline math as plain text or Unicode.";
