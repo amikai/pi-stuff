@@ -837,8 +837,12 @@ const numberedLine = (el, style, label, pieces, key) => [
 	h(el.Text, { key: `${key}.c`, color: style.theme.codeText }, drawCode(el, pieces, `${key}.c`)),
 ];
 
+const heldSegments = (style, lines, lang) =>
+	(isShellLang(lang) ? lines.map((line) => shellLine(style, line)) : segmentRows(style, lines, lang)) ??
+	lines.map((text) => (text ? [{ text, italic: false }] : []));
+
 const heldCode = (el, style, lines, shown, lang, gutter, room, key) =>
-	(segmentRows(style, lines, lang) ?? lines.map((text) => (text ? [{ text, italic: false }] : [])))
+	heldSegments(style, lines, lang)
 		.slice(0, shown)
 		.flatMap((segs, i) =>
 			visualRows(tabbed(merged(segs)), room).map((part, k) =>
@@ -888,11 +892,15 @@ const codeBody = (el, style, rows, gutter, held, more) => {
 
 const isShellLang = (lang) => lang === "" || /^(sh|bash|zsh|shell|console|fish|powershell|ps1)$/i.test(lang);
 
+const BOX_DRAWING = /[\u2500-\u257F]/;
+
+const SHELL_COMMENT = /^\s*#/;
+
 const codeLine = (el, style, line, lang, key, room) => {
 	const { Text } = el;
 	const t = style.theme;
 	const isShell = isShellLang(lang);
-	if (/[\u2500-\u257F]/.test(line)) return h(Text, { key: key, color: t.codeText }, line);
+	if (BOX_DRAWING.test(line)) return h(Text, { key: key, color: t.codeText }, line);
 	const comment = style.reorder ? commentTail(line, style.shape) : null;
 	if (comment) {
 		return h(
@@ -903,26 +911,39 @@ const codeLine = (el, style, line, lang, key, room) => {
 		);
 	}
 	if (!isShell) return h(Text, { key: key, color: t.codeText }, shownCode(line, style, room) || " ");
-	if (/^\s*#/.test(line)) return h(Text, { key: key, color: t.codeComment }, line);
-	const parts = shownCode(line, style, room, true)
-		.split(/("[^"]*"|'[^']*'|\s+)/)
-		.filter((p) => p !== "");
-	let seenCommand = false;
+	if (SHELL_COMMENT.test(line)) return h(Text, { key: key, color: t.codeComment }, line);
 	return h(
 		Text,
 		{ key: key, color: t.codeText },
-		parts.map((p, i) => {
-			if (/^\s+$/.test(p)) return h(Text, { key: `${key}.${i}` }, p);
-			if (/^["']/.test(p)) return h(Text, { key: `${key}.${i}`, color: t.codeString }, p);
-			if (/^--?[\w-]/.test(p)) return h(Text, { key: `${key}.${i}`, color: t.codeFlag }, p);
-			if (!seenCommand && !/^[$>|&;]+$/.test(p)) {
-				seenCommand = true;
-				return h(Text, { key: `${key}.${i}`, color: t.codeCommand }, p);
-			}
-			if (/^(\||&&|;|\|\|)$/.test(p)) seenCommand = false;
-			return h(Text, { key: `${key}.${i}` }, p);
-		}),
+		shellSegments(style, line, room).map((s, i) => h(Text, { key: `${key}.${i}`, color: s.color }, s.text)),
 	);
+};
+
+const shellLine = (style, line) => {
+	if (!line) return [];
+	if (BOX_DRAWING.test(line)) return [{ text: line, color: style.theme.codeText, italic: false }];
+	if (SHELL_COMMENT.test(line)) return [{ text: line, color: style.theme.codeComment, italic: false }];
+	return shellSegments(style, line);
+};
+
+const shellSegments = (style, line, room) => {
+	const t = style.theme;
+	let seenCommand = false;
+	const colorOf = (p) => {
+		if (/^\s+$/.test(p)) return undefined;
+		if (/^["']/.test(p)) return t.codeString;
+		if (/^--?[\w-]/.test(p)) return t.codeFlag;
+		if (!seenCommand && !/^[$>|&;]+$/.test(p)) {
+			seenCommand = true;
+			return t.codeCommand;
+		}
+		if (/^(\||&&|;|\|\|)$/.test(p)) seenCommand = false;
+		return undefined;
+	};
+	return shownCode(line, style, room, true)
+		.split(/("[^"]*"|'[^']*'|\s+)/)
+		.filter((p) => p !== "")
+		.map((text) => ({ text, color: colorOf(text), italic: false }));
 };
 
 const longestWord = (text) => Math.max(0, ...text.split(/\s+/).map(width));

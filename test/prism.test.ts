@@ -2043,3 +2043,25 @@ test("53. Windows Terminal keeps English words in a Hebrew figure label together
 	assert.ok(holdEngine([...("רגיל  ──► נעלם מ-Saved Tabs ──► סוף")]).cells.join("").includes("\u200e Saved Tabs-נעלם מ\u200e "));
 	assert.equal(holdEngine([...("(נמצא ב-Recent Sessions)")]).cells.join(""), "(Recent Sessions-נמצא ב)");
 });
+
+test("54. on iTerm a shell block with a line that opens with Hebrew keeps the shell colors the block has without Hebrew", async () => {
+	const colors = async (note: string) => {
+		const h = createHarness({ rtl: "iterm" });
+		cleanupFn = h.cleanup;
+		await h.emit("session_start");
+		const comp = new AssistantMessageComponent({
+			role: "assistant",
+			content: [{ type: "text", text: `\`\`\`bash\n${note}\nnpm install --save "x"\n\`\`\`` }],
+			timestamp: 1000,
+		} as any);
+		const rendered = comp.render(80).join("\n");
+		return [note, "npm", "--save", '"x"'].map((word) => {
+			const before = rendered.slice(0, rendered.indexOf(word));
+			return [...before.matchAll(/\x1b\[([0-9;]*)m/g)].at(-1)?.[1];
+		});
+	};
+	const plain = await colors("# note");
+	const held = await colors("# התקנת החבילות");
+	assert.equal(new Set(plain).size, 4, `command, flag, string and comment each have a color: ${plain}`);
+	assert.deepEqual(held, plain);
+});
