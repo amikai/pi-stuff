@@ -1,4 +1,3 @@
-import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import type { DemoDocument, SectionBlock } from "./render.ts";
 
 export type SectionSpec = {
@@ -547,59 +546,10 @@ zenuml
 	},
 } satisfies Record<string, SectionSpec>;
 
-export type SectionId = keyof typeof SECTIONS;
-export type Selection = "all" | SectionId;
-
-export type CommandTarget =
-	| { readonly kind: "show"; readonly selection: Selection }
-	| { readonly kind: "help" }
-	| { readonly kind: "invalid"; readonly explanation: string };
-
-export function isSectionId(value: string): value is SectionId {
-	return Object.hasOwn(SECTIONS, value);
-}
-
-const sectionIds = Object.keys(SECTIONS).filter(isSectionId);
-const argumentsList = ["all", "demo", ...sectionIds, "help"];
-
-export function parseCommandArgs(args: string): CommandTarget {
-	const token = args.trim();
-	if (token === "" || token === "all" || token === "demo") return { kind: "show", selection: "all" };
-	if (token === "help" || token === "-h" || token === "--help") return { kind: "help" };
-	if (isSectionId(token)) return { kind: "show", selection: token };
-	return { kind: "invalid", explanation: `Use one argument: ${argumentsList.join(", ")}.` };
-}
-
-export function getBuiltInRenderCompletions(prefix: string): AutocompleteItem[] | null {
-	const token = prefix.trim();
-	if (/\s/.test(token)) return null;
-	const matches = argumentsList.filter((value) => value.startsWith(token)).map((value) => ({
-		value,
-		label: value,
-		description: isSectionId(value) ? SECTIONS[value].description
-			: value === "help" ? "List commands and sections" : "Render every section",
-	}));
-	return matches.length > 0 ? matches : null;
-}
-
-export function makeDocument(selection: Selection): DemoDocument {
+export function makeDocument(): DemoDocument {
 	const blocks: [SectionBlock, ...SectionBlock[]] = [markdown("# Pi built-in render\n\nThese examples use stock Pi components without assistant-message transforms.")];
-	const selected = selection === "all" ? sectionIds : [selection];
-	for (const id of selected) {
-		const section = SECTIONS[id];
+	for (const section of Object.values(SECTIONS)) {
 		blocks.push(markdown(`## ${section.title}\n\n${section.description}`), ...section.blocks);
 	}
 	return { version: 1, blocks };
-}
-
-export function makeHelpDocument(): DemoDocument {
-	return { version: 1, blocks: [markdown([
-		"# Pi built-in render help",
-		"Use `/pi-built-in-render` with no argument, `all`, or `demo` for every section.",
-		"Use one section name to render only that section. Arguments are lowercase and case-sensitive.",
-		...sectionIds.map((id) => `- \`${id}\`: ${SECTIONS[id].description}`),
-		"Use `help`, `-h`, or `--help` for this page.",
-		"Output stays in the transcript on resume and does not enter model context. No model turn is requested.",
-		"OSC-8 hyperlinks and Kitty or iTerm2 inline images depend on terminal capabilities. Other terminals use stock fallbacks.",
-	].join("\n\n"))] };
 }

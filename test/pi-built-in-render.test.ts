@@ -45,11 +45,7 @@ const {
 	decodeDocument,
 	diagramCodeSpan,
 	ENTRY_TYPE,
-	getBuiltInRenderCompletions,
-	isSectionId,
 	makeDocument,
-	makeHelpDocument,
-	parseCommandArgs,
 	default: piBuiltInRenderExtension,
 	SECTIONS,
 	transformBuiltInMermaid,
@@ -66,6 +62,8 @@ const SECTION_IDS = [
 	"diff",
 	"image",
 ] as const;
+
+const sectionDocument = (id: (typeof SECTION_IDS)[number]) => ({ version: 1, blocks: SECTIONS[id].blocks });
 
 function invokeExtension(ext: unknown, api: unknown): void {
 	if (typeof ext === "function") {
@@ -206,76 +204,17 @@ afterEach(() => {
 	cleanupFn?.();
 });
 
-test("1. parseCommandArgs and isSectionId validate default, aliases, all 9 sections, help flags, unknown sections, and multi-token inputs", () => {
+test("1. SECTIONS lists the 9 sections in showcase order", () => {
 	assert.deepEqual(Object.keys(SECTIONS), [...SECTION_IDS]);
-
-	for (const alias of ["", "   ", "all", "  all  ", "demo", " demo "]) {
-		assert.deepEqual(parseCommandArgs(alias), { kind: "show", selection: "all" });
-	}
-
-	for (const sectionId of SECTION_IDS) {
-		assert.equal(isSectionId(sectionId), true);
-		assert.deepEqual(parseCommandArgs(sectionId), { kind: "show", selection: sectionId });
-		assert.deepEqual(parseCommandArgs(`  ${sectionId}  `), { kind: "show", selection: sectionId });
-	}
-
-	for (const helpArg of ["help", "-h", "--help", "  --help  "]) {
-		assert.deepEqual(parseCommandArgs(helpArg), { kind: "help" });
-	}
-
-	assert.equal(isSectionId("unknown"), false);
-	assert.equal(isSectionId("all"), false);
-	assert.equal(isSectionId("help"), false);
-
-	const unknownResult = parseCommandArgs("unknown");
-	assert.equal(unknownResult.kind, "invalid");
-	if (unknownResult.kind === "invalid") {
-		assert.ok(unknownResult.explanation.includes("all"));
-		assert.ok(unknownResult.explanation.includes("mermaid"));
-		assert.ok(unknownResult.explanation.includes("help"));
-	}
-
-	const multiTokenResult = parseCommandArgs("math mermaid");
-	assert.equal(multiTokenResult.kind, "invalid");
-	if (multiTokenResult.kind === "invalid") {
-		assert.ok(multiTokenResult.explanation.length > 0);
-	}
 });
 
-test("2. getBuiltInRenderCompletions filters commands and sections by single-token prefix", () => {
-	const allCompletions = getBuiltInRenderCompletions("");
-	assert.ok(allCompletions !== null);
-	const allValues = allCompletions.map((item) => item.value);
-	assert.deepEqual(allValues, ["all", "demo", ...SECTION_IDS, "help"]);
-
-	const whitespaceCompletions = getBuiltInRenderCompletions("   ");
-	assert.ok(whitespaceCompletions !== null);
-	assert.deepEqual(
-		whitespaceCompletions.map((item) => item.value),
-		["all", "demo", ...SECTION_IDS, "help"],
-	);
-
-	const maCompletions = getBuiltInRenderCompletions("ma");
-	assert.ok(maCompletions !== null);
-	assert.deepEqual(
-		maCompletions.map((item) => item.value),
-		["markdown", "math"],
-	);
-
-	assert.equal(getBuiltInRenderCompletions("math mermaid"), null);
-	assert.equal(getBuiltInRenderCompletions("unknown"), null);
-});
-
-test("3. decodeDocument accepts valid showcase and help documents and rejects malformed or unsafe payloads", () => {
-	const validAll = decodeDocument(makeDocument("all"));
+test("2. decodeDocument accepts the showcase document and rejects malformed or unsafe payloads", () => {
+	const validAll = decodeDocument(makeDocument());
 	assert.equal(validAll.kind, "valid");
 	if (validAll.kind === "valid") {
 		assert.equal(validAll.document.version, 1);
 		assert.ok(validAll.document.blocks.length >= SECTION_IDS.length);
 	}
-
-	const validHelp = decodeDocument(makeHelpDocument());
-	assert.equal(validHelp.kind, "valid");
 
 	for (const nonObject of [null, undefined, "string", 123, true, []]) {
 		const res = decodeDocument(nonObject);
@@ -283,7 +222,7 @@ test("3. decodeDocument accepts valid showcase and help documents and rejects ma
 	}
 
 	assert.equal(
-		decodeDocument({ version: 2, blocks: makeDocument("markdown").blocks }).kind,
+		decodeDocument({ version: 2, blocks: makeDocument().blocks }).kind,
 		"invalid",
 	);
 	assert.equal(decodeDocument({ version: 1, blocks: [] }).kind, "invalid");
@@ -335,7 +274,7 @@ test("3. decodeDocument accepts valid showcase and help documents and rejects ma
 	);
 });
 
-test("4. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the Mermaid 12.2.0 matrix across all 5 supported families, and handle width, warning, and source fallbacks", () => {
+test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the Mermaid 12.2.0 matrix across all 5 supported families, and handle width, warning, and source fallbacks", () => {
 	assert.equal(diagramCodeSpan(""), "`\u00a0`");
 	assert.equal(diagramCodeSpan("plain row"), "`plain row`");
 	assert.equal(diagramCodeSpan("one ` tick"), "``one ` tick``");
@@ -911,12 +850,12 @@ test("4. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the
 	assert.equal(narrowResult, wideSource);
 });
 
-test("5. BuiltInDocumentComponent renders every section within width bounds, formats tables, math, diffs, image fallbacks, and refreshes colors on invalidate()", () => {
+test("4. BuiltInDocumentComponent renders every section within width bounds, formats tables, math, diffs, image fallbacks, and refreshes colors on invalidate()", () => {
 	setCapabilityOverrides({ images: null });
 	resetCapabilitiesCache();
 
-	for (const selection of ["all", ...SECTION_IDS] as const) {
-		const doc = makeDocument(selection);
+	const documents = [["all", makeDocument()], ...SECTION_IDS.map((id) => [id, sectionDocument(id)])] as const;
+	for (const [selection, doc] of documents) {
 		const comp = new BuiltInDocumentComponent(doc, activePiGlobalTheme);
 		for (const width of [100, 50]) {
 			const lines = comp.render(width);
@@ -933,14 +872,14 @@ test("5. BuiltInDocumentComponent renders every section within width bounds, for
 	}
 
 	const tablesPlain = stripTerminalSequences(
-		new BuiltInDocumentComponent(makeDocument("tables"), activePiGlobalTheme).render(100).join("\n"),
+		new BuiltInDocumentComponent(sectionDocument("tables"), activePiGlobalTheme).render(100).join("\n"),
 	);
 	assert.ok(tablesPlain.includes("┌─"));
 	assert.ok(tablesPlain.includes("├─"));
 	assert.ok(tablesPlain.includes("└─"));
 
 	const mathPlain = stripTerminalSequences(
-		new BuiltInDocumentComponent(makeDocument("math"), activePiGlobalTheme).render(100).join("\n"),
+		new BuiltInDocumentComponent(sectionDocument("math"), activePiGlobalTheme).render(100).join("\n"),
 	);
 	assert.ok(mathPlain.includes("∑"));
 	assert.ok(mathPlain.includes("∫"));
@@ -948,7 +887,7 @@ test("5. BuiltInDocumentComponent renders every section within width bounds, for
 	assert.ok(mathPlain.includes("⎧"));
 
 	const mermaidPlain = stripTerminalSequences(
-		new BuiltInDocumentComponent(makeDocument("mermaid"), activePiGlobalTheme).render(100).join("\n"),
+		new BuiltInDocumentComponent(sectionDocument("mermaid"), activePiGlobalTheme).render(100).join("\n"),
 	);
 	assert.ok(mermaidPlain.includes("mermaid@12.2.0"), "includes official Mermaid 12.2.0 baseline version");
 	assert.ok(mermaidPlain.includes("grok-mermaid@0.2.3"), "includes bundled grok-mermaid 0.2.3 version");
@@ -999,7 +938,7 @@ test("5. BuiltInDocumentComponent renders every section within width bounds, for
 		);
 	}
 
-	const diffRaw = new BuiltInDocumentComponent(makeDocument("diff"), activePiGlobalTheme)
+	const diffRaw = new BuiltInDocumentComponent(sectionDocument("diff"), activePiGlobalTheme)
 		.render(100)
 		.join("\n");
 	const diffPlain = stripTerminalSequences(diffRaw);
@@ -1008,13 +947,13 @@ test("5. BuiltInDocumentComponent renders every section within width bounds, for
 	assert.ok(diffPlain.includes("-") && diffPlain.includes("+"));
 
 	const imagePlain = stripTerminalSequences(
-		new BuiltInDocumentComponent(makeDocument("image"), activePiGlobalTheme).render(100).join("\n"),
+		new BuiltInDocumentComponent(sectionDocument("image"), activePiGlobalTheme).render(100).join("\n"),
 	);
 	assert.ok(imagePlain.includes("[Image:"));
 	assert.ok(imagePlain.includes("[image/png]"));
 
 	setTheme("dark");
-	const themeComp = new BuiltInDocumentComponent(makeDocument("all"), activePiGlobalTheme);
+	const themeComp = new BuiltInDocumentComponent(makeDocument(), activePiGlobalTheme);
 	const darkOutput = themeComp.render(90).join("\n");
 
 	setTheme("light");
@@ -1028,7 +967,7 @@ test("5. BuiltInDocumentComponent renders every section within width bounds, for
 	assert.notEqual(lightOutput, monoOutput, "invalidate() reconstructs children with updated mono theme colors");
 });
 
-test("6. piBuiltInRenderExtension coexists with prismExtension without prism interception or LLM context leakage", async () => {
+test("5. piBuiltInRenderExtension coexists with prismExtension without prism interception or LLM context leakage", async () => {
 	setCapabilityOverrides({ images: null });
 	resetCapabilitiesCache();
 
@@ -1048,17 +987,17 @@ test("6. piBuiltInRenderExtension coexists with prismExtension without prism int
 	const builtInCmd = h.commands.get("pi-built-in-render");
 	assert.ok(builtInCmd, "registers /pi-built-in-render command");
 
-	await builtInCmd.handler("bad-arg", h.ctx);
-	assert.equal(h.appendedEntries.length, 0, "invalid argument appends no entry");
-	assert.equal(h.notifications.length, 1);
-	assert.equal(h.notifications[0]?.level, "warning");
+	assert.equal(builtInCmd.getArgumentCompletions, undefined, "offers no argument completions");
+	const removedArgs = ["all", "demo", "mermaid", "help", "-h", "--help", "math mermaid"];
+	for (const arg of removedArgs) {
+		await builtInCmd.handler(arg, h.ctx);
+	}
+	assert.equal(h.appendedEntries.length, 0, "an argument appends no entry");
+	assert.deepEqual(h.notifications.map((n) => n.level), removedArgs.map(() => "warning"));
 
-	await builtInCmd.handler("", h.ctx);
-	await builtInCmd.handler("mermaid", h.ctx);
-	await builtInCmd.handler("diff", h.ctx);
-	await builtInCmd.handler("help", h.ctx);
+	await builtInCmd.handler("  ", h.ctx);
 	assert.equal(h.sentCustomMessages.length, 0, "never calls pi.sendMessage");
-	assert.equal(h.appendedEntries.length, 4);
+	assert.equal(h.appendedEntries.length, 1);
 	for (const entry of h.appendedEntries) {
 		assert.equal(entry.customType, ENTRY_TYPE);
 	}
@@ -1086,7 +1025,7 @@ test("6. piBuiltInRenderExtension coexists with prismExtension without prism int
 	const messageRenderer = h.messageRenderers.get(ENTRY_TYPE);
 	assert.ok(messageRenderer, "registers message renderer for compatibility custom messages");
 	const msgComp = messageRenderer(
-		{ role: "custom", customType: ENTRY_TYPE, details: h.appendedEntries[1]?.data },
+		{ role: "custom", customType: ENTRY_TYPE, details: h.appendedEntries[0]?.data },
 		{ expanded: false },
 		activePiGlobalTheme,
 	);
