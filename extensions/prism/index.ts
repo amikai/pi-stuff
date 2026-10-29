@@ -1168,9 +1168,9 @@ export default function prismExtension(
 	}
 
 	pi.registerCommand("prism", {
-		description: "Pick prism styles from samples, or show the demo",
+		description: "Pick prism styles from samples, or run checkhealth",
 		getArgumentCompletions(prefix: string) {
-			const subcommands = ["setup", "demo", "demo-rtl"];
+			const subcommands = ["setup", "checkhealth", "checkhealth-rtl"];
 			const trimmed = prefix.trim();
 			if (!trimmed.includes(" ")) {
 				return subcommands
@@ -1192,13 +1192,13 @@ export default function prismExtension(
 			refreshFromDisk(ctx.cwd);
 			const [sub, name, third] = args.trim().split(/\s+/);
 
-			if (sub === "demo") {
+			if (sub === "checkhealth") {
 				const locale = name ?? process.env.LC_ALL ?? process.env.LANG ?? "";
 				sendPrismOutput(showcaseText() + languageShowcase(locale));
 				return;
 			}
 
-			if (sub === "demo-rtl") {
+			if (sub === "checkhealth-rtl") {
 				sendPrismOutput(rtlShowcaseText());
 				return;
 			}

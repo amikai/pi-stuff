@@ -1,20 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { getBuiltInRenderCompletions, makeDocument, makeHelpDocument, parseCommandArgs } from "./catalog.ts";
+import { makeDocument } from "./catalog.ts";
 import { BuiltInDocumentComponent, decodeDocument, ENTRY_TYPE } from "./render.ts";
 
-export {
-	SECTIONS,
-	getBuiltInRenderCompletions,
-	isSectionId,
-	makeDocument,
-	makeHelpDocument,
-	parseCommandArgs,
-	type CommandTarget,
-	type SectionId,
-	type SectionSpec,
-	type Selection,
-} from "./catalog.ts";
+export { SECTIONS, makeDocument, type SectionSpec } from "./catalog.ts";
 export { diagramCodeSpan, transformBuiltInMermaid } from "./mermaid.ts";
 export {
 	BuiltInDocumentComponent,
@@ -43,18 +32,16 @@ export default function piBuiltInRenderExtension(pi: ExtensionAPI): void {
 	}));
 	pi.registerCommand("pi-built-in-render", {
 		description: "Demonstrate Pi's stock Markdown, math, Mermaid, diff, and image renderers",
-		getArgumentCompletions: getBuiltInRenderCompletions,
 		handler: async (args, ctx) => {
-			const cmd = parseCommandArgs(args);
-			if (cmd.kind === "invalid") {
-				ctx.ui.notify(cmd.explanation, "warning");
+			if (args.trim()) {
+				ctx.ui.notify("/pi-built-in-render takes no arguments.", "warning");
 				return;
 			}
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("Built-in rendering requires interactive terminal mode.", "warning");
 				return;
 			}
-			pi.appendEntry(ENTRY_TYPE, cmd.kind === "help" ? makeHelpDocument() : makeDocument(cmd.selection));
+			pi.appendEntry(ENTRY_TYPE, makeDocument());
 		},
 	});
 }

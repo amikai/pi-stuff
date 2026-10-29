@@ -417,7 +417,7 @@ if (cmd === "drive") {
 
 	if (feature === "rtl-latex") {
 		const cmdHandler = rt.commands.get("prism");
-		await cmdHandler.handler("demo-rtl", rt.ctx);
+		await cmdHandler.handler("checkhealth-rtl", rt.ctx);
 		const rtlEntry = rt.appendedEntries.at(-1);
 		const outputRenderer = rt.entryRenderers.get("prism-output");
 		const rtlLines = outputRenderer(rtlEntry, { expanded: false }, activePiGlobalTheme).render(width);
@@ -657,7 +657,7 @@ if (cmd === "drive") {
 		resetCapabilitiesCache();
 
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
-		await rt.commands.get("prism").handler("demo", rt.ctx);
+		await rt.commands.get("prism").handler("checkhealth", rt.ctx);
 		const demoEntry = rt.appendedEntries.at(-1);
 		const demoRenderer = rt.entryRenderers.get("prism-output");
 		const demoComp = demoRenderer(demoEntry, { expanded: false }, activePiGlobalTheme);
@@ -672,7 +672,7 @@ if (cmd === "drive") {
 		assert.deepEqual(
 			demoSamples.map(headerWord).sort(),
 			[...MERMAN_KINDS].sort(),
-			"/prism demo has one sample of every kind the hint names",
+			"/prism checkhealth has one sample of every kind the hint names",
 		);
 		for (const source of demoSamples) {
 			const word = headerWord(source);

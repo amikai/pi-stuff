@@ -29,8 +29,8 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 |---|---|
 | `/prism` | Display the help screen |
 | `/prism setup` | Open the interactive 7-step style picker overlay in TUI mode, or step through options with `/prism setup <step> <pick>` |
-| `/prism demo` | Render the full showcase (`demo ko` appends the Korean section) |
-| `/prism demo-rtl` | Render the Hebrew right-to-left showcase |
+| `/prism checkhealth` | Render the full showcase (`checkhealth ko` appends the Korean section) |
+| `/prism checkhealth-rtl` | Render the Hebrew right-to-left showcase |
 
 All `/prism` output is recorded via `pi.appendEntry` as display-only custom entries and never enters the LLM conversation context.
 

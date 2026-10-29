@@ -12,7 +12,7 @@ On macOS, `[ ⧉ preview ]` under a PlantUML image opens the PNG in a Quick Look
 
 ## How to get to it (user POV)
 
-- Run prism on macOS outside SSH, get a reply with a PlantUML diagram drawn as an image (or run `/prism demo` on an image-capable terminal), and press `[ ⧉ preview ]`.
+- Run prism on macOS outside SSH, get a reply with a PlantUML diagram drawn as an image (or run `/prism checkhealth` on an image-capable terminal), and press `[ ⧉ preview ]`.
 - The first preview builds the helper with `swiftc -O` into `~/.pi/agent/prism/quicklook-<first 12 hex of the source's SHA-256>` in about 10 s. A changed source builds a new one. Without the Xcode command line tools prism falls back to `qlmanage -p`, whose panel opens behind the terminal and has no zoom pill.
 - The installed package's copy of `quicklook.swift` is the one compiled (`~/.pi/agent/git/github.com/amikai/pi-stuff/...` for a git install), not the checkout. A pi session that already opened a preview keeps its helper until pi restarts.
 - Keyboard: Cmd+- and Cmd+= zoom, Cmd+0 shows actual size, Cmd+9 fits the window. Esc and Space close the panel.

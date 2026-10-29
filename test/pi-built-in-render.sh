@@ -6,7 +6,7 @@ dir=$(mktemp -d "${TMPDIR:-/tmp}/pi-built-in-render-test.XXXXXX")
 mkdir -p "$dir/work"
 
 echo "config: $dir/prism.json"
-echo "try:    /pi-built-in-render | /pi-built-in-render mermaid | /prism demo"
+echo "try:    /pi-built-in-render | /prism checkhealth"
 
 cd "$dir/work"
 PI_CODING_AGENT_DIR="$dir" \

@@ -11,7 +11,7 @@ Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, 
 
 ## How to get to it (user POV)
 
-- Receive an assistant reply or run `/prism demo` with fenced ` ```mermaid ` or ` ```figure ` blocks that fit within the terminal column width.
+- Receive an assistant reply or run `/prism checkhealth` with fenced ` ```mermaid ` or ` ```figure ` blocks that fit within the terminal column width.
 
 ## Driving it with control-prism
 

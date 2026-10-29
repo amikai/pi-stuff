@@ -26,8 +26,8 @@ Code-shaped prose stays as written: f(*args, **kwargs), a link with parentheses 
 |---------|------|
 | \`/prism\` | Help screen |
 | \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
-| \`/prism demo\` | This screen |
-| \`/prism demo-rtl\` | Hebrew right-to-left showcase |
+| \`/prism checkhealth\` | This screen |
+| \`/prism checkhealth-rtl\` | Hebrew right-to-left showcase |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 
@@ -413,8 +413,8 @@ export const helpText = (): string => `
 | Command | Does |
 |---------|------|
 | \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
-| \`/prism demo\` | Full showcase, every element and diagram, plus a section in your language (Korean so far, or \`demo ko\`) |
-| \`/prism demo-rtl\` | Hebrew right-to-left showcase |
+| \`/prism checkhealth\` | Full showcase, every element and diagram, plus a section in your language (Korean so far, or \`checkhealth ko\`) |
+| \`/prism checkhealth-rtl\` | Hebrew right-to-left showcase |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 

@@ -9,7 +9,7 @@ RTL and LaTeX math rendering draws right-to-left Hebrew/Arabic prose, tables, qu
 
 ## How to get to it (user POV)
 
-- Run `/prism demo-rtl` or receive an assistant reply containing Hebrew/Arabic text or `$...$` / `$$...$$` math blocks.
+- Run `/prism checkhealth-rtl` or receive an assistant reply containing Hebrew/Arabic text or `$...$` / `$$...$$` math blocks.
 
 ## Driving it with control-prism
 
@@ -24,4 +24,4 @@ Preconditions:
 
 - Graphical PNG math rendering requires `latex: true` in `prism.json`, `ratex-render` on `PATH`, and a Kitty/Ghostty/iTerm2 image-capable terminal; otherwise formulas render via the built-in Unicode TeX converter.
 - RTL reordering depends on the detected terminal (`rtl: "auto"`) or the `rtl` option. With no known terminal, prism leaves the text in logical order. The `rtl-latex` drive clears the terminal-detection variables before it starts, so its logical-order proof strings hold in any terminal. It proves the Hebrew text and math render, not the terminal-specific reordering.
-- `/prism demo-rtl` shows Hebrew only. Arabic is detected the same way but has no showcase.
+- `/prism checkhealth-rtl` shows Hebrew only. Arabic is detected the same way but has no showcase.

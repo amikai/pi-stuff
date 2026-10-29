@@ -9,7 +9,7 @@ When the text renderer cannot draw a closed top-level ` ```mermaid ` block, and 
 - `merman-rejected` keeps today's note for a header word merman does not know (`notADiagram diagrams draw as source for now`).
 - `merman-off` leaves main's notes and starts no job when the terminal shows no images.
 - `merman-kinds` runs real `merman-cli` on a minimal body for each kind word the model hint names and asserts that each exits 0.
-- `merman-demo` renders `/prism demo` and asserts that each of its 14 merman kind samples ends as a kitty image, not a note.
+- `merman-demo` renders `/prism checkhealth` and asserts that each of its 14 merman kind samples ends as a kitty image, not a note.
 - `merman-setting` leaves main's notes and starts no job when `prism.json` sets `"merman": false`, or when `SSH_CONNECTION` or `SSH_TTY` is set, because merman is off over SSH like prism's image and preview copy. `test/prism.test.ts` test 39 covers both.
 
 ## How to get to it (user POV)
@@ -31,7 +31,7 @@ Preconditions:
 - **Draw, refuse and fall back.** Run `.pi/skills/verify/scripts/control-prism.mjs drive --run-id "$RUN_ID" --feature merman --out "artifacts/verify/$RUN_ID"`. Exit code `0` and stdout contains `"ok":true`.
 - **What it asserts, in order.** One reply holds a timeline, `notADiagram`, a 4-child fan-out and the same fan-out with hyphenated ids. At 80 columns the first frame shows `drawing with merman…` four times. After `mermanJobs.idle()` there are three kitty images (`ESC _ G`), the timeline and both fan-outs, and on macOS each has `[ ⧉ source ] [ ⧉ image ] [ ⧉ preview ]`. `notADiagram diagrams draw as source for now` stays with no `(merman` suffix anywhere. At 140 columns both fan-outs are box art. With `images: null` the notes are main's and nothing is pending.
 - **Kinds the hint names.** Before the pictures, the drive runs `merman-cli` on a minimal body for each word in `MERMAN_KINDS` and asserts it exits 0. It also fails when `MERMAN_KINDS` and its table of bodies differ.
-- **Demo samples.** After the text checks, the drive runs `/prism demo` through the real `prism-output` renderer at 104 columns, waits for `mermanJobs.idle()`, and asserts that the demo holds one sample per `MERMAN_KINDS` word, that each is cached as a drawn picture with no note, and that the frame has at least that many kitty images.
+- **Demo samples.** After the text checks, the drive runs `/prism checkhealth` through the real `prism-output` renderer at 104 columns, waits for `mermanJobs.idle()`, and asserts that the demo holds one sample per `MERMAN_KINDS` word, that each is cached as a drawn picture with no note, and that the frame has at least that many kitty images.
 - **Proof.** `artifacts/verify/$RUN_ID/merman-demo.ansi` has the demo with its pictures, `artifacts/verify/$RUN_ID/merman-pending.txt` has the four pending notes, `merman-images.ansi` has the kitty images, `merman-wide.txt` has the box art and `merman-text.txt` has main's notes. `merman-timeline.png` is the timeline picture decoded from the job cache. Open it to check the pixels.
 
 ## Gotchas

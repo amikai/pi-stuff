@@ -4,21 +4,9 @@
 
 ## Commands
 
-| Argument | Output |
-| --- | --- |
-| No argument, `all`, or `demo` | Every section, in registry order |
-| `markdown` | H1 through H4, emphasis, inline code, links, and CJK text |
-| `lists` | Unordered, ordered, nested, and task lists |
-| `quotes` | Nested quotes, quoted lists and code, and horizontal rules |
-| `tables` | GFM alignment, box-drawn borders, CJK cells, and multiline wrapping |
-| `code` | TypeScript, Python, JSON, Bash, and unlabelled fences |
-| `math` | Inline and display LaTeX, fractions, operators, matrices, and cases |
-| `mermaid` | Flowchart, sequence, state, class, and ER diagrams, plus source fallbacks |
-| `diff` | Numbered changes with word-level inverse styling and multiline replacements |
-| `image` | Embedded PNG with native image protocols or a text fallback |
-| `help`, `-h`, or `--help` | Command reference in the transcript |
+`/pi-built-in-render` takes no arguments. It renders every section in registry order: Markdown headings and inline styles, lists, quotes, tables, code, LaTeX math, Mermaid diagrams, diffs, and an inline image.
 
-Arguments are lowercase and case-sensitive. Surrounding whitespace is ignored. Unknown arguments and multiple arguments produce a notification without appending an entry. Tab completion lists matching arguments. Non-interactive modes produce a notification without appending an entry.
+Any argument produces a notification without appending an entry. Non-interactive modes also produce a notification without appending an entry.
 
 ## Rendering and persistence
 
@@ -91,6 +79,6 @@ Stock Pi (`grok-mermaid@0.2.3`) does not parse the remaining 30 official `mermai
 
 The exported catalog and components support direct checks with the installed Pi packages. `test/prism.test.ts` contains the `registerHooks` resolver for installations without local `@earendil-works` packages.
 
-A render check initializes Pi's theme, imports `index.ts`, and constructs `BuiltInDocumentComponent(makeDocument(section))` for each key in `SECTIONS`. Rendering at width 90 exercises every fixture. Narrow-width checks exercise Mermaid source fallback and table wrapping.
+A render check initializes Pi's theme, imports `index.ts`, and constructs `BuiltInDocumentComponent(makeDocument())` and one document per key in `SECTIONS`. Rendering at width 90 exercises every fixture. Narrow-width checks exercise Mermaid source fallback and table wrapping.
 
 Interactive verification uses a temporary agent directory so personal sessions remain untouched. The relevant checks are prism isolation, absence of demo text in the next provider request, session resume, terminal resizing, and theme changes. Direct component rendering alone does not verify those interactive behaviors.
