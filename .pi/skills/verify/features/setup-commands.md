@@ -12,7 +12,7 @@ Setup overlay and commands let the user preview and save the 7 `prism` style opt
 ## How to get to it (user POV)
 
 - Run `/prism setup` in TUI mode, use `Up`/`Down` or `Tab` to preview options, press `Enter` to save and advance, and `Escape` to close.
-- Run `/prism` or `/prism demo` to view help or showcase output in the transcript.
+- Run `/prism` or `/prism checkhealth` to view help or showcase output in the transcript.
 
 ## Driving it with control-prism
 

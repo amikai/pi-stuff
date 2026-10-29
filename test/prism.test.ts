@@ -371,15 +371,24 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
 	setTheme("dark");
 
 	const cmd = h.commands.get("prism")!;
-	await cmd.handler("demo ko", h.ctx);
+	await cmd.handler("checkhealth ko", h.ctx);
 	assert.equal(h.sentCustomMessages.length, 0, "does not call pi.sendMessage (never enters LLM context)");
 	assert.equal(h.appendedEntries.at(-1)?.customType, "prism-output", "appends display-only custom entry");
 	const outputEntryRenderer = h.entryRenderers.get("prism-output")!;
 	const demoComp = outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme);
 	const demoPlain = stripAnsi(demoComp.render(96).join("\n"));
-	assert.ok(demoPlain.includes("한국어"), "demo ko includes Korean showcase");
+	assert.ok(demoPlain.includes("한국어"), "checkhealth ko includes Korean showcase");
 	assert.ok(demoPlain.includes("Parse"), "demo renders mermaid diagrams and pie charts");
 	assert.ok(!demoPlain.includes("Claude Code"), "demo contains zero Claude Code references");
+
+	await cmd.handler("checkhealth-rtl", h.ctx);
+	const rtlPlain = stripAnsi(outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme).render(96).join("\n"));
+	assert.ok(rtlPlain.includes("עברית מימין לשמאל"), "checkhealth-rtl renders the Hebrew showcase");
+	assert.deepEqual(
+		cmd.getArgumentCompletions("").map((item: { value: string }) => item.value),
+		["setup", "checkhealth", "checkhealth-rtl"],
+		"completions list the renamed subcommands",
+	);
 
 	await cmd.handler("", h.ctx);
 	const helpComp = outputEntryRenderer(h.appendedEntries.at(-1), { expanded: false }, activePiGlobalTheme);
@@ -1831,7 +1840,7 @@ const demoKinds = () =>
 		.filter((block) => block.kind === "code" && block.lang === "mermaid")
 		.map((block) => (block as { lines: string[] }).lines.join("\n"));
 
-test("41. /prism demo shows a sample of every kind the merman hint names, and each is small", () => {
+test("41. /prism checkhealth shows a sample of every kind the merman hint names, and each is small", () => {
 	const samples = demoKinds();
 	for (const kind of MERMAN_KINDS) {
 		const own = samples.filter((source) => headerWord(source) === kind);
@@ -1840,7 +1849,7 @@ test("41. /prism demo shows a sample of every kind the merman hint names, and ea
 	}
 });
 
-test("42. real merman draws every /prism demo sample as a picture", { skip: skipWithoutMerman }, async () => {
+test("42. real merman draws every /prism checkhealth sample as a picture", { skip: skipWithoutMerman }, async () => {
 	mermanJobs.clear();
 	const wake = { requestRender: () => {} };
 	for (const source of demoKinds().filter((source) => MERMAN_KINDS.includes(headerWord(source) as never))) {
@@ -1862,7 +1871,7 @@ test("43. a picture is reported at half its pixels, so it fills the columns a 1x
 	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 160, height: 140 });
 });
 
-test("44. real merman draws every /prism demo sample at twice the width it reports", { skip: skipWithoutMerman }, async () => {
+test("44. real merman draws every /prism checkhealth sample at twice the width it reports", { skip: skipWithoutMerman }, async () => {
 	mermanJobs.clear();
 	for (const source of demoKinds().filter((source) => MERMAN_KINDS.includes(headerWord(source) as never))) {
 		const picture = await drawnBy(source);

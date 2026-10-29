@@ -11,7 +11,7 @@ PlantUML draws fenced blocks tagged `plantuml`, `puml`, or `uml`, untagged fence
 
 ## How to get to it (user POV)
 
-- Put a PlantUML diagram in an assistant reply, or run `/prism demo`, which includes a sample sequence diagram.
+- Put a PlantUML diagram in an assistant reply, or run `/prism checkhealth`, which includes a sample sequence diagram.
 - Rendering needs no Java, `plantuml` command, or network. Set `"plantuml": false` in `prism.json` to show these blocks as ordinary code.
 - Notes a user can see in place of a drawing:
   - `plantuml diagrams require an image-capable terminal`
