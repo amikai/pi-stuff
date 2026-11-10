@@ -61,6 +61,7 @@ const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
 const { headerWord, PELE_HINT, PELE_KINDS, peleJobs, pelePicture, peleTimeout, pictureOf } = await import("../extensions/prism/core/pele.ts");
 const { flatten } = await import("../extensions/prism/core/vendor/pele/svg.js");
+const { fontCandidates } = await import("../extensions/prism/core/vendor/pele/fonts.js");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 const { holdEngine, holdRow } = await import("../extensions/prism/core/rtl.ts");
@@ -1897,6 +1898,16 @@ test("71. pele draws a nested var() fallback, a node with its own corners, and l
 	];
 	for (const source of sources) assert.equal((await drawnBy(source)).state, "drawn", source);
 	peleJobs.clear();
+});
+
+test("72. pele leads with a Helvetica-wide font on each platform: Helvetica on macOS, Arial from %WINDIR%\\Fonts on Windows, Liberation Sans on Linux", () => {
+	const first = (platform: string, env: Record<string, string> = {}) => fontCandidates(platform, env)[0];
+	assert.deepEqual(first("darwin"), { family: "Helvetica", path: "/System/Library/Fonts/Helvetica.ttc" });
+	assert.deepEqual(first("win32", { WINDIR: "D:\\Windows" }), { family: "Arial", path: "D:\\Windows\\Fonts\\arial.ttf" });
+	assert.deepEqual(first("win32", { SystemRoot: "E:\\Win" }), { family: "Arial", path: "E:\\Win\\Fonts\\arial.ttf" }, "SystemRoot stands in for WINDIR");
+	assert.deepEqual(first("win32"), { family: "Arial", path: "C:\\Windows\\Fonts\\arial.ttf" }, "C:\\Windows when neither is set");
+	assert.ok(fontCandidates("win32", {}).some((font: { path: string }) => font.path.endsWith("msjh.ttc")), "Windows has a Chinese font after Arial");
+	assert.equal(first("linux").family, "Liberation Sans");
 });
 
 const C4_RAW = "https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML";

@@ -4,24 +4,12 @@ import { render } from 'pele'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
 import { flatten } from './svg.js'
+import { fontCandidates } from './fonts.js'
 
 // A worker forwards console to the parent's stdout, which would draw over pi's screen.
 for (const name of ['log', 'info', 'debug', 'warn', 'error']) console[name] = () => {}
 
-// pele sizes text with a Helvetica width table, so a metric-compatible font keeps labels inside their boxes.
-const FONTS = [
-  { family: 'Helvetica', path: '/System/Library/Fonts/Helvetica.ttc' },
-  { family: 'Hiragino Sans GB', path: '/System/Library/Fonts/Hiragino Sans GB.ttc' },
-  { family: 'SF Hebrew', path: '/System/Library/Fonts/SFHebrew.ttf' },
-  { family: 'Geeza Pro', path: '/System/Library/Fonts/GeezaPro.ttc' },
-  { family: 'Liberation Sans', path: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf' },
-  { family: 'Liberation Sans', path: '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf' },
-  { family: 'Liberation Sans', path: '/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf' },
-  { family: 'Liberation Sans', path: '/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf' },
-  { family: 'DejaVu Sans', path: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf' },
-  { family: 'Noto Sans CJK TC', path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' },
-  { family: 'Noto Sans CJK TC', path: '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc' },
-]
+const FONTS = fontCandidates()
 
 const readable = path => {
   try {
