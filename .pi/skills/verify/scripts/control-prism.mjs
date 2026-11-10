@@ -568,10 +568,9 @@ if (cmd === "drive") {
 		process.exit(0);
 	}
 
-	if (feature === "merman") {
-		assert.equal(spawnSync("which", ["merman-cli"]).status, 0, "merman-cli must be on PATH");
-		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "prism turns merman off over SSH; drive it from a local terminal");
-		const { headerWord, MERMAN_HINT, MERMAN_KINDS, mermanJobs } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/merman.ts")).href);
+	if (feature === "pele") {
+		assert.ok(!process.env.SSH_CONNECTION && !process.env.SSH_TTY, "prism turns pele off over SSH; drive it from a local terminal");
+		const { headerWord, PELE_HINT, PELE_KINDS, peleJobs, pelePicture } = await import(pathToFileURL(join(repoRoot, "extensions/prism/core/pele.ts")).href);
 		const fence = (source) => ["```mermaid", source, "```"].join("\n");
 		const fan = (id) => ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n");
 		const timeline = "timeline\n  title Releases\n  2024 : alpha\n  2025 : beta : stable";
@@ -585,7 +584,7 @@ if (cmd === "drive") {
 			new AssistantMessageComponent({ role: "assistant", content: [{ type: "text", text }], timestamp: 5000 });
 		const count = (haystack, needle) => haystack.split(needle).length - 1;
 		const KITTY = "\x1b_G";
-		const PENDING = "drawing with merman…";
+		const PENDING = "drawing with pele…";
 		const REPLY_INSET = 4;
 		const fittedAt = (columns) => columns + REPLY_INSET;
 		const narrow = fittedAt(80);
@@ -596,10 +595,10 @@ if (cmd === "drive") {
 		const comp = reply();
 		const pendingLines = comp.render(narrow);
 		const pendingPlain = pendingLines.map(stripAnsi).join("\n");
-		assert.equal(count(pendingPlain, PENDING), 4, "the first frame marks all four blocks as drawing with merman");
+		assert.equal(count(pendingPlain, PENDING), 4, "the first frame marks all four blocks as drawing with pele");
 		assert.equal(count(pendingLines.join("\n"), KITTY), 0, "no picture yet");
 
-		await mermanJobs.idle();
+		await peleJobs.idle();
 		const drawnLines = comp.render(narrow);
 		const drawnPlain = drawnLines.map(stripAnsi).join("\n");
 		const imageIds = new Set([...drawnLines.join("\n").matchAll(/\x1b_G[^\x1b]*?\bi=(\d+)/g)].map((m) => m[1]));
@@ -608,8 +607,8 @@ if (cmd === "drive") {
 		assert.equal(count(drawnPlain, "[ ⧉ source ]"), 3, "every picture offers source");
 		assert.equal(count(drawnPlain, "[ ⧉ image ]"), buttons ? 3 : 0, "image buttons appear where the desktop shows pictures");
 		assert.equal(count(drawnPlain, "[ ⧉ preview ]"), buttons ? 3 : 0, "preview buttons appear where the desktop shows pictures");
-		assert.ok(drawnPlain.includes("notADiagram diagrams draw as source for now"), "a header merman rejects keeps main's note");
-		assert.ok(!drawnPlain.includes("(merman"), "and no note carries a merman suffix");
+		assert.ok(drawnPlain.includes("notADiagram diagrams draw as source for now"), "a header pele rejects keeps main's note");
+		assert.ok(!drawnPlain.includes("(pele"), "and no note carries a pele suffix");
 		assert.ok(!drawnPlain.includes("child-0[Child number 0]"), "the hyphenated fan-out is a picture, not source");
 
 		const widePlain = comp.render(wide).map(stripAnsi).join("\n");
@@ -632,28 +631,30 @@ if (cmd === "drive") {
 			"treemap-beta": 'treemap-beta\n  "Root"\n    "Leaf": 5',
 			requirementDiagram: "requirementDiagram\n  requirement r1 {\n    id: 1\n    text: hello\n    risk: low\n    verifymethod: test\n  }",
 		};
-		assert.deepEqual(Object.keys(minimal).sort(), [...MERMAN_KINDS].sort(), "every kind the hint names has a minimal body");
-		for (const word of MERMAN_KINDS) {
-			assert.ok(MERMAN_HINT.includes(word), `the hint names ${word}`);
-			const ran = spawnSync("merman-cli", ["render", "-", "-f", "png", "-q", "-o", "-"], { input: minimal[word] });
-			assert.equal(ran.status, 0, `merman draws ${word}`);
+		assert.deepEqual(Object.keys(minimal).sort(), [...PELE_KINDS].sort(), "every kind the hint names has a minimal body");
+		const wake = { requestRender: () => {} };
+		for (const word of PELE_KINDS) {
+			assert.ok(PELE_HINT.includes(word), `the hint names ${word}`);
+			pelePicture(minimal[word], wake);
+			await peleJobs.idle();
+			assert.equal(pelePicture(minimal[word], wake).state, "drawn", `pele draws ${word}`);
 		}
 
-		const picture = mermanJobs.cache.get(timeline);
+		const picture = peleJobs.cache.get(timeline);
 		assert.equal(picture?.state, "drawn", "the timeline is cached as a picture");
 		const timelinePng = Buffer.from(picture.png, "base64");
 		assert.equal(timelinePng.subarray(1, 4).toString("latin1"), "PNG", "the cached picture is a PNG");
 		mkdirSync(outDir, { recursive: true });
-		writeFileSync(join(outDir, "merman-timeline.png"), timelinePng);
+		writeFileSync(join(outDir, "pele-timeline.png"), timelinePng);
 
 		setCapabilities({ images: null, trueColor: true, hyperlinks: false });
-		const jobsBefore = mermanJobs.pending.size;
+		const jobsBefore = peleJobs.pending.size;
 		const textLines = reply().render(narrow);
 		const textPlain = textLines.map(stripAnsi).join("\n");
-		assert.equal(jobsBefore + mermanJobs.pending.size, 0, "without images nothing is pending");
+		assert.equal(jobsBefore + peleJobs.pending.size, 0, "without images nothing is pending");
 		assert.ok(textPlain.includes("timeline diagrams draw as source for now"), "without images the timeline keeps main's note");
 		assert.ok(textPlain.includes("diagram is 81 cols, terminal is 80"), "without images the fan-out keeps main's note");
-		assert.ok(!textPlain.includes("merman"), "without images nothing mentions merman");
+		assert.ok(!textPlain.includes("pele"), "without images nothing mentions pele");
 		resetCapabilitiesCache();
 
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
@@ -663,20 +664,20 @@ if (cmd === "drive") {
 		const demoComp = demoRenderer(demoEntry, { expanded: false }, activePiGlobalTheme);
 		const demoWidth = fittedAt(100);
 		demoComp.render(demoWidth);
-		await mermanJobs.idle();
+		await peleJobs.idle();
 		const demoLines = demoComp.render(demoWidth);
 		const demoPlain = demoLines.map(stripAnsi).join("\n");
 		const demoSamples = [...demoEntry.data.text.matchAll(/```mermaid\n([\s\S]*?)\n```/g)]
 			.map((m) => m[1])
-			.filter((source) => MERMAN_KINDS.includes(headerWord(source)));
+			.filter((source) => PELE_KINDS.includes(headerWord(source)));
 		assert.deepEqual(
 			demoSamples.map(headerWord).sort(),
-			[...MERMAN_KINDS].sort(),
+			[...PELE_KINDS].sort(),
 			"/prism checkhealth has one sample of every kind the hint names",
 		);
 		for (const source of demoSamples) {
 			const word = headerWord(source);
-			assert.equal(mermanJobs.cache.get(source)?.state, "drawn", `the ${word} demo sample ends as a picture`);
+			assert.equal(peleJobs.cache.get(source)?.state, "drawn", `the ${word} demo sample ends as a picture`);
 			assert.ok(!demoPlain.includes(`${word} diagrams draw as source for now`), `the ${word} demo sample shows no note`);
 		}
 		assert.ok(!demoPlain.includes(PENDING), "no demo sample is still drawing");
@@ -684,11 +685,11 @@ if (cmd === "drive") {
 		assert.ok(demoImageIds.size >= demoSamples.length, "every demo sample is a kitty image");
 		resetCapabilitiesCache();
 
-		writeArtifacts(outDir, "merman-demo", demoLines, { feature, state: "demo", width: demoWidth, samples: demoSamples.length, imageIds: [...demoImageIds] });
-		writeArtifacts(outDir, "merman-pending", pendingLines, { feature, state: "pending", width: narrow });
-		writeArtifacts(outDir, "merman-images", drawnLines, { feature, state: "drawn", width: narrow, imageIds: [...imageIds], buttons });
-		writeArtifacts(outDir, "merman-wide", comp.render(wide), { feature, state: "wide", width: wide });
-		writeArtifacts(outDir, "merman-text", textLines, { feature, state: "images-off", width: narrow });
+		writeArtifacts(outDir, "pele-demo", demoLines, { feature, state: "demo", width: demoWidth, samples: demoSamples.length, imageIds: [...demoImageIds] });
+		writeArtifacts(outDir, "pele-pending", pendingLines, { feature, state: "pending", width: narrow });
+		writeArtifacts(outDir, "pele-images", drawnLines, { feature, state: "drawn", width: narrow, imageIds: [...imageIds], buttons });
+		writeArtifacts(outDir, "pele-wide", comp.render(wide), { feature, state: "wide", width: wide });
+		writeArtifacts(outDir, "pele-text", textLines, { feature, state: "images-off", width: narrow });
 		console.log(JSON.stringify({ ok: true, feature, outDir, timelineBytes: timelinePng.length }));
 		process.exit(0);
 	}
