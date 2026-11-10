@@ -1,0 +1,10 @@
+{
+  "name": "prism-pele-bundle",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@resvg/resvg-wasm": "2.6.2",
+    "esbuild": "0.28.2",
+    "pele": "1.13.0"
+  }
+}

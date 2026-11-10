@@ -79,7 +79,7 @@ export type Style = {
 	shape: Shape;
 	latex: boolean;
 	plantuml: boolean;
-	merman: boolean;
+	pele: boolean;
 	overSsh: boolean;
 	cwd: string;
 	home: string;
@@ -125,7 +125,7 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		shape: rtl === "auto" || rtl === "off" ? "visual" : TERMINALS[rtl],
 		latex: options.latex === true,
 		plantuml: options.plantuml !== false,
-		merman: options.merman !== false,
+		pele: options.pele !== false,
 		overSsh: false,
 		cwd: "",
 		home: "",
