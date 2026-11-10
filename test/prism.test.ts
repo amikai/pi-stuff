@@ -1872,6 +1872,33 @@ test("69. flatten writes each var() in an attribute as its value, keeps text tha
 	assert.equal(flatten('<svg style=""><rect fill="var(--nowhere)"/></svg>'), null, "a var() with no value declines");
 });
 
+test("70. flatten resolves a var() inside a fallback, writes one corner with the last CSS value, and leaves var() in data-id alone", () => {
+	const nested = flatten('<svg style="--_r:var(--pele-radius,4px)"><rect style="rx:var(--_r);fill:var(--x,var(--y,rgb(255,0,0)));"/></svg>')!;
+	assert.ok(nested.includes('<rect style="fill:rgb(255,0,0)" rx="4"/>'), `a nested fallback comes out whole: ${nested}`);
+
+	const corners = flatten('<svg style="--_r:var(--pele-radius,4px)"><rect fill="#fff" style="rx:var(--_r);rx:20;ry:20;"/><rect rx="12" style="rx:20;ry:20;"/></svg>')!;
+	assert.ok(corners.includes('<rect fill="#fff" rx="20" ry="20"/>'), `the last rx wins and is written once: ${corners}`);
+	assert.ok(corners.includes('<rect rx="20" ry="20"/>'), `a CSS corner wins over the rx attribute: ${corners}`);
+
+	const metadata = flatten('<svg style=""><g data-id="uses var(--x)"><rect fill="var(--y,#123)"/></g></svg>')!;
+	assert.ok(metadata.includes('data-id="uses var(--x)"') && metadata.includes('fill="#123"'), `data-id is label text, not a color: ${metadata}`);
+
+	assert.equal(flatten('<svg style=""><rect fill="var(--x,rgb(1,2,3)"/></svg>'), null, "an unclosed var() declines");
+});
+
+test("71. pele draws a nested var() fallback, a node with its own corners, and labels that read var()", async () => {
+	peleJobs.clear();
+	const sources = [
+		"sequenceDiagram\nrect var(--x,var(--y,rgb(255,0,0)))\n A->>B: hello\nend",
+		"graph TD;\nA[Hello]-->B[World];\nstyle A rx:20,ry:20;",
+		"graph TD;\nA(Hello)-->B;\nstyle A rx:20,ry:20;",
+		"timeline\n  uses var(--x) : hello",
+		'sankey-beta\n"var(--x)",B,10',
+	];
+	for (const source of sources) assert.equal((await drawnBy(source)).state, "drawn", source);
+	peleJobs.clear();
+});
+
 const C4_RAW = "https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML";
 const C4_FORK = "https://raw.githubusercontent.com/gnodux/C4-PlantUML/master/C4_Container.puml";
 
