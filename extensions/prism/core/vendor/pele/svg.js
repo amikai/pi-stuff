@@ -12,18 +12,29 @@ const CORNER = /^\s*(rx|ry)\s*:\s*([\d.]+)(px|%|em|ex|pt|pc|mm|cm|in)?\s*$/
 // Attributes that hold names, links or label text rather than styling. pele copies labels into data-id.
 const METADATA = /^(data-|aria-|xmlns)|^(id|class|role|href|xlink:href|target|rel|xml:space)$/
 
-// A CSS string opens with ' or ", which an attribute value may hold as an entity.
-const QUOTES = ["'", '"', '&quot;', '&#34;', '&#39;', '&apos;']
+// A CSS string opens and closes with ' or ", which an attribute value may spell as an entity. XML decodes every
+// spelling before CSS reads the value, so a string opened with &#39; closes at a raw ', and the other way round.
+const QUOTES = [["'", "'"], ['"', '"'], ['&quot;', '"'], ['&#34;', '"'], ['&#39;', "'"], ['&apos;', "'"]]
+const quoteAt = (text, i) => QUOTES.find(([spelling]) => text.startsWith(spelling, i))
 const ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z]+);/iy
 
 // The first index from `from` where `stop` holds, or -1. CSS strings are skipped whole, backslash escapes included, so
 // a font named 'var(--x' is a name, not a var(). An entity such as &amp; is skipped whole too, so its ; ends nothing.
 const walk = (text, from, stop) => {
   for (let i = from; i < text.length; i++) {
-    const quote = QUOTES.find(q => text.startsWith(q, i))
-    if (quote) {
-      for (i += quote.length; i < text.length && !text.startsWith(quote, i); i++) if (text[i] === '\\') i++
-      i += quote.length - 1
+    const open = quoteAt(text, i)
+    if (open) {
+      for (i += open[0].length; i < text.length; i++) {
+        if (text[i] === '\\') {
+          i++
+          continue
+        }
+        const close = quoteAt(text, i)
+        if (close?.[1] === open[1]) {
+          i += close[0].length - 1
+          break
+        }
+      }
       continue
     }
     ENTITY.lastIndex = i

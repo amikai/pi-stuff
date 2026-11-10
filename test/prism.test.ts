@@ -1900,7 +1900,7 @@ test("71. pele draws a nested var() fallback, a node with its own corners, and l
 	peleJobs.clear();
 });
 
-test("72. pele draws with fonts bundled beside it, and adds the 7 MB Chinese font only when the text needs it", () => {
+test("72. pele bundles every font it names, and adds the 7 MB Chinese font only when the text needs it", () => {
 	const fontDir = join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/core/vendor/pele/fonts");
 	for (const { file } of PELE_FONTS) assert.ok(existsSync(join(fontDir, file)), `${file} is bundled`);
 	const base = ["Arimo_400Regular.ttf", "Arimo_700Bold.ttf", "Arimo_400Regular_Italic.ttf", "Arimo_700Bold_Italic.ttf", "NotoSansArabic_400Regular.ttf"];
@@ -1919,6 +1919,10 @@ test("73. flatten leaves var( inside a CSS string alone, and moves a corner in %
 	const entity = flatten('<svg style=""><g style="font-family:&quot;var(--x&quot;"/></svg>');
 	assert.ok(entity !== null && entity.includes("&quot;var(--x&quot;"), `a string quoted with &quot; is skipped too: ${entity}`);
 	const family = flatten('<svg style=""><g style="font-family:&quot;Fira Code&quot;;"/></svg>');
+	for (const font of ["&#39;Fira Code'", "'Fira Code&apos;", "&#39;Fira Code&apos;"]) {
+		const mixed = flatten(`<svg style=""><rect style="font-family:${font};fill:var(--x,red)"/></svg>`);
+		assert.ok(mixed !== null && mixed.includes("fill:red"), `a string opened and closed with two spellings of one quote ends where XML ends it: ${mixed}`);
+	}
 	assert.ok(family !== null && family.includes('style="font-family:&quot;Fira Code&quot;"'), `the ; that ends &quot; is not a declaration break: ${family}`);
 
 	const corners = flatten('<svg style=""><rect style="rx:20%;ry:0.5em"/><rect style="rx:6px"/></svg>')!;

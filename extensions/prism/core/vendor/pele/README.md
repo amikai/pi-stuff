@@ -12,7 +12,7 @@ You need Node and npm. Run this from the root of pi-stuff:
 extensions/prism/core/vendor/pele/build.sh
 ```
 
-The script installs the pinned packages into a temporary folder, copies the fonts `fonts.js` names and their licenses into `fonts/`, bundles `worker.js` with esbuild, overwrites `../pele.js`, and prints the sizes and versions. Run `npm test` afterwards: tests 28 to 45 in `test/prism.test.ts` drive the real bundle. Rebuild after every change to `worker.js`, `svg.js` or `fonts.js`, since prism loads only the bundle.
+The script installs the pinned packages into a temporary folder, copies the fonts `fonts.js` names and their licenses into `fonts/`, bundles `worker.js` with esbuild, overwrites `../pele.js`, and prints the sizes and versions. Run `npm test` afterwards: tests 28 to 45, 71 and 74 in `test/prism.test.ts` drive the real bundle. Rebuild after every change to `worker.js`, `svg.js` or `fonts.js`, since prism loads only the bundle.
 
 To move to a newer pele, change its version in `package.json`, run `npm install --package-lock-only --ignore-scripts` in this folder, run `build.sh`, run `npm test`, and look at a few pictures from `/prism checkhealth`. pele releases often and draws in its own style, so a new version can change how every picture looks.
 
