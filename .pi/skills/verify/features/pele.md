@@ -39,6 +39,7 @@ Preconditions:
 - The picture is pele's light palette on an opaque white background in every pi theme, drawn at 2x and reported at half its pixels. The longest side is capped at 4096 pixels.
 - resvg reads no CSS custom properties, and pele colors everything through `var()`. `core/vendor/pele/svg.js` writes each `var()` as its value before resvg draws, and declines when one has no value. A black-box picture means that step was skipped.
 - pele throws on an unknown header word, an empty source and a broken body, and prism declines on any error.
+- Text is drawn with the fonts in `extensions/prism/core/vendor/pele/fonts/`, not the system's, so a picture looks the same on every machine. Chinese labels are drawn with Noto Sans TC, which the worker loads only for a picture whose text needs it. Korean, Thai, Devanagari and emoji draw as empty boxes.
 - A render has 5 s, one runs at a time, and a PNG over 3 MiB is declined. Results, declines included, are cached for the session.
 - The 4-child fan-out is 81 columns of box art, so it needs 80 columns or fewer to give up and 100 or more to fit. A reply draws its blocks 4 columns narrower than its render width, so the drive renders at 84 and 144.
 - `test/prism.test.ts` tests 28 to 45 cover the same paths against the real bundle, and test 69 covers `svg.js`.

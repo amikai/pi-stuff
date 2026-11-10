@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@expo-google-fonts/arimo": "0.4.3",
+    "@expo-google-fonts/noto-sans-arabic": "0.4.3",
+    "@expo-google-fonts/noto-sans-tc": "0.4.4",
     "@resvg/resvg-wasm": "2.6.2",
     "esbuild": "0.28.2",
     "pele": "1.13.0"

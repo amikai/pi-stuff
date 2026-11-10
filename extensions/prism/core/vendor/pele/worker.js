@@ -4,24 +4,26 @@ import { render } from 'pele'
 import { initWasm, Resvg } from '@resvg/resvg-wasm'
 import resvgWasm from '@resvg/resvg-wasm/index_bg.wasm'
 import { flatten } from './svg.js'
-import { fontCandidates } from './fonts.js'
+import { FAMILY, fontsFor } from './fonts.js'
 
 // A worker forwards console to the parent's stdout, which would draw over pi's screen.
 for (const name of ['log', 'info', 'debug', 'warn', 'error']) console[name] = () => {}
 
-const FONTS = fontCandidates()
-
-const readable = path => {
-  try {
-    return readFileSync(path)
-  } catch {
-    return null
-  }
+// build.sh copies the fonts into pele/fonts/, beside this bundle. Each is read once, the first time a picture needs it.
+const FONT_DIR = new URL('./pele/fonts/', import.meta.url)
+const read = new Map()
+const font = file => {
+  if (!read.has(file)) read.set(file, readFileSync(new URL(file, FONT_DIR)))
+  return read.get(file)
 }
 
-const found = FONTS.map(font => ({ ...font, buffer: readable(font.path) })).filter(font => font.buffer)
-const fontBuffers = found.map(font => font.buffer)
-const family = found[0]?.family
+// The text a picture draws: what is between its tags, with numeric character references written out.
+const drawnText = svg =>
+  svg
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal) => String.fromCodePoint(Number(decimal)))
+
 await initWasm(resvgWasm)
 
 const ZOOM = 2
@@ -38,12 +40,11 @@ const draw = (source, theme) => {
   }
   const svg = flatten(drawn.svg, theme)
   if (svg === null) return { error: 'diagram has a color pele left unset' }
-  if (!family) return { error: 'no system font found to draw text' }
   const zoom = Math.min(ZOOM, MAX_SIDE / Math.max(drawn.width, drawn.height, 1))
   const resvg = new Resvg(svg, {
     background: theme['--pele-bg'] ?? '#ffffff',
     fitTo: { mode: 'zoom', value: zoom },
-    font: { fontBuffers, loadSystemFonts: false, defaultFontFamily: family, sansSerifFamily: family },
+    font: { fontBuffers: fontsFor(drawnText(svg)).map(font), loadSystemFonts: false, defaultFontFamily: FAMILY, sansSerifFamily: FAMILY },
   })
   // resvg's objects live in wasm memory, which garbage collection never reaches, so each is freed by hand.
   try {

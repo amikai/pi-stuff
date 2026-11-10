@@ -1,34 +1,25 @@
-import { win32 } from 'node:path'
+// The fonts pele's pictures are drawn with. build.sh copies each file from npm into fonts/, beside pele.js, so every
+// machine draws the same picture and nothing depends on the fonts a system has installed.
+//
+// pele lays text out with a Helvetica width table, and Arimo has the same widths, so labels stay inside their boxes.
+// Arimo covers Latin, Greek, Cyrillic, Vietnamese and Hebrew, and Noto Sans Arabic adds Arabic. Noto Sans TC adds
+// Chinese, Japanese kana and symbols such as ✓, but it is 7 MB, and resvg copies every font it is given on every
+// render, so a picture gets it only when its text has a character outside what the other two cover.
 
-// resvg-wasm cannot read the disk, so the worker hands it font files itself. pele sizes text with a Helvetica width
-// table, so each platform leads with a metric-compatible font: Helvetica on macOS, Arial on Windows, Liberation Sans
-// on Linux. The fonts after it fill in Chinese, Japanese, Hebrew and Arabic. Paths that do not exist are skipped.
-export const fontCandidates = (platform = process.platform, env = process.env) => {
-  if (platform === 'darwin') {
-    return [
-      { family: 'Helvetica', path: '/System/Library/Fonts/Helvetica.ttc' },
-      { family: 'Hiragino Sans GB', path: '/System/Library/Fonts/Hiragino Sans GB.ttc' },
-      { family: 'SF Hebrew', path: '/System/Library/Fonts/SFHebrew.ttf' },
-      { family: 'Geeza Pro', path: '/System/Library/Fonts/GeezaPro.ttc' },
-    ]
-  }
-  if (platform === 'win32') {
-    const fonts = win32.join(env.WINDIR ?? env.SystemRoot ?? 'C:\\Windows', 'Fonts')
-    // Windows' Arial also covers Hebrew and Arabic.
-    return [
-      { family: 'Arial', path: win32.join(fonts, 'arial.ttf') },
-      { family: 'Arial', path: win32.join(fonts, 'arialbd.ttf') },
-      { family: 'Microsoft JhengHei', path: win32.join(fonts, 'msjh.ttc') },
-      { family: 'Microsoft YaHei', path: win32.join(fonts, 'msyh.ttc') },
-    ]
-  }
-  return [
-    { family: 'Liberation Sans', path: '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf' },
-    { family: 'Liberation Sans', path: '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf' },
-    { family: 'Liberation Sans', path: '/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf' },
-    { family: 'Liberation Sans', path: '/usr/share/fonts/liberation-sans/LiberationSans-Bold.ttf' },
-    { family: 'DejaVu Sans', path: '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf' },
-    { family: 'Noto Sans CJK TC', path: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' },
-    { family: 'Noto Sans CJK TC', path: '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc' },
-  ]
-}
+export const FAMILY = 'Arimo'
+
+export const SOURCES = [
+  { file: 'Arimo_400Regular.ttf', from: '@expo-google-fonts/arimo/400Regular/Arimo_400Regular.ttf' },
+  { file: 'Arimo_700Bold.ttf', from: '@expo-google-fonts/arimo/700Bold/Arimo_700Bold.ttf' },
+  { file: 'NotoSansArabic_400Regular.ttf', from: '@expo-google-fonts/noto-sans-arabic/400Regular/NotoSansArabic_400Regular.ttf' },
+  { file: 'NotoSansTC_400Regular.ttf', from: '@expo-google-fonts/noto-sans-tc/400Regular/NotoSansTC_400Regular.ttf' },
+]
+
+const BASE = SOURCES.slice(0, 3).map(source => source.file)
+const WIDE = SOURCES[3].file
+
+// Latin with its extensions, Greek, Cyrillic, Hebrew, Arabic, Vietnamese and general punctuation. Arimo has only a few
+// arrows, math signs and box lines, so text with any of those gets Noto Sans TC, which has them.
+const COVERED = /^[\u0000-\u024f\u0370-\u03ff\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\u1e00-\u1eff\u2000-\u206f]*$/u
+
+export const fontsFor = text => (COVERED.test(text) ? BASE : [...BASE, WIDE])

@@ -61,7 +61,7 @@ const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
 const { headerWord, PELE_HINT, PELE_KINDS, peleJobs, pelePicture, peleTimeout, pictureOf } = await import("../extensions/prism/core/pele.ts");
 const { flatten } = await import("../extensions/prism/core/vendor/pele/svg.js");
-const { fontCandidates } = await import("../extensions/prism/core/vendor/pele/fonts.js");
+const { fontsFor, SOURCES: PELE_FONTS } = await import("../extensions/prism/core/vendor/pele/fonts.js");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 const { holdEngine, holdRow } = await import("../extensions/prism/core/rtl.ts");
@@ -1900,14 +1900,16 @@ test("71. pele draws a nested var() fallback, a node with its own corners, and l
 	peleJobs.clear();
 });
 
-test("72. pele leads with a Helvetica-wide font on each platform: Helvetica on macOS, Arial from %WINDIR%\\Fonts on Windows, Liberation Sans on Linux", () => {
-	const first = (platform: string, env: Record<string, string> = {}) => fontCandidates(platform, env)[0];
-	assert.deepEqual(first("darwin"), { family: "Helvetica", path: "/System/Library/Fonts/Helvetica.ttc" });
-	assert.deepEqual(first("win32", { WINDIR: "D:\\Windows" }), { family: "Arial", path: "D:\\Windows\\Fonts\\arial.ttf" });
-	assert.deepEqual(first("win32", { SystemRoot: "E:\\Win" }), { family: "Arial", path: "E:\\Win\\Fonts\\arial.ttf" }, "SystemRoot stands in for WINDIR");
-	assert.deepEqual(first("win32"), { family: "Arial", path: "C:\\Windows\\Fonts\\arial.ttf" }, "C:\\Windows when neither is set");
-	assert.ok(fontCandidates("win32", {}).some((font: { path: string }) => font.path.endsWith("msjh.ttc")), "Windows has a Chinese font after Arial");
-	assert.equal(first("linux").family, "Liberation Sans");
+test("72. pele draws with fonts bundled beside it, and adds the 7 MB Chinese font only when the text needs it", () => {
+	const fontDir = join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/core/vendor/pele/fonts");
+	for (const { file } of PELE_FONTS) assert.ok(existsSync(join(fontDir, file)), `${file} is bundled`);
+	const base = ["Arimo_400Regular.ttf", "Arimo_700Bold.ttf", "NotoSansArabic_400Regular.ttf"];
+	for (const text of ["Request - Parse & render", "Ünïcödé “quotes” – dash…", "Ελληνικά Кириллица Tiếng Việt", "שלום עולם", "مرحبا بالعالم"]) {
+		assert.deepEqual(fontsFor(text), base, `${text}: Arimo and Noto Sans Arabic cover it`);
+	}
+	for (const text of ["使用者登入", "あいう", "✓ done", "「範例」", "A ⇒ B"]) {
+		assert.deepEqual(fontsFor(text), [...base, "NotoSansTC_400Regular.ttf"], `${text}: Noto Sans TC is added`);
+	}
 });
 
 const C4_RAW = "https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML";
