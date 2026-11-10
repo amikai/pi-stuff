@@ -1903,13 +1903,41 @@ test("71. pele draws a nested var() fallback, a node with its own corners, and l
 test("72. pele draws with fonts bundled beside it, and adds the 7 MB Chinese font only when the text needs it", () => {
 	const fontDir = join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/core/vendor/pele/fonts");
 	for (const { file } of PELE_FONTS) assert.ok(existsSync(join(fontDir, file)), `${file} is bundled`);
-	const base = ["Arimo_400Regular.ttf", "Arimo_700Bold.ttf", "NotoSansArabic_400Regular.ttf"];
-	for (const text of ["Request - Parse & render", "Ünïcödé “quotes” – dash…", "Ελληνικά Кириллица Tiếng Việt", "שלום עולם", "مرحبا بالعالم"]) {
+	const base = ["Arimo_400Regular.ttf", "Arimo_700Bold.ttf", "Arimo_400Regular_Italic.ttf", "Arimo_700Bold_Italic.ttf", "NotoSansArabic_400Regular.ttf"];
+	const accent = String.fromCodePoint(0x65, 0x301);
+	for (const text of ["Request - Parse & render", "Ünïcödé “quotes” – dash…", "Ελληνικά Кириллица Tiếng Việt", "שלום עולם", "مرحبا بالعالم", `caf${accent}`, "Ἑλληνικά", "ʃəˈnɛtɪk"]) {
 		assert.deepEqual(fontsFor(text), base, `${text}: Arimo and Noto Sans Arabic cover it`);
 	}
 	for (const text of ["使用者登入", "あいう", "✓ done", "「範例」", "A ⇒ B"]) {
 		assert.deepEqual(fontsFor(text), [...base, "NotoSansTC_400Regular.ttf"], `${text}: Noto Sans TC is added`);
 	}
+});
+
+test("73. flatten leaves var( inside a CSS string alone, and moves a corner in %, em or px out of the style", () => {
+	const quoted = flatten(`<svg style=""><g style="font-family:'var(--x'"><rect fill="var(--y,#123)"/></g></svg>`)!;
+	assert.ok(quoted !== null && quoted.includes(`style="font-family:'var(--x'"`) && quoted.includes('fill="#123"'), `a font name is not a var(): ${quoted}`);
+	const entity = flatten('<svg style=""><g style="font-family:&quot;var(--x&quot;"/></svg>');
+	assert.ok(entity !== null && entity.includes("&quot;var(--x&quot;"), `a string quoted with &quot; is skipped too: ${entity}`);
+	const family = flatten('<svg style=""><g style="font-family:&quot;Fira Code&quot;;"/></svg>');
+	assert.ok(family !== null && family.includes('style="font-family:&quot;Fira Code&quot;"'), `the ; that ends &quot; is not a declaration break: ${family}`);
+
+	const corners = flatten('<svg style=""><rect style="rx:20%;ry:0.5em"/><rect style="rx:6px"/></svg>')!;
+	assert.ok(corners.includes('<rect rx="20%" ry="0.5em"/>'), `a corner keeps its unit: ${corners}`);
+	assert.ok(corners.includes('<rect rx="6"/>'), `px becomes a bare number: ${corners}`);
+});
+
+test("74. pele draws italic labels in italic, a font named like a var(), and a corner in percent", async () => {
+	peleJobs.clear();
+	const upright = await drawnBy("graph TD;\nA[Hello]-->B;");
+	const italic = await drawnBy("graph TD;\nA[Hello]-->B;\nstyle A font-style:italic;");
+	assert.ok(upright.state === "drawn" && italic.state === "drawn");
+	assert.notEqual(italic.png, upright.png, "the bundled italic face draws a different picture");
+	assert.equal((await drawnBy("stateDiagram-v2\nA-->B\nclassDef literal font-family:'var(--x'\nclass A literal")).state, "drawn", "a font named 'var(--x' draws");
+	assert.equal((await drawnBy('stateDiagram-v2\nA-->B\nclassDef code font-family:"Fira Code"\nclass A code')).state, "drawn", "a double-quoted font name, which pele writes as &quot;, draws");
+	const percent = await drawnBy("graph TD;\nA[Hello]-->B;\nstyle A rx:20%;");
+	assert.ok(percent.state === "drawn");
+	assert.notEqual(percent.png, upright.png, "rx:20% rounds the corner");
+	peleJobs.clear();
 });
 
 const C4_RAW = "https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML";

@@ -7,32 +7,69 @@
 const TAG = /<(?:[^>"']|"[^"]*"|'[^']*')*>/g
 const ATTRIBUTE = /(\s)([\w:-]+)="([^"]*)"/g
 const CUSTOM = /^\s*(--[\w-]+)\s*:\s*(.*?)\s*$/
-const CORNER = /^\s*(rx|ry)\s*:\s*([\d.]+)(px)?\s*$/
+// A corner length, in any unit an SVG attribute takes. px is dropped, since a bare number means the same.
+const CORNER = /^\s*(rx|ry)\s*:\s*([\d.]+)(px|%|em|ex|pt|pc|mm|cm|in)?\s*$/
 // Attributes that hold names, links or label text rather than styling. pele copies labels into data-id.
 const METADATA = /^(data-|aria-|xmlns)|^(id|class|role|href|xlink:href|target|rel|xml:space)$/
 
-const declarations = style => style.split(';').map(part => part.trim()).filter(Boolean)
+// A CSS string opens with ' or ", which an attribute value may hold as an entity.
+const QUOTES = ["'", '"', '&quot;', '&#34;', '&#39;', '&apos;']
+const ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z]+);/iy
+
+// The first index from `from` where `stop` holds, or -1. CSS strings are skipped whole, backslash escapes included, so
+// a font named 'var(--x' is a name, not a var(). An entity such as &amp; is skipped whole too, so its ; ends nothing.
+const walk = (text, from, stop) => {
+  for (let i = from; i < text.length; i++) {
+    const quote = QUOTES.find(q => text.startsWith(q, i))
+    if (quote) {
+      for (i += quote.length; i < text.length && !text.startsWith(quote, i); i++) if (text[i] === '\\') i++
+      i += quote.length - 1
+      continue
+    }
+    ENTITY.lastIndex = i
+    if (ENTITY.test(text)) {
+      i = ENTITY.lastIndex - 1
+      continue
+    }
+    if (stop(i)) return i
+  }
+  return -1
+}
+
+// A style's declarations, split at the semicolons between them, not at one that ends an entity such as &quot;.
+const declarations = style => {
+  const parts = []
+  let from = 0
+  for (let end = walk(style, 0, i => style[i] === ';'); end !== -1; end = walk(style, from, i => style[i] === ';')) {
+    parts.push(style.slice(from, end))
+    from = end + 1
+  }
+  parts.push(style.slice(from))
+  return parts.map(part => part.trim()).filter(Boolean)
+}
 
 // The index of the parenthesis that closes the one at `open`, or -1.
 const closing = (text, open) => {
   let depth = 0
-  for (let i = open; i < text.length; i++) {
+  return walk(text, open, i => {
     if (text[i] === '(') depth++
-    else if (text[i] === ')' && --depth === 0) return i
-  }
-  return -1
+    else if (text[i] === ')') return --depth === 0
+    return false
+  })
 }
 
 // The index of the first comma outside any parentheses, or -1.
 const topComma = text => {
   let depth = 0
-  for (let i = 0; i < text.length; i++) {
+  return walk(text, 0, i => {
     if (text[i] === '(') depth++
     else if (text[i] === ')') depth--
-    else if (text[i] === ',' && depth === 0) return i
-  }
-  return -1
+    else return text[i] === ',' && depth === 0
+    return false
+  })
 }
+
+const nextVar = (text, from) => walk(text, from, i => text.startsWith('var(', i))
 
 export const flatten = (svg, theme = {}) => {
   const root = /^\s*<svg\b(?:[^>"']|"[^"]*"|'[^']*')*>/.exec(svg)?.[0] ?? ''
@@ -48,7 +85,7 @@ export const flatten = (svg, theme = {}) => {
   const resolve = (text, depth) => {
     let out = ''
     let from = 0
-    for (let start = text.indexOf('var(', from); start !== -1; start = text.indexOf('var(', from)) {
+    for (let start = nextVar(text, from); start !== -1; start = nextVar(text, from)) {
       const end = closing(text, start + 3)
       if (end === -1 || depth > 8) {
         missing = true
@@ -73,7 +110,7 @@ export const flatten = (svg, theme = {}) => {
     for (const part of declarations(style)) {
       if (CUSTOM.test(part)) continue
       const corner = CORNER.exec(part)
-      if (corner) corners[corner[1]] = corner[2]
+      if (corner) corners[corner[1]] = corner[2] + (corner[3] === undefined || corner[3] === 'px' ? '' : corner[3])
       else kept.push(part)
     }
     return { style: kept.join(';'), corners }
