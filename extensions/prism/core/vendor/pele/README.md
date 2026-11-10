@@ -2,7 +2,7 @@
 
 [`../pele.js`](../pele.js) is a generated file: [pele](https://github.com/obsidianmd/pele), a Mermaid renderer written in JavaScript, bundled with [`@resvg/resvg-wasm`](https://github.com/yisibl/resvg-js) and the worker in this folder into one ES module. `core/pele.ts` runs it as a worker thread. Do not edit it by hand. Rebuild it with [`build.sh`](build.sh) from the files in this folder.
 
-The first line of `pele.js` records the versions it was built from. [`package.json`](package.json) and [`package-lock.json`](package-lock.json) pin pele 1.13.0, `@resvg/resvg-wasm` 2.6.2 and esbuild 0.28.2, so two builds from the same files give the same bundle. pele is MIT licensed and `@resvg/resvg-wasm` is MPL-2.0.
+The first line of `pele.js` records the versions it was built from. [`package.json`](package.json) and [`package-lock.json`](package-lock.json) pin pele 1.13.0, `@resvg/resvg-wasm` 2.6.2 and esbuild 0.28.2, so two builds from the same files give the same bundle. pele is MIT licensed, with its notice in [`LICENSE.pele`](LICENSE.pele), which `build.sh` copies from the package. `@resvg/resvg-wasm` is MPL-2.0, with the text in [`LICENSE.resvg-wasm`](LICENSE.resvg-wasm), taken from [resvg-js v2.6.2](https://github.com/yisibl/resvg-js/tree/v2.6.2), where its source is. The npm package ships no license file, so that copy is kept by hand.
 
 ## Rebuild
 
