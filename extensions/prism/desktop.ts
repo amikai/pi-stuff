@@ -13,8 +13,14 @@ type Report = (text: string, level: "info" | "warning" | "error") => void;
 export type Desktop = {
 	/** True when the picture actions reach the Mac the user sits at. False over SSH and off macOS. */
 	readonly pictures: boolean;
-	/** Puts the PNG on the pasteboard. Returns null on success, else a short reason. Blocks up to 5 s. */
-	copyPng(png: Uint8Array): string | null;
+	/** Resolves null when a copy to this machine's pasteboard reaches the user, else a short reason. */
+	pasteboard(): Promise<string | null>;
+	/**
+	 * Puts the PNG on the clipboard the user pastes from. Resolves null on success, else a short reason.
+	 * When the Rex app runs on another machine the PNG goes through Rex if rexHelper says
+	 * rex-image-clipboard.lua runs there, and is refused otherwise. Takes up to 5 s, longer for a large picture through Rex.
+	 */
+	copyPng(png: Uint8Array, options: { rexHelper: boolean }): Promise<string | null>;
 	/**
 	 * Shows the PNG and returns at once. Every call opens its own panel: a Rex floating pane when the
 	 * Rex app that owns pi's pane runs on another machine, else Quick Look. Notices and later failures go to report.
@@ -33,6 +39,7 @@ type SystemDesktopOptions = {
 	rex?: Rex;
 };
 
+const REX_AWAY = "the Rex app is on another machine";
 const BUILDING = "Building the Quick Look helper (first use, about 10 s)";
 
 export function systemDesktop(options: SystemDesktopOptions): Desktop {
@@ -80,9 +87,14 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 		child.unref();
 	};
 
+	const pasteboard = async () => ((await rex.viewer()) === "elsewhere" ? REX_AWAY : null);
+
 	return {
 		pictures,
-		copyPng: (png) => {
+		pasteboard,
+		copyPng: async (png, { rexHelper }) => {
+			const away = await pasteboard();
+			if (away !== null) return rexHelper ? rex.sendPng(png) : `${away}, use preview`;
 			const command = pngCopyCommand(osascript);
 			const [bin, ...args] = command.argv;
 			try {
