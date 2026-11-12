@@ -158,8 +158,10 @@ export function main(file) {
 	let pending = "";
 	let escTimer = null;
 	let closed = false;
+	let resent = false;
+	let failure = null;
 
-	const screen = () => ({ iw, ih, cols: stdout.columns || 80, rows: stdout.rows || 24, cellW: (cell ?? FALLBACK_CELL).w, cellH: (cell ?? FALLBACK_CELL).h });
+	const screen =() => ({ iw, ih, cols: stdout.columns || 80, rows: stdout.rows || 24, cellW: (cell ?? FALLBACK_CELL).w, cellH: (cell ?? FALLBACK_CELL).h });
 
 	const transmit = () => {
 		const b64 = data.toString("base64");
@@ -173,6 +175,10 @@ export function main(file) {
 		scheduled = false;
 		if (closed || cellTimer) return;
 		const s = screen();
+		if (failure) {
+			write(`\x1b[H\x1b[2K\x1b[?25l${` cannot show the picture (${failure})  |  q closes`.slice(0, s.cols)}`);
+			return;
+		}
 		const view = fit(model, s);
 		model = { ...model, cx: view.cx, cy: view.cy };
 		// Never write ESC[2J here: Rex drops the transmitted image data when the display is erased, and the next placement then fails with ENOENT.
@@ -209,8 +215,16 @@ export function main(file) {
 
 	const handle = (event) => {
 		if (event.kind === "reply") {
-			if (event.text.includes("ENOENT")) {
+			const status = event.text.slice(event.text.indexOf(";") + 1);
+			if (status === "OK") {
+				if (event.text.includes(",p=")) resent = false;
+			} else if (status.startsWith("ENOENT") && !resent) {
+				// One resend per lost picture: a terminal that keeps dropping it would otherwise be sent the PNG forever.
+				resent = true;
 				transmit();
+				schedule();
+			} else {
+				failure = status;
 				schedule();
 			}
 		} else if (event.kind === "cell") {
@@ -219,11 +233,13 @@ export function main(file) {
 			cell = { w: event.w, h: event.h };
 			schedule();
 		} else if (event.kind === "wheel") {
+			failure = null;
 			model = zoomBy(model, event.dir === "up" ? ZOOM_STEP : 1 / ZOOM_STEP);
 			schedule();
 		} else {
 			const action = keyAction(event.key);
 			if (!action) return;
+			failure = null;
 			if (action.quit) close();
 			else if (action.reset) model = initialModel(iw, ih);
 			else if (action.zoom) model = zoomBy(model, action.zoom);

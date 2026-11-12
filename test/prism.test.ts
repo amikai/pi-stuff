@@ -2493,7 +2493,7 @@ const stubRex = (viewer: "none" | "here" | "elsewhere", reason: string | null = 
 	};
 };
 
-test("69. a preview opens a Rex pane when the Rex app is on another machine, and Quick Look when it is here or Rex is absent", async () => {
+test("75. a preview opens a Rex pane when the Rex app is on another machine, and Quick Look when it is here or Rex is absent", async () => {
 	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
 	const dir = mkdtempSync(join(tmpdir(), "prism-rex-route-"));
 	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
@@ -2546,7 +2546,7 @@ test("69. a preview opens a Rex pane when the Rex app is on another machine, and
 	}
 });
 
-test("70. the Rex viewer is none without a Rex block or CLI, elsewhere when the owner is unknown or arrives through a proxy, and here for a local app", async () => {
+test("76. the Rex viewer is none without a Rex block or CLI, elsewhere when the owner is unknown or arrives through a proxy, and here for a local app", async () => {
 	const { systemRex } = await import("../extensions/prism/rex.ts");
 	const dir = mkdtempSync(join(tmpdir(), "prism-rex-viewer-"));
 	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
@@ -2615,7 +2615,7 @@ test("70. the Rex viewer is none without a Rex block or CLI, elsewhere when the 
 	assert.equal(await viewer(owned, fakePs("ps-fails", 1)), "elsewhere", "a ps that fails is elsewhere");
 });
 
-test("71. openPane gives rex the block's window and a command that runs the viewer on the file, and returns rex's first stderr line on failure", async () => {
+test("77. openPane gives rex the block's window and a command that runs the viewer on the file, and returns rex's first stderr line on failure", async () => {
 	const { systemRex } = await import("../extensions/prism/rex.ts");
 	const dir = mkdtempSync(join(tmpdir(), "prism-rex-pane-"));
 	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
@@ -2652,7 +2652,7 @@ test("71. openPane gives rex the block's window and a command that runs the view
 	assert.equal(await systemRex({ env, rex: absent }).openPane("/tmp/p/diagram-1.png"), `${absent} not found`, "a missing CLI resolves a reason");
 });
 
-test("72. the pane viewer fits the whole picture at zoom 1, zooms around the center, clamps a pan at each edge, and reads input split across chunks", async () => {
+test("78. the pane viewer fits the whole picture at zoom 1, zooms around the center, clamps a pan at each edge, and reads input split across chunks", async () => {
 	const { fit, initialModel, pan, zoomBy, decode, keyAction, pngSize, header, MAX_ZOOM } = await import("../extensions/prism/pane-viewer.mjs");
 	const screen = (iw: number, ih: number, cols: number, rows: number, cellW: number, cellH: number) => ({ iw, ih, cols, rows, cellW, cellH });
 	const rect = (view: ReturnType<typeof fit>) => ({ x: view.x, y: view.y, w: view.w, h: view.h, c: view.c, r: view.r, col: view.col });
@@ -2708,7 +2708,7 @@ test("72. the pane viewer fits the whole picture at zoom 1, zooms around the cen
 	], "the keys do what the header says");
 });
 
-test("73. the pane viewer transmits the PNG once, redraws without erasing the display, sends the picture again after ENOENT, and cleans up on q", async () => {
+test("79. the pane viewer transmits the PNG once, redraws without erasing the display, sends the picture again after ENOENT, and cleans up on q", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "prism-pane-viewer-"));
 	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
 	const file = join(dir, "picture.png");
@@ -2772,4 +2772,20 @@ test("73. the pane viewer transmits the PNG once, redraws without erasing the di
 		send("\x1b");
 	});
 	assert.equal(escaped.code, 0, "a lone Esc exits 0");
+
+	const dropped = await run(async (send, seen) => {
+		await until(() => seen().includes("a=p,"), 2000);
+		send("\x1b_Gi=7,p=1;ENOENT: image not found\x1b\\");
+		await until(() => count(seen(), "a=t,") === 2 && count(seen(), "a=p,") === 2);
+		send("\x1b_Gi=7,p=1;ENOENT: image not found\x1b\\");
+		await until(() => seen().includes("cannot show the picture"));
+		send("+");
+		await until(() => count(seen(), "a=p,") === 3);
+		send("\x1b_Gi=7,p=1;ENOENT: image not found\x1b\\");
+		await until(() => count(seen(), "cannot show the picture") === 2);
+		send("q");
+	});
+	assert.equal(dropped.code, 0, "q still exits 0 when the picture cannot be shown");
+	assert.equal(count(dropped.out, "a=t,"), 2, "a terminal that keeps dropping the picture is sent it twice, not on every reply");
+	assert.ok(dropped.out.includes(" cannot show the picture (ENOENT: image not found)"), "the header says why nothing is drawn");
 });
