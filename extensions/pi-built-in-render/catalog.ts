@@ -166,17 +166,17 @@ x &= \frac{c-b}{a}
 	},
 	mermaid: {
 		title: "Mermaid diagrams",
-		description: "Mermaid 12.2.0 vs grok-mermaid 0.2.3 support table, 5 native diagram families, syntax warnings, and source fallbacks.",
+		description: "Mermaid 12.2.0 vs lovely-mermaid 0.3.3 support table, 9 native diagram families, syntax warnings, and source fallbacks.",
 		blocks: [
-			markdown(`Baseline comparison of official \`mermaid@12.2.0\` (35 diagram families) against stock Pi's bundled \`grok-mermaid@0.2.3\` in \`@earendil-works/pi-coding-agent@1.4.0\`.
+			markdown(`Baseline comparison of official \`mermaid@12.2.0\` (35 diagram families) against stock Pi's bundled \`lovely-mermaid@0.3.3\` in \`@earendil-works/pi-coding-agent@1.5.2\`.
 
 | Category | Mermaid 12.2.0 families and stock Pi behavior |
 | :--- | :--- |
-| Native (5) | \`flowchart\` (\`graph\`), \`sequenceDiagram\`, \`stateDiagram-v2\` (\`stateDiagram\`), \`classDiagram\` (\`classDiagram-v2\`), and \`erDiagram\` render as box-drawn ASCII and Unicode art when width fits. |
-| Prism (3) | \`pie\`, \`gantt\`, and \`xychart-beta\` (\`xychart\`) stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences in stock Pi, and render as charts when \`prism\` is active. |
-| Source (27) | \`flowchart-elk\`, \`gitGraph\`, \`mindmap\`, \`timeline\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`, \`ishikawa-beta\`, \`venn-beta\`, \`treeView-beta\`, \`swimlane-beta\`, \`usecase-beta\`, \`wardley-beta\`, \`cynefin-beta\`, \`eventmodeling\`, \`agentflow-beta\`, \`railroad-beta\`, and \`info\` stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences. |
+| Native (9) | \`flowchart\` (\`graph\`), \`sequenceDiagram\`, \`stateDiagram-v2\` (\`stateDiagram\`), \`classDiagram\` (\`classDiagram-v2\`), \`erDiagram\`, \`pie\`, \`mindmap\`, \`timeline\`, and \`gitGraph\` render as box-drawn and Unicode art when width fits. |
+| Prism (2) | \`gantt\` and \`xychart-beta\` (\`xychart\`) stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences in stock Pi, and render as charts when \`prism\` is active. |
+| Source (24) | \`flowchart-elk\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`, \`ishikawa-beta\`, \`venn-beta\`, \`treeView-beta\`, \`swimlane-beta\`, \`usecase-beta\`, \`wardley-beta\`, \`cynefin-beta\`, \`eventmodeling\`, \`agentflow-beta\`, \`railroad-beta\`, and \`info\` stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences. |
 | Warnings | Partial parses emit the original \`\`\`\` \`\`\`mermaid \`\`\`\` source fence followed by \`Mermaid diagram not rendered: ...\`. |
-| Overflow | Diagrams wider than the available terminal width or prefixed with YAML frontmatter (\`---\`) stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning. |
+| Overflow | Diagrams wider than the available terminal width stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning. |
 `),
 			markdown(`### 1. Flowchart (\`flowchart\` and \`graph\`)
 
@@ -214,6 +214,21 @@ flowchart TD
   N6 --> N7{diamond}
   N7 --> N8{{hexagon}}
   N8 --> N9>asymmetric]
+\`\`\`
+
+Mermaid v11 \`@{ shape: ... }\` node metadata and a YAML frontmatter \`title\` render too.
+
+\`\`\`mermaid
+flowchart LR
+  A@{ shape: cyl, label: "Database" } --> B[Service]
+\`\`\`
+
+\`\`\`mermaid
+---
+title: Frontmatter Title
+---
+flowchart LR
+  A --> B
 \`\`\`
 
 All 14 link styles (\`-->\`, \`---\`, \`-.->\`, \`-.-\`, \`==>\`, \`===\`, \`<-->\`, \`<--\`, \`--o\`, \`o--o\`, \`--x\`, \`x--x\`, \`-->|label|\`, \`-- inline -->\`) and \`&\` fan-out and fan-in.
@@ -285,7 +300,7 @@ sequenceDiagram
 `),
 			markdown(`### 3. State diagram (\`stateDiagram-v2\` and \`stateDiagram\`)
 
-\`[*]\` start and end terminals, \`state "Label" as id\`, \`id: description\`, \`<<choice>>\`, \`<<fork>>\`, \`<<join>>\`, composite state \`state Comp { ... }\`, and \`note\`.
+\`[*]\` start and end terminals, \`state "Label" as id\`, \`id: description\`, \`<<choice>>\`, \`<<fork>>\`, \`<<join>>\`, and composite state \`state Comp { ... }\`, drawn as a nested frame. \`note\` lines are parsed but not drawn.
 
 \`\`\`mermaid
 stateDiagram-v2
@@ -360,9 +375,73 @@ erDiagram
   PROFILE }o..o{ COUPON : applies
 \`\`\`
 `),
-			markdown(`### 6. Syntax warning fallbacks
+			markdown(`### 6. Pie chart (\`pie\`)
 
-Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fence plus \`Mermaid diagram not rendered: ...\` warning for unclosed brackets (\`A[unclosed --> B\`), \`(((doublecircle)))\`, Mermaid v11 \`@{ shape: ... }\`, and an unreadable final line in a strict-grammar diagram.
+Drawn as a labelled bar list with each share as a percentage. \`showData\` appends the raw values.
+
+\`\`\`mermaid
+pie title Language share
+  "TypeScript" : 55
+  "Go" : 30
+  "Rust" : 15
+\`\`\`
+
+\`\`\`mermaid
+pie showData
+  title Pets
+  "Dogs" : 45
+  "Cats" : 30
+\`\`\`
+`),
+			markdown(`### 7. Mindmap (\`mindmap\`)
+
+The indentation tree, drawn with \`├──\` and \`└──\` guides. Node shape markers such as \`((Pi))\` are dropped.
+
+\`\`\`mermaid
+mindmap
+  root((Pi))
+    Extensions
+      Prism
+      Render
+    Themes
+      Dark
+      Light
+    Tools
+\`\`\`
+`),
+			markdown(`### 8. Timeline (\`timeline\`)
+
+Periods and events as a vertical list. \`section\` lines become headers, and a period can carry several events.
+
+\`\`\`mermaid
+timeline
+  title Releases
+  section Early
+    2025 : v1.3.0 : v1.4.0
+  section Current
+    2026 : v1.5.0
+\`\`\`
+`),
+			markdown(`### 9. Git graph (\`gitGraph\`)
+
+Commit lanes in \`git log --graph\` style with the newest commit on top. Branch heads, \`tag\`, \`merge\`, and quoted branch names are drawn.
+
+\`\`\`mermaid
+gitGraph
+  commit id: "init"
+  commit tag: "v1.0"
+  branch develop
+  checkout develop
+  commit id: "feat-a"
+  commit id: "feat-b"
+  checkout main
+  merge develop tag: "v1.1"
+  commit
+\`\`\`
+`),
+			markdown(`### 10. Syntax warning fallbacks
+
+Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fence plus \`Mermaid diagram not rendered: ...\` warning for unclosed brackets (\`A[unclosed --> B\`), \`(((doublecircle)))\`, and an unreadable statement in a strict-grammar diagram.
 
 \`\`\`mermaid
 flowchart LR
@@ -375,37 +454,18 @@ flowchart LR
 \`\`\`
 
 \`\`\`mermaid
-flowchart LR
-  A@{ shape: cyl, label: "Database" } --> B[Service]
-\`\`\`
-
-\`\`\`mermaid
 sequenceDiagram
   Alice->>Bob: Hello
   unreadable final line
 \`\`\`
 `),
-			markdown(`### 7. Source fallbacks
+			markdown(`### 11. Source fallbacks
 
-Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning for width overflow, YAML frontmatter (\`---\`), and unsupported \`mermaid@12.2.0\` families (\`pie\`, \`gantt\`, \`xychart-beta\`, \`gitGraph\`, \`mindmap\`, \`timeline\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`).
+Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning for width overflow and unsupported \`mermaid@12.2.0\` families (\`gantt\`, \`xychart-beta\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`).
 
 \`\`\`mermaid
 flowchart LR
   A[First long node] --> B[Second long node] --> C[Third long node] --> D[Fourth long node] --> E[Fifth long node] --> F[Sixth long node] --> G[Seventh long node]
-\`\`\`
-
-\`\`\`mermaid
----
-title: Frontmatter Fallback
----
-flowchart LR
-  A --> B
-\`\`\`
-
-\`\`\`mermaid
-pie title Pets
-  "Dogs" : 45
-  "Cats" : 30
 \`\`\`
 
 \`\`\`mermaid
@@ -420,27 +480,6 @@ xychart-beta
   title "Throughput"
   x-axis [Q1, Q2]
   bar [12, 18]
-\`\`\`
-
-\`\`\`mermaid
-gitGraph
-  commit
-  branch feat
-  checkout feat
-  commit
-\`\`\`
-
-\`\`\`mermaid
-mindmap
-  root((Pi))
-    Extensions
-    Themes
-\`\`\`
-
-\`\`\`mermaid
-timeline
-  title Releases
-  2026 : v1.4.0
 \`\`\`
 
 \`\`\`mermaid
