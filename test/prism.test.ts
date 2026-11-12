@@ -74,8 +74,8 @@ const stripAnsi = (s: string) =>
 		.replace(/\x1b\]8;;.*?(?:\x07|\x1b\\)/g, "")
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
 
-function recordingDesktop(pictures = true, away: string | null = null) {
-	const did = { pngs: [] as Buffer[], pngOptions: [] as { rexHelper: boolean }[], previews: [] as Buffer[], previewReports: [] as Parameters<Desktop["previewPng"]>[1][] };
+function recordingDesktop(pictures = true, away: string | null = null, pasted: { file: string } | { reason: string } = { reason: "nothing to paste" }) {
+	const did = { pastes: 0, pngs: [] as Buffer[], pngOptions: [] as { rexHelper: boolean }[], previews: [] as Buffer[], previewReports: [] as Parameters<Desktop["previewPng"]>[1][] };
 	const desktop: Desktop = {
 		pictures,
 		pasteboard: async () => away,
@@ -84,6 +84,7 @@ function recordingDesktop(pictures = true, away: string | null = null) {
 			did.previews.push(Buffer.from(png));
 			did.previewReports.push(report);
 		},
+		pastePng: async () => (did.pastes++, pasted),
 	};
 	return { desktop, did };
 }
@@ -101,6 +102,8 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 	const entryRenderers = new Map<string, (entry: any, opts: any, theme: any) => any>();
 	const toolRenderers: ((toolName: string, next: () => any) => any)[] = [];
 	const markdownTransformers: ((md: string, ctx: any) => string)[] = [];
+	const shortcuts = new Map<string, { description?: string; handler: (ctx: any) => Promise<void> }>();
+	const pastedToEditor: string[] = [];
 	const notifications: { text: string; level: string }[] = [];
 	const sentCustomMessages: any[] = [];
 	const appendedEntries: { customType: string; data: any }[] = [];
@@ -140,6 +143,9 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 				activePiTheme = name;
 				return { success: true };
 			},
+			pasteToEditor: (text: string) => {
+				pastedToEditor.push(text);
+			},
 			setWorkingIndicator: () => {},
 			setWidget: (_key: string, factory: unknown) => {
 				if (typeof factory === "function") factory(screenTui);
@@ -163,6 +169,9 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 		},
 		registerCommand: (name: string, def: any) => {
 			commands.set(name, def);
+		},
+		registerShortcut: (key: string, def: any) => {
+			shortcuts.set(key, def);
 		},
 		registerMessageRenderer: (customType: string, renderer: any) => {
 			messageRenderers.set(customType, renderer);
@@ -205,6 +214,8 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 		sm,
 		emit,
 		commands,
+		shortcuts,
+		pastedToEditor,
 		messageRenderers,
 		entryRenderers,
 		toolRenderers,
@@ -389,8 +400,8 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
 	assert.ok(rtlPlain.includes("עברית מימין לשמאל"), "checkhealth-rtl renders the Hebrew showcase");
 	assert.deepEqual(
 		cmd.getArgumentCompletions("").map((item: { value: string }) => item.value),
-		["setup", "checkhealth", "checkhealth-rtl"],
-		"completions list the renamed subcommands",
+		["setup", "checkhealth", "checkhealth-rtl", "paste"],
+		"completions list every subcommand",
 	);
 
 	await cmd.handler("", h.ctx);
@@ -2491,6 +2502,7 @@ const stubRex = (viewer: "none" | "here" | "elsewhere", reason: string | null = 
 	return {
 		panes,
 		sendPng: async () => "the real rex must not run in this test",
+		fetchPng: async () => ({ reason: "the real rex must not run in this test" }),
 		viewer: async () => viewer,
 		openPane: async (file: string) => {
 			panes.push(file);
@@ -3005,4 +3017,171 @@ test("89. ⧉ image asks for the Rex helper unless prism.json sets rexImageCopy 
 	assert.deepEqual(await run(), [{ rexHelper: true }], "on by default");
 	assert.deepEqual(await run({ rexImageCopy: true }), [{ rexHelper: true }], "on when set");
 	assert.deepEqual(await run({ rexImageCopy: false }), [{ rexHelper: false }], "off when set to false");
+});
+
+const reports = (writes: string[]) =>
+	writes.map((write) => {
+		const match = /^\x1b\]7501;state=(working|idle):app=prism(?::msg=([A-Za-z0-9+/=]*))?\x1b\\$/.exec(write);
+		assert.ok(match, `one OSC 7501 status report: ${JSON.stringify(write)}`);
+		return { state: match[1]!, message: match[2] === undefined ? undefined : Buffer.from(match[2], "base64").toString() };
+	});
+
+const pasteRex = async (answer: (number: string, dir: string) => void | Promise<void>, options: { timeoutMs?: number } = {}) => {
+	const { systemRex } = await import("../extensions/prism/rex.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-rex-paste-"));
+	const writes: string[] = [];
+	try {
+		const rex = systemRex({ env: {}, write: (text) => void writes.push(text), pasteDir: dir, pollMs: 5, fetchTimeoutMs: options.timeoutMs ?? 300 });
+		const result = rex.fetchPng();
+		await until(() => writes.length > 0);
+		const number = /^clipboard image wanted (\d+)$/.exec(reports(writes)[0]!.message ?? "")?.[1];
+		assert.ok(number, "the request ends in digits");
+		await answer(number, dir);
+		return { result: await result, writes, dir, number };
+	} catch (error) {
+		rmSync(dir, { recursive: true, force: true });
+		throw error;
+	}
+};
+
+test("90. fetchPng sends one request as an OSC 7501 report and resolves the PNG file the script writes, then reports idle", async () => {
+	const { PASTE_PREFIX } = await import("../extensions/prism/rex.ts");
+	const { result, writes, dir, number } = await pasteRex((n, dir) => writeFileSync(join(dir, `${PASTE_PREFIX}${n}.png`), "png bytes"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+
+	assert.deepEqual(result, { file: join(dir, `prism-paste-${number}.png`) });
+	assert.equal(readFileSync((result as { file: string }).file, "utf8"), "png bytes", "the file is left for the caller");
+	const sent = reports(writes);
+	assert.deepEqual(sent.map((report) => report.state), ["working", "idle"], "one request, then idle");
+	assert.equal(sent[0]!.message, `clipboard image wanted ${number}`);
+	assert.match(number, /^\d{16}$/, "13 digits of milliseconds and 3 random digits");
+});
+
+test("91. fetchPng resolves the text of the .err file as the reason and deletes the file", async () => {
+	const { result, writes, dir, number } = await pasteRex((n, dir) =>
+		writeFileSync(join(dir, `prism-paste-${n}.err`), "no image on the clipboard of the Mac you sit at\n"),
+	);
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+
+	assert.deepEqual(result, { reason: "no image on the clipboard of the Mac you sit at" });
+	assert.equal(existsSync(join(dir, `prism-paste-${number}.err`)), false, "the .err file is gone");
+	assert.deepEqual(reports(writes).map((report) => report.state), ["working", "idle"]);
+});
+
+test("92. fetchPng gives up after fetchTimeoutMs with a reason that names the script, and still reports idle", async () => {
+	const started = performance.now();
+	const { result, writes, dir } = await pasteRex(() => {});
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+
+	assert.deepEqual(result, { reason: "no answer from rex-image-clipboard.lua on the Mac you sit at" });
+	assert.ok(performance.now() - started >= 280, "it waited about the timeout");
+	assert.deepEqual(reports(writes).map((report) => report.state), ["working", "idle"]);
+});
+
+test("93. two fetchPng calls made together send one request and resolve the same result, and a later call sends its own", async () => {
+	const { systemRex } = await import("../extensions/prism/rex.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-rex-paste-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const writes: string[] = [];
+	const rex = systemRex({ env: {}, write: (text) => void writes.push(text), pasteDir: dir, pollMs: 5, fetchTimeoutMs: 300 });
+
+	const both = Promise.all([rex.fetchPng(), rex.fetchPng()]);
+	await until(() => writes.length > 0);
+	const number = /(\d+)$/.exec(reports(writes)[0]!.message ?? "")![1]!;
+	writeFileSync(join(dir, `prism-paste-${number}.png`), "png");
+	const [first, second] = await both;
+	assert.deepEqual(first, { file: join(dir, `prism-paste-${number}.png`) });
+	assert.deepEqual(second, first);
+	assert.deepEqual(reports(writes).map((report) => report.state), ["working", "idle"], "one request");
+
+	const again = rex.fetchPng();
+	await until(() => writes.length === 3);
+	assert.notEqual(/(\d+)$/.exec(reports(writes)[2]!.message ?? "")![1], number, "a call after the first finished asks again");
+	await again;
+});
+
+test("94. the system desktop fetches the picture through Rex only when the Rex app is on another machine", async () => {
+	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
+	const fetched: string[] = [];
+	const answer = { file: "/tmp/prism-paste-1.png" };
+	const desktopFor = (viewer: "none" | "here" | "elsewhere") =>
+		systemDesktop({ pictures: true, rex: { ...stubRex(viewer), fetchPng: async () => (fetched.push(viewer), answer) } });
+
+	assert.deepEqual(await desktopFor("elsewhere").pastePng(), answer, "what fetchPng resolves comes back");
+	assert.deepEqual(fetched, ["elsewhere"]);
+	for (const viewer of ["here", "none"] as const) {
+		assert.deepEqual(await desktopFor(viewer).pastePng(), { reason: "this machine's clipboard is the one to paste from, use pi's paste key" }, viewer);
+	}
+	assert.deepEqual(fetched, ["elsewhere"], "here and none never ask Rex");
+});
+
+test("95. rex-image-clipboard.lua answers the request and writes the files that fetchPng waits for", async () => {
+	const { PASTE_PREFIX, PASTE_REQUEST } = await import("../extensions/prism/rex.ts");
+	const lua = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/rex-image-clipboard.lua"), "utf8");
+	assert.ok(lua.includes(PASTE_REQUEST), `the script names "${PASTE_REQUEST}"`);
+	assert.ok(lua.includes(`/tmp/${PASTE_PREFIX}`), `the script writes ${PASTE_PREFIX}<number> in /tmp`);
+});
+
+const inRex = (rex: string | undefined, test: () => Promise<void>) => async () => {
+	const saved = { rex: process.env.REX_SESSION, osc: process.env.PI_CLIPBOARD_OSC52 };
+	if (rex === undefined) delete process.env.REX_SESSION;
+	else process.env.REX_SESSION = rex;
+	try {
+		await test();
+	} finally {
+		for (const [name, value] of [["REX_SESSION", saved.rex], ["PI_CLIPBOARD_OSC52", saved.osc]] as const) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+};
+
+test("96. /prism paste puts the fetched file in the editor and toasts Pasted image", async () => {
+	const h = createHarness(undefined, recordingDesktop(true, null, { file: "/tmp/prism-paste-1.png" }));
+	cleanupFn = h.cleanup;
+	await h.commands.get("prism")!.handler("paste", h.ctx);
+
+	assert.deepEqual(h.pastedToEditor, ["/tmp/prism-paste-1.png"]);
+	assert.deepEqual(h.notifications, [
+		{ text: "Asking the Mac you sit at for its clipboard picture", level: "info" },
+		{ text: "Pasted image", level: "info" },
+	]);
+	assert.deepEqual(h.commands.get("prism")!.getArgumentCompletions!("pa"), [{ value: "paste", label: "paste" }], "paste is completed");
+});
+
+test("97. /prism paste toasts the reason as an error and leaves the editor alone", async () => {
+	const h = createHarness(undefined, recordingDesktop(true, null, { reason: "no image on the clipboard of the Mac you sit at" }));
+	cleanupFn = h.cleanup;
+	await h.commands.get("prism")!.handler("paste", h.ctx);
+
+	assert.deepEqual(h.pastedToEditor, []);
+	assert.deepEqual(h.notifications.at(-1), { text: "Image paste failed (no image on the clipboard of the Mac you sit at)", level: "error" });
+});
+
+test("98. inside Rex the shortcut is registered under rexPasteKey, defaults to ctrl+shift+v, and does what /prism paste does", inRex("s1", async () => {
+	const recording = recordingDesktop(true, null, { file: "/tmp/prism-paste-2.png" });
+	const byDefault = createHarness(undefined, recording);
+	assert.deepEqual([...byDefault.shortcuts.keys()], ["ctrl+shift+v"]);
+	assert.match(byDefault.shortcuts.get("ctrl+shift+v")!.description ?? "", /picture/);
+	await byDefault.shortcuts.get("ctrl+shift+v")!.handler(byDefault.ctx);
+	assert.deepEqual(byDefault.pastedToEditor, ["/tmp/prism-paste-2.png"]);
+	assert.equal(byDefault.notifications.at(-1)?.text, "Pasted image");
+	byDefault.cleanup();
+
+	const custom = createHarness({ rexPasteKey: "ctrl+alt+v" });
+	cleanupFn = custom.cleanup;
+	assert.deepEqual([...custom.shortcuts.keys()], ["ctrl+alt+v"]);
+}));
+
+test("99. no shortcut is registered outside Rex or with rexPasteKey set to an empty string", async () => {
+	await inRex(undefined, async () => {
+		const outside = createHarness();
+		cleanupFn = outside.cleanup;
+		assert.equal(outside.shortcuts.size, 0, "outside Rex");
+	})();
+	await inRex("s1", async () => {
+		const off = createHarness({ rexPasteKey: "" });
+		cleanupFn = off.cleanup;
+		assert.equal(off.shortcuts.size, 0, "with an empty key");
+	})();
 });
