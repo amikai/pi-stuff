@@ -20,7 +20,7 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 
 - [`index.ts`](index.ts) registers the `/prism` command, hooks `AssistantMessageComponent` and `UserMessageComponent`, maps `ctx.ui.theme.colors` into `prism`'s 20 color slots, and injects diagram/figure/LaTeX guidelines into the system prompt.
 - [`renderer.ts`](renderer.ts) lays out virtual `Box`, `Text`, `Button`, `Link`, and `Image` element trees into ANSI terminal lines and mouse hit regions (`PrismComponent`).
-- [`desktop.ts`](desktop.ts) owns the picture side effects behind `Desktop`: the PNG pasteboard write, the Quick Look helper build, and the Quick Look launch. [`rex.ts`](rex.ts) tells it whether a Rex pane or Quick Look shows the picture, opens the pane, and sends a PNG to the Rex app as marked text parts. [`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on the Mac the user sits at and turns those parts back into a PNG on its clipboard.
+- [`desktop.ts`](desktop.ts) owns the picture side effects behind `Desktop`: the PNG pasteboard write, the Quick Look helper build, and the Quick Look launch. [`rex.ts`](rex.ts) tells it whether a Rex pane or Quick Look shows the picture, opens the pane, sends a PNG to the Rex app as marked text parts, and asks the Rex app's machine for its clipboard picture. [`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on the Mac the user sits at. It turns those parts back into a PNG on its clipboard, and it answers a paste request by uploading that clipboard's picture to the machine pi runs on.
 - [`core/`](core) holds the self-contained parsing and rendering modules (`markdown.ts`, `render.ts`, `mermaid.ts`, `pele.ts`, `background.ts`, `plantuml.ts`, `charts.ts`, `figure.ts`, `latex.ts`, `rtl.ts`, `html.ts`, `clipboard.ts`, `theme.ts`, `help.ts`, `jsx.ts`).
 
 ## Commands
@@ -31,6 +31,7 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 | `/prism setup` | Open the interactive 7-step style picker overlay in TUI mode, or step through options with `/prism setup <step> <pick>` |
 | `/prism checkhealth` | Render the full showcase (`checkhealth ko` appends the Korean section) |
 | `/prism checkhealth-rtl` | Render the Hebrew right-to-left showcase |
+| `/prism paste` | Fetch the picture on the clipboard of the Mac you sit at and put its path in the editor, as [`rexPasteKey`](#rexpastekey) does |
 
 All `/prism` output is recorded via `pi.appendEntry` as display-only custom entries and never enters the LLM conversation context.
 
@@ -57,6 +58,7 @@ Settings live in `~/.pi/agent/prism.json` (or `$PI_CODING_AGENT_DIR/prism.json`)
 	"plantuml": true,
 	"pele": true,
 	"rexImageCopy": true,
+	"rexPasteKey": "ctrl+shift+v",
 	"rtl": "auto"
 }
 ```
@@ -73,14 +75,9 @@ Any of the 20 semantic color slots (`accentColor`, `headingColor`, `tableHeaderC
 
 | Field | Type | Default | Behavior |
 |---|---|---|---|
-| `rexImageCopy` | `boolean` | `true` | When the Rex app that owns pi's pane runs on another machine, `[ ⧉ image ]` sends the PNG through Rex to that machine's clipboard. It takes effect only while [`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on that machine. When `false`, `prism` sends nothing and `[ ⧉ image ]` is refused there. |
+| `rexImageCopy` | `boolean` | `true` | When the Rex app that owns pi's pane runs on another machine, `[ ⧉ image ]` sends the PNG through Rex to that machine's clipboard. It takes effect only while [`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on that machine, as set up under [Rex image clipboard script](#rex-image-clipboard-script). When `false`, `prism` sends nothing and `[ ⧉ image ]` is refused there. |
 
 Rex carries only text to the other machine's clipboard. `prism` splits the PNG's base64 into parts of at most 45,000 characters, sends each part as its own OSC 52 copy of the text `prism-png:<id>:<i>/<n>:<part>`, and waits 200 ms between parts, because Rex keeps about one copy per 100 ms and a single 327 KB copy never reached the other machine's clipboard in testing, while parts under 48 KiB do. The script collects the parts and puts a real PNG on the clipboard.
-
-To use it:
-
-1. Copy `rex-image-clipboard.lua` to the Mac you sit at, the one that runs the Rex app.
-2. In a terminal on that Mac, run `rex -S <address of the Rex server pi runs on> do --all rex-image-clipboard.lua` and leave it running.
 
 Limits:
 
@@ -88,6 +85,34 @@ Limits:
 - A PNG over 1 MiB (1,048,576 bytes) is refused, and nothing is sent.
 - With no script running on that Mac, its clipboard ends up holding text that starts with `prism-png:`. `"rexImageCopy": false` turns the sending off.
 - Two copies sent at once go out one after the other, never mixed.
+
+### rexPasteKey
+
+| Field | Type | Default | Behavior |
+|---|---|---|---|
+| `rexPasteKey` | `string` | `"ctrl+shift+v"` | The key that pastes the picture on the clipboard of the Mac you sit at. It is registered only when `REX_SESSION` is set, and not at all when the value is `""`. |
+
+pi's own paste key (`ctrl+v`) reads the clipboard of the machine pi runs on, Rex pastes only text, and dragging a file into the Rex app does nothing for a server on another machine. When the Rex app runs on another machine, press `rexPasteKey` or run `/prism paste` instead. `prism` shows `Asking the Mac you sit at for its clipboard picture`, asks [`rex-image-clipboard.lua`](rex-image-clipboard.lua) on that Mac for the picture, and then puts the path of the PNG, `/tmp/prism-paste-<number>.png` on the machine pi runs on, into the editor and shows `Pasted image`, as pi's own paste key does. When there is no picture, or the script does not answer, it shows `Image paste failed (<reason>)` and leaves the editor alone. When the Rex app runs on the machine pi runs on, the key and the command fetch nothing and give the reason `the Rex app runs on this machine, use pi's paste key`.
+
+The picture can be a screenshot taken to the clipboard, an image copied in an app, or an image file copied in Finder.
+
+Limits:
+
+- The wait ends after 30 s with the reason `no answer from rex-image-clipboard.lua on the Mac you sit at`. This is also what shows when the script does not run on that Mac.
+- A tab named `prism paste` shows in the Rex server's window during the upload. A 70 KB picture took a few seconds over a VPN, and a 2.2 MB picture under a second on the same machine.
+- A second press while a request is waiting joins that request and sends no new one.
+- The PNG files stay in `/tmp`. `prism` does not delete them.
+
+Security: any program in a Rex pane can send the request, because it is an ordinary terminal status report. It gets nothing back, since the script writes the picture to a file on the machine pi runs on, not to the terminal. The file is readable only by the user (mode 0600).
+
+### Rex image clipboard script
+
+[`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on the Mac you sit at, the one that runs the Rex app. One copy of the script serves both directions: it receives the pictures `[ ⧉ image ]` copies ([`rexImageCopy`](#reximagecopy)) and answers the paste requests of [`rexPasteKey`](#rexpastekey).
+
+To use it:
+
+1. Copy `rex-image-clipboard.lua` to the Mac you sit at.
+2. In a terminal on that Mac, run `rex -S <address of the Rex server pi runs on> do --all rex-image-clipboard.lua` and leave it running.
 
 ### PlantUML
 
