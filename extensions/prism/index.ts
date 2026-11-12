@@ -68,7 +68,7 @@ import {
 } from "./core/latex.ts";
 import { parse, type Block } from "./core/markdown.ts";
 import { drawDiagrams } from "./core/mermaid.ts";
-import { MERMAN_HINT, mermanPath } from "./core/merman.ts";
+import { PELE_HINT } from "./core/pele.ts";
 import { drawPlantUml, PLANTUML_HINT } from "./core/plantuml.ts";
 import {
 	drawMath,
@@ -135,7 +135,7 @@ const DEFAULT_OPTIONS: PrismOptions = {
 	diagramHints: true,
 	latex: false,
 	plantuml: true,
-	merman: true,
+	pele: true,
 };
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
@@ -242,7 +242,7 @@ function detectHtmlClipboardBackend(env: NodeJS.ProcessEnv = process.env): Clipb
 	return null;
 }
 
-const mermanEnabled = (style: Style): boolean => style.merman && !style.overSsh;
+const peleEnabled = (style: Style): boolean => style.pele && !style.overSsh;
 
 function detectTerminalEnv(env: NodeJS.ProcessEnv = process.env): TerminalEnv {
 	return {
@@ -906,7 +906,7 @@ export default function prismExtension(
 			{ ...activeStyle, images: Boolean(getCapabilities().images) },
 			blocks,
 			columns - markerRoom(activeStyle),
-			mermanEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
+			peleEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
 		);
 		if (activeStyle.plantuml) {
 			const plantuml = drawPlantUml(EL, blocks, columns - markerRoom(activeStyle), {
@@ -1130,7 +1130,7 @@ export default function prismExtension(
 					FIGURE_HINT,
 					...(style.latex && getCapabilities().images ? [LATEX_HINT] : []),
 					...(style.plantuml ? [PLANTUML_HINT] : []),
-					...(style.mermaid && mermanEnabled(style) && getCapabilities().images && mermanPath() !== null ? [MERMAN_HINT] : []),
+					...(style.mermaid && peleEnabled(style) && getCapabilities().images ? [PELE_HINT] : []),
 				]
 			: [];
 		if (hints.length > 0) {

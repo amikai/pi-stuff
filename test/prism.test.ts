@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import childProcess, { execFileSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -59,7 +59,9 @@ const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts"
 const { parse } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
 const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
-const { headerWord, MERMAN_HINT, MERMAN_KINDS, mermanJobs, mermanPicture } = await import("../extensions/prism/core/merman.ts");
+const { headerWord, PELE_HINT, PELE_KINDS, peleJobs, pelePicture, peleTimeout, pictureOf } = await import("../extensions/prism/core/pele.ts");
+const { flatten } = await import("../extensions/prism/core/vendor/pele/svg.js");
+const { fontsFor, SOURCES: PELE_FONTS } = await import("../extensions/prism/core/vendor/pele/fonts.js");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
 const { holdEngine, holdRow } = await import("../extensions/prism/core/rtl.ts");
@@ -1435,44 +1437,21 @@ const hugePng = (width: number, height: number, bytes: number) => {
 	return png;
 };
 
-function mermanFixture(options: { images?: "kitty" | "iterm2" | null; installed?: boolean; png?: Buffer } = {}) {
-	const dir = mkdtempSync(join(tmpdir(), "prism-fake-merman-"));
-	const bin = join(dir, "bin");
-	mkdirSync(bin);
-	writeFileSync(join(dir, "fixture.png"), options.png ?? pngOf(320, 280));
-	writeFileSync(join(dir, "big.png"), hugePng(2000, 1500, 2.5 * 1024 * 1024));
-	writeFileSync(join(dir, "huge.png"), hugePng(8141, 4530, 3 * 1024 * 1024 + 1));
-	copyFileSync(join(dirname(fileURLToPath(import.meta.url)), "fake-merman.sh"), join(bin, "merman-cli"));
-	chmodSync(join(bin, "merman-cli"), 0o755);
-	const saved = Object.fromEntries(["PATH", "TMPDIR", "FAKE_MERMAN_DIR", "SSH_CONNECTION", "SSH_TTY"].map((k) => [k, process.env[k]]));
+function peleFixture(options: { images?: "kitty" | "iterm2" | null } = {}) {
+	const saved = Object.fromEntries(["SSH_CONNECTION", "SSH_TTY"].map((k) => [k, process.env[k]]));
 	delete process.env.SSH_CONNECTION;
 	delete process.env.SSH_TTY;
-	process.env.FAKE_MERMAN_DIR = dir;
-	process.env.TMPDIR = dir;
-	process.env.PATH = options.installed === false ? join(dir, "empty") : `${bin}:${saved.PATH}`;
 	setCapabilities({ images: options.images === undefined ? "kitty" : options.images, trueColor: true, hyperlinks: false });
-	mermanJobs.clear();
-	const read = (name: string) => {
-		try {
-			return readFileSync(join(dir, name), "utf8");
-		} catch {
-			return "";
-		}
-	};
+	peleJobs.clear();
 	return {
-		dir,
-		calls: () => read("calls.log").trim().split("\n").filter(Boolean),
-		runs: () => read("calls.log").split("\n").filter((line) => line === "start").length,
-		stdin: () => read("last-stdin.txt"),
-		args: () => read("last-args.txt").trim(),
 		restore: () => {
 			for (const [name, value] of Object.entries(saved)) {
 				if (value === undefined) delete process.env[name];
 				else process.env[name] = value;
 			}
+			peleTimeout.ms = 5000;
 			resetCapabilitiesCache();
-			mermanJobs.clear();
-			rmSync(dir, { recursive: true, force: true });
+			peleJobs.clear();
 		},
 	};
 }
@@ -1482,10 +1461,13 @@ const fanOut = (id: (n: number) => string = (n) => `c${n}`) =>
 	mermaidFence(["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n"));
 const plainText = (comp: any, width = 100) => stripAnsi(comp.render(width).join("\n"));
 const drawnImages = (comp: any, width = 100) => shownLabels(comp, width, false).filter((label) => label === "⧉ preview").length;
+const pngPixels = (png: string) => {
+	const bytes = Buffer.from(png, "base64");
+	return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+};
 
-test("28. a timeline the text renderer cannot draw shows a pending note, then the merman picture with source, image and preview", async () => {
-	const png = pngOf(320, 280);
-	const fake = mermanFixture({ png });
+test("28. a timeline the text renderer cannot draw shows a pending note, then the pele picture with source, image and preview", async () => {
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1496,35 +1478,40 @@ test("28. a timeline the text renderer cannot draw shows a pending note, then th
 	const source = "timeline\n  2020 : <i>start</i>\n  2021 : end";
 	const comp = reply(mermaidFence(source));
 	const first = plainText(comp);
-	assert.ok(first.includes("drawing with merman…"), "the first frame says merman is drawing");
+	assert.ok(first.includes("drawing with pele…"), "the first frame says pele is drawing");
 	assert.ok(!first.includes("timeline diagrams draw as source"), "the pending note replaces the give-up note");
 	assert.ok(first.includes("2020 : <i>start</i>"), "the source stays visible meanwhile");
-	assert.equal(mermanJobs.pending.size, 1);
+	assert.equal(peleJobs.pending.size, 1);
 
-	await mermanJobs.idle();
+	await peleJobs.idle();
 	assert.ok(h.renders.screen > 0, "the settled job asks pi to paint");
 	const drawn = comp.render(100).join("\n");
 	assert.ok(drawn.includes(KITTY_IMAGE), "the next frame draws the PNG");
 	assert.ok(!stripAnsi(drawn).includes("2020 :"), "the source is gone");
 	assert.deepEqual(shownLabels(comp, 100, false), ["⧉ source", "⧉ image", "⧉ preview"]);
 
+	assert.deepEqual([...peleJobs.cache.keys()], ["timeline\n  2020 : start\n  2021 : end"], "pele gets the source without inline tags");
+	const picture = peleJobs.cache.get("timeline\n  2020 : start\n  2021 : end")!;
+	assert.ok(picture.state === "drawn");
+	const png = Buffer.from(picture.png, "base64");
+
 	copiedTexts.length = 0;
 	press(comp, 100, "⧉ source", false);
 	assert.deepEqual(copiedTexts, [source], "source copies the mermaid text as written, tags included");
 	press(comp, 100, "⧉ image", false);
-	assert.deepEqual(h.desktop.pngs, [png], "image copies the PNG merman drew");
+	assert.deepEqual(h.desktop.pngs, [png], "image copies the PNG pele drew");
 	press(comp, 100, "⧉ preview", false);
-	assert.deepEqual(h.desktop.previews, [png], "preview opens the PNG merman drew");
+	assert.deepEqual(h.desktop.previews, [png], "preview opens the PNG pele drew");
 
-	assert.equal(fake.stdin(), "timeline\n  2020 : start\n  2021 : end\n", "merman gets the source without inline tags");
 	comp.invalidate();
 	comp.render(100);
-	assert.equal(fake.runs(), 1, "later frames hit the cache");
+	assert.equal(peleJobs.pending.size, 0, "later frames hit the cache");
+	assert.equal(peleJobs.cache.size, 1);
 });
 
-test("29. merman never runs for art that fits, an open fence, a terminal without images, or the markdown transformer", async () => {
+test("29. pele never runs for art that fits, an open fence, a terminal without images, or the markdown transformer", async () => {
 	const restoreHost = clipboardHost("linux");
-	const fake = mermanFixture();
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1538,25 +1525,25 @@ test("29. merman never runs for art that fits, an open fence, a terminal without
 	assert.deepEqual(shownLabels(art, 100, false), ["⧉ source", "⧉ art"]);
 
 	const open = reply("```mermaid\ntimeline\n  2020 : a");
-	assert.ok(!plainText(open).includes("merman") && !plainText(open).includes("draw as source"), "an open fence is plain source with no note");
+	assert.ok(!plainText(open).includes("pele") && !plainText(open).includes("draw as source"), "an open fence is plain source with no note");
 
 	const transformed = h.markdownTransformers[0]!(mermaidFence("timeline\n  2020 : a"), { messageType: "assistant", isStreaming: false, availableWidth: 80 });
 	assert.ok(transformed.includes("timeline diagrams draw as source for now"), "the transformer keeps the give-up note");
-	assert.ok(!transformed.includes("merman"), "the transformer never mentions merman");
+	assert.ok(!transformed.includes("pele"), "the transformer never mentions pele");
 
-	assert.equal(mermanJobs.pending.size, 0);
-	assert.deepEqual(fake.calls(), [], "no run started");
+	assert.equal(peleJobs.pending.size, 0);
+	assert.equal(peleJobs.cache.size, 0, "no render started");
 
 	setCapabilities({ images: null, trueColor: true, hyperlinks: false });
 	const text = reply(mermaidFence("timeline\n  2020 : a"));
 	assert.ok(plainText(text).includes("timeline diagrams draw as source for now"), "a terminal without images keeps the give-up note");
-	assert.equal(mermanJobs.pending.size, 0);
-	assert.deepEqual(fake.calls(), [], "no run started without images");
+	assert.equal(peleJobs.pending.size, 0);
+	assert.equal(peleJobs.cache.size, 0, "no render started without images");
 });
 
-test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from one run", async () => {
+test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from one render", async () => {
 	const restoreHost = clipboardHost("linux");
-	const fake = mermanFixture();
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1566,8 +1553,8 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
 	await h.emit("session_start");
 
 	const comp = reply(fanOut());
-	assert.ok(plainText(comp, fittedAt(80)).includes("drawing with merman…"), "80 columns are too few for the 81-column art");
-	await mermanJobs.idle();
+	assert.ok(plainText(comp, fittedAt(80)).includes("drawing with pele…"), "80 columns are too few for the 81-column art");
+	await peleJobs.idle();
 	assert.equal(drawnImages(comp, fittedAt(80)), 1, "80 columns show the picture");
 
 	assert.ok(plainText(comp, fittedAt(130)).includes("Child number 3"), "130 columns show the text art");
@@ -1575,11 +1562,12 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
 	assert.equal(drawnImages(comp, fittedAt(130)), 0);
 
 	assert.equal(drawnImages(comp, fittedAt(80)), 1, "narrowing again shows the picture at once");
-	assert.equal(fake.runs(), 1, "one run served all three widths");
+	assert.equal(peleJobs.cache.size, 1, "one render served all three widths");
+	assert.equal(peleJobs.pending.size, 0);
 });
 
-test("31. every way merman cannot draw keeps the text note and the source, and a missing merman changes nothing", async () => {
-	const fake = mermanFixture();
+test("31. a source pele rejects or one over 100000 characters keeps the text note and the source", async () => {
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1590,44 +1578,27 @@ test("31. every way merman cannot draw keeps the text note and the source, and a
 	const noteOf = async (source: string) => {
 		const comp = reply(mermaidFence(source));
 		comp.render(100);
-		await mermanJobs.idle();
-		const plain = plainText(comp);
-		return { plain, images: drawnImages(comp) };
+		await peleJobs.idle();
+		return { plain: plainText(comp), images: drawnImages(comp) };
 	};
-	const timeline = (marker: string) => `timeline\n  2020 : ${marker}`;
 	const give = "timeline diagrams draw as source for now";
 
-	for (const marker of ["fake:fail", "fake:huge"]) {
-		const result = await noteOf(timeline(marker));
-		assert.ok(result.plain.includes(give), `${marker}: main's note`);
-		assert.ok(!result.plain.includes("merman") && result.plain.includes(`2020 : ${marker}`), `${marker}: no merman suffix, and the code block shows the source`);
-		assert.equal(result.images, 0, `${marker}: no picture`);
-	}
+	const rejected = await noteOf("timeline\n  : : :");
+	assert.ok(rejected.plain.includes(give), "a parse error keeps main's note");
+	assert.ok(!rejected.plain.includes("pele") && rejected.plain.includes(": : :"), "no pele suffix, and the code block shows the source");
+	assert.equal(rejected.images, 0, "no picture");
+	assert.deepEqual(peleJobs.cache.get("timeline\n  : : :"), { state: "declined" }, "the decline is cached");
 
-	const before = fake.runs();
-	const long = await noteOf(timeline("x".repeat(100000)));
-	assert.ok(long.plain.includes(give) && !long.plain.includes("merman"), "a source over 100000 characters keeps main's note and is not sent");
-	assert.equal(fake.runs(), before, "and starts no run");
-	const large = await noteOf(timeline("x".repeat(99000)));
+	const over = `timeline\n  2020 : ${"x".repeat(100000)}`;
+	const long = await noteOf(over);
+	assert.ok(long.plain.includes(give) && !long.plain.includes("pele"), "a source over 100000 characters keeps main's note");
+	assert.ok(!peleJobs.cache.has(over), "and is never sent");
+	const large = await noteOf(`timeline\n  2020 : ${"x".repeat(99000)}`);
 	assert.equal(large.images, 1, "a source under the cap draws");
-	assert.equal(fake.runs(), before + 1);
-
-	fake.restore();
-	const absent = mermanFixture({ installed: false });
-	cleanupFn = () => {
-		absent.restore();
-		h.cleanup();
-	};
-	const comp = reply(mermaidFence(timeline("absent")));
-	const frame = plainText(comp);
-	assert.ok(frame.includes(give), "without merman the note is today's");
-	assert.ok(!frame.includes("merman"), "and never mentions merman");
-	assert.equal(mermanJobs.pending.size, 0);
-	assert.deepEqual(absent.calls(), []);
 });
 
-test("32. a merman render past 5 s is killed and noted", async () => {
-	const fake = mermanFixture();
+test("32. a pele render past the timeout is stopped and noted, and the next source draws on a fresh worker", async () => {
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1635,15 +1606,23 @@ test("32. a merman render past 5 s is killed and noted", async () => {
 	};
 	await h.emit("session_start");
 
-	const comp = reply(mermaidFence("timeline\n  2020 : fake:sleep"));
+	peleTimeout.ms = 1;
+	const slow = mermaidFence(["timeline", ...Array.from({ length: 40 }, (_, n) => `  ${2000 + n} : event ${n} : another ${n}`)].join("\n"));
+	const comp = reply(slow);
 	comp.render(100);
-	await mermanJobs.idle(8000);
+	await peleJobs.idle(8000);
 	const frame = plainText(comp);
-	assert.ok(frame.includes("timeline diagrams draw as source for now") && !frame.includes("merman"), "a timeout leaves main's note");
+	assert.ok(frame.includes("timeline diagrams draw as source for now") && !frame.includes("pele"), "a timeout leaves main's note");
+
+	peleTimeout.ms = 5000;
+	const next = reply(mermaidFence("timeline\n  2020 : after the timeout"));
+	next.render(100);
+	await peleJobs.idle(8000);
+	assert.equal(drawnImages(next), 1, "a fresh worker draws the next source");
 });
 
-test("33. five slow blocks run one at a time and all end as pictures", async () => {
-	const fake = mermanFixture();
+test("33. five blocks queue one at a time and all end as pictures", async () => {
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1651,20 +1630,15 @@ test("33. five slow blocks run one at a time and all end as pictures", async () 
 	};
 	await h.emit("session_start");
 
-	const comp = reply([0, 1, 2, 3, 4].map((n) => mermaidFence(`timeline\n  2020 : fake:slow ${n}`)).join("\n\n"));
+	const comp = reply([0, 1, 2, 3, 4].map((n) => mermaidFence(`timeline\n  2020 : block ${n}`)).join("\n\n"));
 	comp.render(100);
-	assert.equal(mermanJobs.pending.size, 5);
-	await mermanJobs.idle();
+	assert.equal(peleJobs.pending.size, 5);
+	await peleJobs.idle();
 	assert.equal(drawnImages(comp), 5);
-	let open = 0;
-	let most = 0;
-	for (const line of fake.calls()) most = Math.max(most, (open += line === "start" ? 1 : -1));
-	assert.equal(most, 1, "no two runs overlap");
-	assert.equal(fake.calls().length, 10, "five runs started and ended");
 });
 
-test("34. a reply rebuilt while merman draws shows the picture once it settles, with no further nudge", async () => {
-	const fake = mermanFixture();
+test("34. a reply rebuilt while pele draws shows the picture once it settles, with no further nudge", async () => {
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -1672,16 +1646,16 @@ test("34. a reply rebuilt while merman draws shows the picture once it settles, 
 	};
 	await h.emit("session_start");
 
-	const message = { role: "assistant", content: [{ type: "text", text: [mermaidFence("timeline\n  2020 : fake:slow"), "", "After"].join("\n") }], timestamp: 1000 } as any;
+	const message = { role: "assistant", content: [{ type: "text", text: [mermaidFence("timeline\n  2020 : rebuilt"), "", "After"].join("\n") }], timestamp: 1000 } as any;
 	const comp = new AssistantMessageComponent(message);
 	comp.render(100);
-	assert.equal(mermanJobs.pending.size, 1);
+	assert.equal(peleJobs.pending.size, 1);
 	comp.updateContent(message);
-	assert.ok(plainText(comp).includes("drawing with merman…"), "the rebuilt frame still shows the pending note");
-	assert.equal(mermanJobs.pending.size, 1, "the rebuild joins the job");
-	await mermanJobs.idle();
+	assert.ok(plainText(comp).includes("drawing with pele…"), "the rebuilt frame still shows the pending note");
+	assert.equal(peleJobs.pending.size, 1, "the rebuild joins the job");
+	await peleJobs.idle();
 	assert.ok(comp.render(100).join("\n").includes(KITTY_IMAGE), "the next frame shows the picture");
-	assert.equal(fake.runs(), 1, "the rebuild did not start a second run");
+	assert.equal(peleJobs.cache.size, 1, "the rebuild did not start a second render");
 });
 
 test("35. headerWord reads the diagram word past front matter, comments and blank lines", () => {
@@ -1707,7 +1681,7 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
 	const png = { state: "drawn", png: "AAAA", width: 3, height: 4 } as const;
 	verdicts.forEach((verdict, i) => {
 		assert.deepEqual(fallback(verdict, png), png, "a picture wins");
-		assert.deepEqual(fallback(verdict, { state: "pending" }), { note: "drawing with merman…" });
+		assert.deepEqual(fallback(verdict, { state: "pending" }), { note: "drawing with pele…" });
 		assert.deepEqual(fallback(verdict, { state: "declined" }), { note: notes[i] });
 	});
 	const style = resolveStyle({});
@@ -1718,71 +1692,56 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
 	assert.deepEqual(textVerdict("graph TD;\n  A-->B;", style, 80, 0), { fits: false, why: "no-art" }, "valid syntax the text parser lacks gives 'no-art'");
 });
 
-const hasMerman = (() => {
-	try {
-		execFileSync("which", ["merman-cli"]);
-		return true;
-	} catch {
-		return false;
-	}
-})();
-const skipWithoutMerman = hasMerman ? false : "merman-cli is not on PATH";
-
 const drawnBy = async (source: string) => {
 	const wake = { requestRender: () => {} };
-	assert.equal(mermanPicture(source, wake).state, "pending");
-	await mermanJobs.idle();
-	return mermanPicture(source, wake);
+	assert.equal(pelePicture(source, wake).state, "pending");
+	await peleJobs.idle();
+	return pelePicture(source, wake);
 };
 
-test("37. real merman declines an unknown header word and a broken flowchart, and draws a timeline and a hyphenated flowchart", { skip: skipWithoutMerman }, async () => {
-	mermanJobs.clear();
+test("37. pele declines an unknown header word and a broken flowchart, and draws a timeline and a hyphenated flowchart", async () => {
+	peleJobs.clear();
 	assert.deepEqual(await drawnBy("notADiagram\n  foo"), { state: "declined" });
 	assert.deepEqual(await drawnBy("flowchart TD\n  A -->"), { state: "declined" });
 	assert.equal((await drawnBy("timeline\n  2020 : a")).state, "drawn");
 	assert.equal((await drawnBy("flowchart TD\n  api-gateway --> auth-service")).state, "drawn", "a hyphenated id is read whole");
-	mermanJobs.clear();
+	peleJobs.clear();
 });
 
-test("38. a merman picture between 2 and 3 MiB reaches the terminal and the clipboard whole, and one over 3 MiB keeps the old note", async () => {
-	const fake = mermanFixture();
+test("38. a pele picture between 2 and 3 MiB reaches the terminal and the clipboard whole, and one over 3 MiB is declined", async () => {
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
 		h.cleanup();
 	};
 	await h.emit("session_start");
-	const png = readFileSync(join(fake.dir, "big.png"));
-	assert.ok(png.length > 2 * 1024 * 1024 && png.length < 3 * 1024 * 1024);
+	const png = hugePng(2000, 1500, 2.5 * 1024 * 1024);
+	assert.deepEqual(pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024 + 1)), { state: "declined" }, "a PNG over 3 MiB is declined");
+	assert.deepEqual(pictureOf(new Uint8Array([1, 2, 3])), { state: "declined" }, "bytes that are not a PNG are declined");
 
-	const comp = reply(mermaidFence("timeline\n  2020 : fake:big"));
-	comp.render(100);
-	await mermanJobs.idle();
+	const source = "timeline\n  2020 : big";
+	peleJobs.put(source, pictureOf(png));
+	const comp = reply(mermaidFence(source));
 	const drawn = comp.render(100).join("\n");
 	const sent = [...drawn.matchAll(/\x1b_G[^;\x1b]*;([^\x1b]*)\x1b\\/g)].map((m) => m[1]).join("");
 	assert.equal(sent, png.toString("base64"), "every chunk of the picture is sent to the terminal");
 	assert.ok(!plainText(comp).includes("draw as source"), "no note replaces the picture");
 	press(comp, 100, "⧉ image", false);
 	assert.deepEqual(h.desktop.pngs, [png], "image copies all of the PNG");
-
-	const over = reply(mermaidFence("timeline\n  2020 : fake:huge"));
-	over.render(100);
-	await mermanJobs.idle();
-	assert.ok(plainText(over).includes("timeline diagrams draw as source for now"), "a picture over 3 MiB keeps main's note");
-	assert.equal(drawnImages(over), 0);
 });
 
-test("39. merman:false or an SSH session keeps every block the text renderer cannot draw as source and never starts merman", async () => {
-	assert.equal(resolveStyle({}).merman, true);
-	assert.equal(resolveStyle({ merman: false }).merman, false);
+test("39. pele:false or an SSH session keeps every block the text renderer cannot draw as source and never starts pele", async () => {
+	assert.equal(resolveStyle({}).pele, true);
+	assert.equal(resolveStyle({ pele: false }).pele, false);
 
 	const cases: [string, Record<string, unknown>, Record<string, string>][] = [
-		["merman:false", { merman: false }, {}],
+		["pele:false", { pele: false }, {}],
 		["SSH_CONNECTION", {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }],
 		["SSH_TTY", {}, { SSH_TTY: "/dev/pts/0" }],
 	];
 	for (const [name, config, env] of cases) {
-		const fake = mermanFixture();
+		const fake = peleFixture();
 		Object.assign(process.env, env);
 		const h = createHarness(config);
 		try {
@@ -1791,10 +1750,10 @@ test("39. merman:false or an SSH session keeps every block the text renderer can
 			const plain = plainText(comp, fittedAt(80));
 			assert.ok(plain.includes("timeline diagrams draw as source for now"), `${name}: the timeline keeps main's note`);
 			assert.ok(plain.includes("diagram is 81 cols, terminal is 80"), `${name}: the wide flowchart keeps main's note`);
-			assert.ok(!plain.includes("merman"), `${name}: nothing mentions merman`);
+			assert.ok(!plain.includes("pele"), `${name}: nothing mentions pele`);
 			await sleep(100);
-			assert.equal(mermanJobs.pending.size, 0, name);
-			assert.deepEqual(fake.calls(), [], `${name}: merman is never called`);
+			assert.equal(peleJobs.pending.size, 0, name);
+			assert.equal(peleJobs.cache.size, 0, `${name}: pele is never called`);
 		} finally {
 			fake.restore();
 			h.cleanup();
@@ -1802,7 +1761,7 @@ test("39. merman:false or an SSH session keeps every block the text renderer can
 	}
 });
 
-test("40. the merman hint reaches the model only when mermaid, merman, images, the command and a local session are all there", async () => {
+test("40. the pele hint reaches the model only when mermaid, pele, images and a local session are all there", async () => {
 	const startEvent = () => ({
 		type: "before_agent_start",
 		messageType: "user",
@@ -1810,8 +1769,8 @@ test("40. the merman hint reaches the model only when mermaid, merman, images, t
 		systemPrompt: "",
 		systemPromptOptions: { guidelines: [] as string[] },
 	});
-	const hinted = async (config: Record<string, unknown>, fixture: Parameters<typeof mermanFixture>[0] = {}, env: Record<string, string> = {}) => {
-		const fake = mermanFixture(fixture);
+	const hinted = async (config: Record<string, unknown>, fixture: Parameters<typeof peleFixture>[0] = {}, env: Record<string, string> = {}) => {
+		const fake = peleFixture(fixture);
 		Object.assign(process.env, env);
 		const h = createHarness(config);
 		try {
@@ -1827,12 +1786,11 @@ test("40. the merman hint reaches the model only when mermaid, merman, images, t
 	assert.equal(await hinted({}), true, "every gate holds");
 	assert.equal(await hinted({ diagramHints: false }), false, "diagramHints off");
 	assert.equal(await hinted({ mermaid: false }), false, "mermaid off");
-	assert.equal(await hinted({ merman: false }), false, "merman off");
+	assert.equal(await hinted({ pele: false }), false, "pele off");
 	assert.equal(await hinted({}, { images: null }), false, "the terminal shows no images");
-	assert.equal(await hinted({}, { installed: false }), false, "merman is not installed");
 	assert.equal(await hinted({}, {}, { SSH_CONNECTION: "10.0.0.1 22 10.0.0.2 22" }), false, "over SSH");
 	assert.equal(await hinted({}, {}, { SSH_TTY: "/dev/pts/0" }), false, "over SSH on a tty");
-	assert.ok(MERMAN_HINT.includes("```mermaid"), "the hint names the fence");
+	assert.ok(PELE_HINT.includes("```mermaid"), "the hint names the fence");
 });
 
 const demoKinds = () =>
@@ -1840,54 +1798,150 @@ const demoKinds = () =>
 		.filter((block) => block.kind === "code" && block.lang === "mermaid")
 		.map((block) => (block as { lines: string[] }).lines.join("\n"));
 
-test("41. /prism checkhealth shows a sample of every kind the merman hint names, and each is small", () => {
+test("41. /prism checkhealth shows a sample of every kind the pele hint names, and each is small", () => {
 	const samples = demoKinds();
-	for (const kind of MERMAN_KINDS) {
+	for (const kind of PELE_KINDS) {
 		const own = samples.filter((source) => headerWord(source) === kind);
 		assert.equal(own.length, 1, `one ${kind} sample`);
 		assert.ok(own[0]!.split("\n").length <= 12, `${kind} is small`);
 	}
 });
 
-test("42. real merman draws every /prism checkhealth sample as a picture", { skip: skipWithoutMerman }, async () => {
-	mermanJobs.clear();
+test("42. pele draws every /prism checkhealth sample as a picture", async () => {
+	peleJobs.clear();
 	const wake = { requestRender: () => {} };
-	for (const source of demoKinds().filter((source) => MERMAN_KINDS.includes(headerWord(source) as never))) {
-		assert.equal(mermanPicture(source, wake).state, "pending", headerWord(source));
-		await mermanJobs.idle();
-		assert.equal(mermanPicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
+	for (const source of demoKinds().filter((source) => PELE_KINDS.includes(headerWord(source) as never))) {
+		assert.equal(pelePicture(source, wake).state, "pending", headerWord(source));
+		await peleJobs.idle();
+		assert.equal(pelePicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
 	}
-	mermanJobs.clear();
+	peleJobs.clear();
 });
 
-const pngWidth = (png: string) => Buffer.from(png, "base64").readUInt32BE(16);
+const pngWidth = (png: string) => pngPixels(png).width;
 
 test("43. a picture is reported at half its pixels, so it fills the columns a 1x image would", async () => {
-	const fake = mermanFixture({ png: pngOf(320, 280) });
-	cleanupFn = fake.restore;
-
+	assert.deepEqual(pictureOf(pngOf(320, 280)), { state: "drawn", png: pngOf(320, 280).toString("base64"), width: 160, height: 140 });
+	peleJobs.clear();
 	const picture = await drawnBy("timeline\n  2020 : start");
 	assert.ok(picture.state === "drawn");
-	assert.deepEqual({ width: picture.width, height: picture.height }, { width: 160, height: 140 });
+	const pixels = pngPixels(picture.png);
+	assert.deepEqual({ width: picture.width, height: picture.height }, { width: pixels.width / 2, height: pixels.height / 2 });
+	peleJobs.clear();
 });
 
-test("44. real merman draws every /prism checkhealth sample at twice the width it reports", { skip: skipWithoutMerman }, async () => {
-	mermanJobs.clear();
-	for (const source of demoKinds().filter((source) => MERMAN_KINDS.includes(headerWord(source) as never))) {
+test("44. pele draws every /prism checkhealth sample at twice the width it reports", async () => {
+	peleJobs.clear();
+	for (const source of demoKinds().filter((source) => PELE_KINDS.includes(headerWord(source) as never))) {
 		const picture = await drawnBy(source);
 		assert.ok(picture.state === "drawn", headerWord(source));
-		assert.equal(pngWidth(picture.png), picture.width * 2, `${headerWord(source)}: the PNG is 2x the reported width`);
+		assert.equal(pngPixels(picture.png).width, picture.width * 2, `${headerWord(source)}: the PNG is 2x the reported width`);
 	}
-	mermanJobs.clear();
+	peleJobs.clear();
 });
 
-test("45. real merman draws a hyphenated flowchart the text renderer cannot fit", { skip: skipWithoutMerman }, async () => {
-	mermanJobs.clear();
+test("45. pele draws a hyphenated flowchart the text renderer cannot fit, and caps the PNG's longest side at 4096 pixels", async () => {
+	peleJobs.clear();
 	const hyphenated = fanOut((n) => `child-${n}`).split("\n").slice(1, -1).join("\n");
 	const style = resolveStyle({});
 	assert.equal(textVerdict(hyphenated, style, 80, 0).fits, false, "80 columns are too few for the text art");
 	assert.equal((await drawnBy(hyphenated)).state, "drawn");
-	mermanJobs.clear();
+	const wide = await drawnBy(["flowchart LR", ...Array.from({ length: 60 }, (_, n) => `  n${n}[Node number ${n}] --> n${n + 1}`)].join("\n"));
+	assert.ok(wide.state === "drawn");
+	const pixels = pngPixels(wide.png);
+	assert.ok(Math.max(pixels.width, pixels.height) <= 4096 && Math.max(pixels.width, pixels.height) > 4000, `the longest side is capped near 4096, got ${pixels.width}x${pixels.height}`);
+	peleJobs.clear();
+});
+
+test("69. flatten writes each var() in an attribute as its value, keeps text that looks like CSS, and gives up on an unset var()", () => {
+	const svg = [
+		'<svg xmlns="http://www.w3.org/2000/svg" style="max-width:100%;--_fg:var(--pele-fg,#1f1f1f);--_bg:var(--pele-bg,#fff);color:var(--_fg)" fill="var(--_fg)">',
+		'<rect fill="var(--pele-series-1,#4c78a8)" style="rx:var(--_r,4px)"/>',
+		'<text fill="var(--_bg)">uses var(--x) and --force: yes</text>',
+		'<text title="a > b" fill="var(--_fg)">x</text>',
+		"</svg>",
+	].join("");
+	const light = flatten(svg)!;
+	assert.ok(light.startsWith('<svg xmlns="http://www.w3.org/2000/svg" style="max-width:100%;color:#1f1f1f" fill="#1f1f1f">'), "the root keeps plain CSS and drops its custom properties");
+	assert.ok(light.includes('<rect fill="#4c78a8" rx="4"/>'), "a CSS corner moves to an rx attribute");
+	assert.ok(light.includes('<text fill="#fff">uses var(--x) and --force: yes</text>'), "text between tags stays as written");
+	assert.ok(light.includes('<text title="a > b" fill="#1f1f1f">x</text>'), "a > inside an attribute does not end the tag");
+	assert.ok(!/var\(/.test(light.replace(/>[^<]*</g, "><")), "no var() is left in any tag");
+
+	const dark = flatten(svg, { "--pele-fg": "#cdd6f4", "--pele-series-1": "#89b4fa" })!;
+	assert.ok(dark.includes('fill="#cdd6f4"') && dark.includes('<rect fill="#89b4fa"'), "the theme wins over the root and the fallback");
+	assert.equal(flatten('<svg style=""><rect fill="var(--nowhere)"/></svg>'), null, "a var() with no value declines");
+});
+
+test("70. flatten resolves a var() inside a fallback, writes one corner with the last CSS value, and leaves var() in data-id alone", () => {
+	const nested = flatten('<svg style="--_r:var(--pele-radius,4px)"><rect style="rx:var(--_r);fill:var(--x,var(--y,rgb(255,0,0)));"/></svg>')!;
+	assert.ok(nested.includes('<rect style="fill:rgb(255,0,0)" rx="4"/>'), `a nested fallback comes out whole: ${nested}`);
+
+	const corners = flatten('<svg style="--_r:var(--pele-radius,4px)"><rect fill="#fff" style="rx:var(--_r);rx:20;ry:20;"/><rect rx="12" style="rx:20;ry:20;"/></svg>')!;
+	assert.ok(corners.includes('<rect fill="#fff" rx="20" ry="20"/>'), `the last rx wins and is written once: ${corners}`);
+	assert.ok(corners.includes('<rect rx="20" ry="20"/>'), `a CSS corner wins over the rx attribute: ${corners}`);
+
+	const metadata = flatten('<svg style=""><g data-id="uses var(--x)"><rect fill="var(--y,#123)"/></g></svg>')!;
+	assert.ok(metadata.includes('data-id="uses var(--x)"') && metadata.includes('fill="#123"'), `data-id is label text, not a color: ${metadata}`);
+
+	assert.equal(flatten('<svg style=""><rect fill="var(--x,rgb(1,2,3)"/></svg>'), null, "an unclosed var() declines");
+});
+
+test("71. pele draws a nested var() fallback, a node with its own corners, and labels that read var()", async () => {
+	peleJobs.clear();
+	const sources = [
+		"sequenceDiagram\nrect var(--x,var(--y,rgb(255,0,0)))\n A->>B: hello\nend",
+		"graph TD;\nA[Hello]-->B[World];\nstyle A rx:20,ry:20;",
+		"graph TD;\nA(Hello)-->B;\nstyle A rx:20,ry:20;",
+		"timeline\n  uses var(--x) : hello",
+		'sankey-beta\n"var(--x)",B,10',
+	];
+	for (const source of sources) assert.equal((await drawnBy(source)).state, "drawn", source);
+	peleJobs.clear();
+});
+
+test("72. pele bundles every font it names, and adds the 7 MB Chinese font only when the text needs it", () => {
+	const fontDir = join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/core/vendor/pele/fonts");
+	for (const { file } of PELE_FONTS) assert.ok(existsSync(join(fontDir, file)), `${file} is bundled`);
+	const base = ["Arimo_400Regular.ttf", "Arimo_700Bold.ttf", "Arimo_400Regular_Italic.ttf", "Arimo_700Bold_Italic.ttf", "NotoSansArabic_400Regular.ttf"];
+	const accent = String.fromCodePoint(0x65, 0x301);
+	for (const text of ["Request - Parse & render", "Ünïcödé “quotes” – dash…", "Ελληνικά Кириллица Tiếng Việt", "שלום עולם", "مرحبا بالعالم", `caf${accent}`, "Ἑλληνικά", "ʃəˈnɛtɪk"]) {
+		assert.deepEqual(fontsFor(text), base, `${text}: Arimo and Noto Sans Arabic cover it`);
+	}
+	for (const text of ["使用者登入", "あいう", "✓ done", "「範例」", "A ⇒ B"]) {
+		assert.deepEqual(fontsFor(text), [...base, "NotoSansTC_400Regular.ttf"], `${text}: Noto Sans TC is added`);
+	}
+});
+
+test("73. flatten leaves var( inside a CSS string alone, and moves a corner in %, em or px out of the style", () => {
+	const quoted = flatten(`<svg style=""><g style="font-family:'var(--x'"><rect fill="var(--y,#123)"/></g></svg>`)!;
+	assert.ok(quoted !== null && quoted.includes(`style="font-family:'var(--x'"`) && quoted.includes('fill="#123"'), `a font name is not a var(): ${quoted}`);
+	const entity = flatten('<svg style=""><g style="font-family:&quot;var(--x&quot;"/></svg>');
+	assert.ok(entity !== null && entity.includes("&quot;var(--x&quot;"), `a string quoted with &quot; is skipped too: ${entity}`);
+	const family = flatten('<svg style=""><g style="font-family:&quot;Fira Code&quot;;"/></svg>');
+	for (const font of ["&#39;Fira Code'", "'Fira Code&apos;", "&#39;Fira Code&apos;"]) {
+		const mixed = flatten(`<svg style=""><rect style="font-family:${font};fill:var(--x,red)"/></svg>`);
+		assert.ok(mixed !== null && mixed.includes("fill:red"), `a string opened and closed with two spellings of one quote ends where XML ends it: ${mixed}`);
+	}
+	assert.ok(family !== null && family.includes('style="font-family:&quot;Fira Code&quot;"'), `the ; that ends &quot; is not a declaration break: ${family}`);
+
+	const corners = flatten('<svg style=""><rect style="rx:20%;ry:0.5em"/><rect style="rx:6px"/></svg>')!;
+	assert.ok(corners.includes('<rect rx="20%" ry="0.5em"/>'), `a corner keeps its unit: ${corners}`);
+	assert.ok(corners.includes('<rect rx="6"/>'), `px becomes a bare number: ${corners}`);
+});
+
+test("74. pele draws italic labels in italic, a font named like a var(), and a corner in percent", async () => {
+	peleJobs.clear();
+	const upright = await drawnBy("graph TD;\nA[Hello]-->B;");
+	const italic = await drawnBy("graph TD;\nA[Hello]-->B;\nstyle A font-style:italic;");
+	assert.ok(upright.state === "drawn" && italic.state === "drawn");
+	assert.notEqual(italic.png, upright.png, "the bundled italic face draws a different picture");
+	assert.equal((await drawnBy("stateDiagram-v2\nA-->B\nclassDef literal font-family:'var(--x'\nclass A literal")).state, "drawn", "a font named 'var(--x' draws");
+	assert.equal((await drawnBy('stateDiagram-v2\nA-->B\nclassDef code font-family:"Fira Code"\nclass A code')).state, "drawn", "a double-quoted font name, which pele writes as &quot;, draws");
+	const percent = await drawnBy("graph TD;\nA[Hello]-->B;\nstyle A rx:20%;");
+	assert.ok(percent.state === "drawn");
+	assert.notEqual(percent.png, upright.png, "rx:20% rounds the corner");
+	peleJobs.clear();
 });
 
 const C4_RAW = "https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML";
@@ -2215,7 +2269,7 @@ for (const host of ["windows", "macos", "linux", "none"] as const) {
 
 test("59. a block drawn as a picture keeps ⧉ image and gets no ▣ png", { skip: !hasOsascript }, async () => {
 	const restoreHost = clipboardHost("macos");
-	const fake = mermanFixture();
+	const fake = peleFixture();
 	const h = createHarness();
 	cleanupFn = () => {
 		fake.restore();
@@ -2226,7 +2280,7 @@ test("59. a block drawn as a picture keeps ⧉ image and gets no ▣ png", { ski
 
 	const comp = reply(mermaidFence("timeline\n  2020 : start\n  2021 : end"));
 	comp.render(100);
-	await mermanJobs.idle();
+	await peleJobs.idle();
 	assert.deepEqual(shownLabels(comp, 100, false), ["⧉ source", "⧉ image", "⧉ preview"]);
 });
 
