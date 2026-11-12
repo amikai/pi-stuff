@@ -26,6 +26,11 @@ export type Desktop = {
 	 * Rex app that owns pi's pane runs on another machine, else Quick Look. Notices and later failures go to report.
 	 */
 	previewPng(png: Uint8Array, report: Report): void;
+	/**
+	 * Fetches the picture on the clipboard of the machine the user sits at, when that is not this machine.
+	 * Resolves the PNG file written here, or a short reason. On this machine pi's own paste key reads the clipboard, and this resolves a reason that says so.
+	 */
+	pastePng(): Promise<{ file: string } | { reason: string }>;
 };
 
 type SystemDesktopOptions = {
@@ -40,6 +45,7 @@ type SystemDesktopOptions = {
 };
 
 const REX_AWAY = "the Rex app is on another machine";
+const REX_HERE = "the Rex app runs on this machine, use pi's paste key";
 const BUILDING = "Building the Quick Look helper (first use, about 10 s)";
 
 export function systemDesktop(options: SystemDesktopOptions): Desktop {
@@ -105,6 +111,7 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 				return command.failure;
 			}
 		},
+		pastePng: async () => ((await rex.viewer()) === "elsewhere" ? rex.fetchPng() : { reason: REX_HERE }),
 		previewPng: (png, report) => {
 			let file: string;
 			try {
