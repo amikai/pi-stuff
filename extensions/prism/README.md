@@ -14,13 +14,13 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 - **Aligned text figures (`core/figure.ts`).** Renders ` ```figure ` blocks with semantic `{role:text}` coloring (`accent`, `warn`, `ok`, `note`, `dim`, `strong`) and automatic box-border alignment.
 - **LaTeX math and inline images (`core/latex.ts`).** Converts inline `$...$` and display `$$...$$` / ` ```math ` formulas to styled Unicode math by default, or typesets display formulas into high-DPI PNG images via `ratex-render` on Kitty, Ghostty, and iTerm2 when `latex: true` is set.
 - **Right-to-left (RTL) prose and tables (`core/rtl.ts`).** Reorders and aligns Hebrew and Arabic headings, paragraphs, lists, quotes, tables, and diagrams per terminal emulator while preserving embedded LTR code, paths, and numbers.
-- **Interactive copy buttons (`core/clipboard.ts`, `core/html.ts`).** Attaches clickable copy buttons (`[ ⧉ copy ]`, `[ ⧉ source ]`, `[ ⧉ art ]`, `[ ⧉ md ]`, `[ ⧉ html ]`, and `[ ⧉ copy reply ]`) to code blocks, diagrams, tables, quotes, lists, and multi-block replies. `[ ⧉ html ]` writes both HTML and tab-separated text to the system clipboard so pasting into Slack or docs produces a native table. `[ ▣ png ]` puts a picture of a table, a text-drawn diagram or chart, or a ```` ```figure ```` on the clipboard, in monospace type on the pi theme's background (white for a light theme, black otherwise, the colors pi guesses for a terminal that reports none), so it pastes into Slack, docs or slides; a table's picture has no code fences. It shows only on macOS and Windows outside SSH, since Linux has no helper that draws, and a block drawn as a pele or PlantUML picture keeps `[ ⧉ image ]` instead. If the helper fails, the drawn text is copied instead and a warning says why. Windows gives the helper 15 s for a cold PowerShell. Inside a Rex terminal (`REX_SESSION` set) `prism` turns on pi's OSC 52 copies unless `PI_CLIPBOARD_OSC52` is already set, so text copies reach the Rex app even when it runs on another machine. Rex keeps only plain text there, and pi caps an OSC 52 copy at 100,000 base64 characters. When the Rex app runs on another machine, `[ ⧉ html ]` and `[ ▣ png ]` copy plain text and warn `Copied as plain text (the Rex app is on another machine)`, and `[ ⧉ image ]` fails with `the Rex app is on another machine, use preview or set rexImageCopy` when `rexImageCopy` is `false`. Otherwise it sends the picture through Rex as described under [rexImageCopy](#reximagecopy). Set `copyButtonStyle` to `"hover"` to show buttons only when the pointer hovers over `⧉`. A PlantUML or pele block drawn as an image gets `[ ⧉ source ]` (the diagram text), `[ ⧉ image ]` (the PNG on the macOS pasteboard) and `[ ⧉ preview ]` (the PNG in Quick Look, in front of the terminal, a new panel on every press). The last two appear only when `prism` runs on macOS outside SSH, and narrow terminals drop `preview` and then `image`. Preview PNGs are written to `$TMPDIR/prism-preview/diagram-<hash>.png`, so the Quick Look title bar shows one name pattern for every diagram source. The preview opens through a small Swift helper, [`quicklook.swift`](quicklook.swift), which the first preview compiles with `swiftc` into `~/.pi/agent/prism/` in about 10 seconds. The helper adds Liquid Glass zoom out, actual size and zoom in controls, the three zoom buttons of Preview's toolbar, to the Quick Look title bar ahead of its own Share and Open with Preview. A changed source compiles again. Without the Xcode command line tools the build fails, `prism` warns once per session, and the preview falls back to `qlmanage`, whose panel opens behind the terminal. Inside a Rex terminal (`REX_SESSION` and `REX_BLOCK` set) whose Rex app runs on another machine, `[ ⧉ preview ]` opens a floating pane over pi's pane instead, drawn by [`pane-viewer.mjs`](pane-viewer.mjs) with the kitty graphics protocol, and builds no Quick Look helper. `prism` asks `rex` who owns pi's block: an owner that is a local `.app` process (`ps` shows `.app/Contents/MacOS/`) keeps Quick Look, and anything else, an unknown owner or one that arrives through a proxy included, gets the pane, because the pane works in both cases and Quick Look only on the machine pi runs on. Without Rex, or when the `rex` CLI fails, Quick Look opens as before. In the pane, `+` or `=` and `-` or the mouse wheel zoom from 100% to 1600%, `0` resets, the arrows and `h` `j` `k` `l` pan, and `q` or `Esc` closes it. A pane that fails to open shows a `Rex preview failed` error and does not fall back to Quick Look.
+- **Interactive copy buttons (`core/clipboard.ts`, `core/html.ts`).** Attaches clickable copy buttons (`[ ⧉ copy ]`, `[ ⧉ source ]`, `[ ⧉ art ]`, `[ ⧉ md ]`, `[ ⧉ html ]`, and `[ ⧉ copy reply ]`) to code blocks, diagrams, tables, quotes, lists, and multi-block replies. `[ ⧉ html ]` writes both HTML and tab-separated text to the system clipboard so pasting into Slack or docs produces a native table. `[ ▣ png ]` puts a picture of a table, a text-drawn diagram or chart, or a ```` ```figure ```` on the clipboard, in monospace type on the pi theme's background (white for a light theme, black otherwise, the colors pi guesses for a terminal that reports none), so it pastes into Slack, docs or slides; a table's picture has no code fences. It shows only on macOS and Windows outside SSH, since Linux has no helper that draws, and a block drawn as a pele or PlantUML picture keeps `[ ⧉ image ]` instead. If the helper fails, the drawn text is copied instead and a warning says why. Windows gives the helper 15 s for a cold PowerShell. Inside a Rex terminal (`REX_SESSION` set) `prism` turns on pi's OSC 52 copies unless `PI_CLIPBOARD_OSC52` is already set, so text copies reach the Rex app even when it runs on another machine. Rex keeps only plain text there, and pi caps an OSC 52 copy at 100,000 base64 characters. When the Rex app runs on another machine, `[ ⧉ html ]` and `[ ▣ png ]` copy plain text and warn `Copied as plain text (the Rex app is on another machine)`, and `[ ⧉ image ]` fails with a reason that points at `[ ⧉ preview ]`. Set `copyButtonStyle` to `"hover"` to show buttons only when the pointer hovers over `⧉`. A PlantUML or pele block drawn as an image gets `[ ⧉ source ]` (the diagram text), `[ ⧉ image ]` (the PNG on the macOS pasteboard) and `[ ⧉ preview ]` (the PNG in Quick Look, in front of the terminal, a new panel on every press). The last two appear only when `prism` runs on macOS outside SSH, and narrow terminals drop `preview` and then `image`. Preview PNGs are written to `$TMPDIR/prism-preview/diagram-<hash>.png`, so the Quick Look title bar shows one name pattern for every diagram source. The preview opens through a small Swift helper, [`quicklook.swift`](quicklook.swift), which the first preview compiles with `swiftc` into `~/.pi/agent/prism/` in about 10 seconds. The helper adds Liquid Glass zoom out, actual size and zoom in controls, the three zoom buttons of Preview's toolbar, to the Quick Look title bar ahead of its own Share and Open with Preview. A changed source compiles again. Without the Xcode command line tools the build fails, `prism` warns once per session, and the preview falls back to `qlmanage`, whose panel opens behind the terminal. Inside a Rex terminal (`REX_SESSION` and `REX_BLOCK` set) whose Rex app runs on another machine, `[ ⧉ preview ]` opens a floating pane over pi's pane instead, drawn by [`pane-viewer.mjs`](pane-viewer.mjs) with the kitty graphics protocol, and builds no Quick Look helper. `prism` asks `rex` who owns pi's block: an owner that is a local `.app` process (`ps` shows `.app/Contents/MacOS/`) keeps Quick Look, and anything else, an unknown owner or one that arrives through a proxy included, gets the pane, because the pane works in both cases and Quick Look only on the machine pi runs on. Without Rex, or when the `rex` CLI fails, Quick Look opens as before. In the pane, `+` or `=` and `-` or the mouse wheel zoom from 100% to 1600%, `0` resets, the arrows and `h` `j` `k` `l` pan, and `q` or `Esc` closes it. A pane that fails to open shows a `Rex preview failed` error and does not fall back to Quick Look.
 
 ## Architecture
 
 - [`index.ts`](index.ts) registers the `/prism` command, hooks `AssistantMessageComponent` and `UserMessageComponent`, maps `ctx.ui.theme.colors` into `prism`'s 20 color slots, and injects diagram/figure/LaTeX guidelines into the system prompt.
 - [`renderer.ts`](renderer.ts) lays out virtual `Box`, `Text`, `Button`, `Link`, and `Image` element trees into ANSI terminal lines and mouse hit regions (`PrismComponent`).
-- [`desktop.ts`](desktop.ts) owns the picture side effects behind `Desktop`: the PNG pasteboard write, the Quick Look helper build, and the Quick Look launch. [`rex.ts`](rex.ts) tells it whether a Rex pane or Quick Look shows the picture, opens the pane, sends a PNG to the Rex app as marked text parts, and asks the Rex app's machine for its clipboard picture. [`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on the Mac the user sits at. It turns those parts back into a PNG on its clipboard, and it answers a paste request by uploading that clipboard's picture to the machine pi runs on.
+- [`desktop.ts`](desktop.ts) owns the picture side effects behind `Desktop`: the PNG pasteboard write, the Quick Look helper build, and the Quick Look launch. [`rex.ts`](rex.ts) tells it whether a Rex pane or Quick Look shows the picture and opens the pane.
 - [`core/`](core) holds the self-contained parsing and rendering modules (`markdown.ts`, `render.ts`, `mermaid.ts`, `pele.ts`, `background.ts`, `plantuml.ts`, `charts.ts`, `figure.ts`, `latex.ts`, `rtl.ts`, `html.ts`, `clipboard.ts`, `theme.ts`, `help.ts`, `jsx.ts`).
 
 ## Commands
@@ -31,7 +31,6 @@ Colors come directly from Pi's active theme (`ctx.ui.theme`). When you switch be
 | `/prism setup` | Open the interactive 7-step style picker overlay in TUI mode, or step through options with `/prism setup <step> <pick>` |
 | `/prism checkhealth` | Render the full showcase (`checkhealth ko` appends the Korean section) |
 | `/prism checkhealth-rtl` | Render the Hebrew right-to-left showcase |
-| `/prism paste` | Fetch the picture on the clipboard of the Mac you sit at and put its path in the editor, as [`rexPasteKey`](#rexpastekey) does |
 
 All `/prism` output is recorded via `pi.appendEntry` as display-only custom entries and never enters the LLM conversation context.
 
@@ -57,8 +56,6 @@ Settings live in `~/.pi/agent/prism.json` (or `$PI_CODING_AGENT_DIR/prism.json`)
 	"latex": false,
 	"plantuml": true,
 	"pele": true,
-	"rexImageCopy": true,
-	"rexPasteKey": "ctrl+shift+v",
 	"rtl": "auto"
 }
 ```
@@ -70,49 +67,6 @@ Any of the 20 semantic color slots (`accentColor`, `headingColor`, `tableHeaderC
 | Field | Type | Default | Behavior |
 |---|---|---|---|
 | `pele` | `boolean` | `true` | Lets pele draw ```` ```mermaid ```` blocks the text renderer cannot draw. When `false`, `prism` never starts pele, and those blocks keep the dim note and the plain code block. pele is also off over SSH (`SSH_CONNECTION` or `SSH_TTY` set), as are image and preview copy. |
-
-### rexImageCopy
-
-| Field | Type | Default | Behavior |
-|---|---|---|---|
-| `rexImageCopy` | `boolean` | `true` | When the Rex app that owns pi's pane runs on another machine, `[ ⧉ image ]` sends the PNG through Rex to that machine's clipboard. It takes effect only while [`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on that machine, as set up under [Rex image clipboard script](#rex-image-clipboard-script). When `false`, `prism` sends nothing and `[ ⧉ image ]` is refused there. |
-
-Rex carries only text to the other machine's clipboard. `prism` splits the PNG's base64 into parts of at most 45,000 characters, sends each part as its own OSC 52 copy of the text `prism-png:<id>:<i>/<n>:<part>`, and waits 200 ms between parts, because Rex keeps about one copy per 100 ms and a single 327 KB copy never reached the other machine's clipboard in testing, while parts under 48 KiB do. The script collects the parts and puts a real PNG on the clipboard.
-
-Limits:
-
-- The picture travels as text in parts 200 ms apart, so a large picture takes a second or two before the toast `Copied image` shows.
-- A PNG over 1 MiB (1,048,576 bytes) is refused, and nothing is sent.
-- With no script running on that Mac, its clipboard ends up holding text that starts with `prism-png:`. `"rexImageCopy": false` turns the sending off.
-- Two copies sent at once go out one after the other, never mixed.
-
-### rexPasteKey
-
-| Field | Type | Default | Behavior |
-|---|---|---|---|
-| `rexPasteKey` | `string` | `"ctrl+shift+v"` | The key that pastes the picture on the clipboard of the Mac you sit at. It is registered only when `REX_SESSION` is set, and not at all when the value is `""`. |
-
-pi's own paste key (`ctrl+v`) reads the clipboard of the machine pi runs on, Rex pastes only text, and dragging a file into the Rex app does nothing for a server on another machine. When the Rex app runs on another machine, press `rexPasteKey` or run `/prism paste` instead. `prism` shows `Asking the Mac you sit at for its clipboard picture`, asks [`rex-image-clipboard.lua`](rex-image-clipboard.lua) on that Mac for the picture, and then puts the path of the PNG, `/tmp/prism-paste-<number>.png` on the machine pi runs on, into the editor and shows `Pasted image`, as pi's own paste key does. When there is no picture, or the script does not answer, it shows `Image paste failed (<reason>)` and leaves the editor alone. When the Rex app runs on the machine pi runs on, the key and the command fetch nothing and give the reason `this machine's clipboard is the one to paste from, use pi's paste key`.
-
-The picture can be a screenshot taken to the clipboard, an image copied in an app, or an image file copied in Finder.
-
-Limits:
-
-- The wait ends after 40 s with the reason `no answer from rex-image-clipboard.lua on the Mac you sit at`. This is also what shows when the script does not run on that Mac.
-- A tab named `prism paste` shows in the Rex server's window during the upload. A 70 KB picture took a few seconds over a VPN, and a 2.2 MB picture under a second on the same machine.
-- A second press while a request is waiting joins that request and sends no new one.
-- The PNG files stay in `/tmp`. `prism` does not delete them.
-
-Security: any program in a Rex pane can send the request, because it is an ordinary terminal status report. It gets nothing back, since the script writes the picture to a file on the machine pi runs on, not to the terminal. The file is readable only by the user (mode 0600).
-
-### Rex image clipboard script
-
-[`rex-image-clipboard.lua`](rex-image-clipboard.lua) runs on the Mac you sit at, the one that runs the Rex app. One copy of the script serves both directions: it receives the pictures `[ ⧉ image ]` copies ([`rexImageCopy`](#reximagecopy)) and answers the paste requests of [`rexPasteKey`](#rexpastekey).
-
-To use it:
-
-1. Copy `rex-image-clipboard.lua` to the Mac you sit at.
-2. In a terminal on that Mac, run `rex -S <address of the Rex server pi runs on> do --all rex-image-clipboard.lua` and leave it running.
 
 ### PlantUML
 

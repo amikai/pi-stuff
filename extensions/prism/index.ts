@@ -137,8 +137,6 @@ const DEFAULT_OPTIONS: PrismOptions = {
 	latex: false,
 	plantuml: true,
 	pele: true,
-	rexImageCopy: true,
-	rexPasteKey: "ctrl+shift+v",
 };
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
@@ -697,25 +695,6 @@ export default function prismExtension(
 		(tuiInstance ?? screenTui)?.requestRender();
 	}
 
-	async function pasteRexImage(ctx: ExtensionContext): Promise<void> {
-		uiCtx = ctx;
-		toast("Asking the Mac you sit at for its clipboard picture", "info");
-		const pasted = await desktop.pastePng();
-		if ("file" in pasted) {
-			ctx.ui.pasteToEditor(pasted.file);
-			toast("Pasted image", "info");
-		} else {
-			toast(`Image paste failed (${pasted.reason})`, "error");
-		}
-	}
-
-	if (process.env.REX_SESSION && style.rexPasteKey !== "") {
-		pi.registerShortcut(style.rexPasteKey as Parameters<ExtensionAPI["registerShortcut"]>[0], {
-			description: "Paste the clipboard picture of the Mac you sit at, when the Rex app runs on another machine",
-			handler: pasteRexImage,
-		});
-	}
-
 	function makeFolder(onInvalidate?: () => void): Fold {
 		return (id, hidden, key) => {
 			const folded = !unfolded.has(id);
@@ -787,7 +766,7 @@ export default function prismExtension(
 					variant: "primary",
 					label: "⧉ image",
 					onPress: () => {
-						void desktop.copyPng(bytes(), { rexHelper: style.rexImageCopy }).then((failure) => {
+						void desktop.copyPng(bytes()).then((failure) => {
 							if (failure === null) toast("Copied image", "info");
 							else toast(`Image copy failed (${failure})`, "error");
 						});
@@ -1197,7 +1176,7 @@ export default function prismExtension(
 	pi.registerCommand("prism", {
 		description: "Pick prism styles from samples, or run checkhealth",
 		getArgumentCompletions(prefix: string) {
-			const subcommands = ["setup", "checkhealth", "checkhealth-rtl", "paste"];
+			const subcommands = ["setup", "checkhealth", "checkhealth-rtl"];
 			const trimmed = prefix.trim();
 			if (!trimmed.includes(" ")) {
 				return subcommands
@@ -1227,11 +1206,6 @@ export default function prismExtension(
 
 			if (sub === "checkhealth-rtl") {
 				sendPrismOutput(rtlShowcaseText());
-				return;
-			}
-
-			if (sub === "paste") {
-				await pasteRexImage(ctx);
 				return;
 			}
 

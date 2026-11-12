@@ -15,22 +15,13 @@ export type Desktop = {
 	readonly pictures: boolean;
 	/** Resolves null when a copy to this machine's pasteboard reaches the user, else a short reason. */
 	pasteboard(): Promise<string | null>;
-	/**
-	 * Puts the PNG on the clipboard the user pastes from. Resolves null on success, else a short reason.
-	 * When the Rex app runs on another machine the PNG goes through Rex if rexHelper says
-	 * rex-image-clipboard.lua runs there, and is refused otherwise. Takes up to 5 s, longer for a large picture through Rex.
-	 */
-	copyPng(png: Uint8Array, options: { rexHelper: boolean }): Promise<string | null>;
+	/** Puts the PNG on the pasteboard. Resolves null on success, else a short reason. Takes up to 5 s. */
+	copyPng(png: Uint8Array): Promise<string | null>;
 	/**
 	 * Shows the PNG and returns at once. Every call opens its own panel: a Rex floating pane when the
 	 * Rex app that owns pi's pane runs on another machine, else Quick Look. Notices and later failures go to report.
 	 */
 	previewPng(png: Uint8Array, report: Report): void;
-	/**
-	 * Fetches the picture on the clipboard of the machine the user sits at, when that is not this machine.
-	 * Resolves the PNG file written here, or a short reason. On this machine pi's own paste key reads the clipboard, and this resolves a reason that says so.
-	 */
-	pastePng(): Promise<{ file: string } | { reason: string }>;
 };
 
 type SystemDesktopOptions = {
@@ -45,7 +36,6 @@ type SystemDesktopOptions = {
 };
 
 const REX_AWAY = "the Rex app is on another machine";
-const REX_HERE = "this machine's clipboard is the one to paste from, use pi's paste key";
 const BUILDING = "Building the Quick Look helper (first use, about 10 s)";
 
 export function systemDesktop(options: SystemDesktopOptions): Desktop {
@@ -98,9 +88,9 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 	return {
 		pictures,
 		pasteboard,
-		copyPng: async (png, { rexHelper }) => {
+		copyPng: async (png) => {
 			const away = await pasteboard();
-			if (away !== null) return rexHelper ? rex.sendPng(png) : `${away}, use preview`;
+			if (away !== null) return `${away}, use preview`;
 			const command = pngCopyCommand(osascript);
 			const [bin, ...args] = command.argv;
 			try {
@@ -111,7 +101,6 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 				return command.failure;
 			}
 		},
-		pastePng: async () => ((await rex.viewer()) === "elsewhere" ? rex.fetchPng() : { reason: REX_HERE }),
 		previewPng: (png, report) => {
 			let file: string;
 			try {
