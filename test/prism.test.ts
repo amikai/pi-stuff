@@ -74,11 +74,12 @@ const stripAnsi = (s: string) =>
 		.replace(/\x1b\]8;;.*?(?:\x07|\x1b\\)/g, "")
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
 
-function recordingDesktop(pictures = true) {
+function recordingDesktop(pictures = true, away: string | null = null) {
 	const did = { pngs: [] as Buffer[], previews: [] as Buffer[], previewReports: [] as Parameters<Desktop["previewPng"]>[1][] };
 	const desktop: Desktop = {
 		pictures,
-		copyPng: (png) => (did.pngs.push(Buffer.from(png)), null),
+		pasteboard: async () => away,
+		copyPng: async (png) => (did.pngs.push(Buffer.from(png)), null),
 		previewPng: (png, report) => {
 			did.previews.push(Buffer.from(png));
 			did.previewReports.push(report);
@@ -1109,6 +1110,7 @@ test("23. a plantuml image offers source, image and preview, and each button han
 		assert.deepEqual(h.notifications.at(-1), { text: "Copied", level: "info" }, `${copyButtonStyle}: source toasts Copied`);
 		press(comp, 100, "⧉ image", hover);
 		assert.deepEqual(h.desktop.pngs, [png], `${copyButtonStyle}: image copies the exact PNG that was drawn`);
+		await until(() => h.notifications.at(-1)?.text === "Copied image");
 		assert.deepEqual(h.notifications.at(-1), { text: "Copied image", level: "info" }, `${copyButtonStyle}: image toasts Copied image`);
 		press(comp, 100, "⧉ preview", hover);
 		assert.deepEqual(h.desktop.previews, [png], `${copyButtonStyle}: preview opens the exact PNG that was drawn`);
@@ -1242,13 +1244,13 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	const first = pngOf(320, 280);
 	const second = pngOf(200, 100);
 
-	assert.equal(desktop.copyPng(first), null, "copyPng reports success when osascript exits 0");
+	assert.equal(await desktop.copyPng(first), null, "copyPng reports success when osascript exits 0");
 	assert.deepEqual(readFileSync(join(dir, "stdin.bin")), first, "osascript receives the PNG bytes on stdin");
 	const args = readFileSync(join(dir, "osascript.args"), "utf8").split("\n");
 	assert.deepEqual(args.slice(0, 3), ["-l", "JavaScript", "-e"], "osascript runs the JavaScript for Automation script");
 	assert.ok(args.slice(3).join("\n").includes("NSPasteboardTypePNG"), "the script writes the PNG type");
-	const broken = systemDesktop({ pictures: true, osascript: fakeBin("osascript-fails", `cat > /dev/null\necho 'no pasteboard' >&2\nexit 1`) });
-	assert.equal(broken.copyPng(first), "no pasteboard", "copyPng returns what osascript printed when it exits 1");
+	const broken = systemDesktop({ pictures: true, osascript: fakeBin("osascript-fails", `cat > /dev/null\necho 'no pasteboard' >&2\nexit 1`), rex });
+	assert.equal(await broken.copyPng(first), "no pasteboard", "copyPng returns what osascript printed when it exits 1");
 
 	const session = recorder();
 	const before = performance.now();
@@ -2303,7 +2305,7 @@ test("60. ▣ png hands the helper the drawn art without fences, in the pi theme
 	press(comp, 100, "⧉ art", false);
 	assert.equal(helper.calls.length, 0, "the plain art button starts no helper");
 	press(comp, 100, "▣ png", false);
-	assert.equal(helper.calls.length, 1);
+	await until(() => helper.calls.length === 1);
 	const [call] = helper.calls;
 	assert.deepEqual([call!.bin, ...call!.args], ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_IMAGE_COPY]);
 	assert.equal(call!.timeout, 5000);
@@ -2315,6 +2317,7 @@ test("60. ▣ png hands the helper the drawn art without fences, in the pi theme
 
 	setTheme("light");
 	press(reply(TABLE_SOURCE), 100, "▣ png", false);
+	await until(() => helper.calls.length === 2);
 	assert.deepEqual(JSON.parse(helper.calls[1]!.input).background, [255, 255, 255], "a light pi theme draws on white");
 });
 
@@ -2331,6 +2334,7 @@ test("61. ▣ png on a figure and a diagram draws their art, and a cold PowerShe
 
 	press(reply(FLOWCHART_SOURCE), 100, "▣ png", false);
 	press(reply(FIGURE_SOURCE), 100, "▣ png", false);
+	await until(() => helper.calls.length === 2);
 	const drawn = helper.calls.map((call) => JSON.parse(call.input).lines.flat().map((g: { text: string }) => g.text).join(""));
 	assert.ok(drawn[0]!.includes("Gateway"), drawn[0]);
 	assert.ok(drawn[1]!.includes("ok") && drawn[1]!.includes("┌─box─┐"), drawn[1]);
@@ -2353,6 +2357,7 @@ test("62. a failed image copy falls back to the drawn text and says why", async 
 
 	copiedTexts.length = 0;
 	press(reply(TABLE_SOURCE), 100, "▣ png", false);
+	await until(() => copiedTexts.length === 1);
 	assert.ok(copiedTexts[0]!.includes("│ 苹果 │"), copiedTexts[0]);
 	assert.ok(!copiedTexts[0]!.includes("`"), "the fallback text has no fences");
 	assert.deepEqual(h.notifications.at(-1), { text: "Copied as plain text (Cannot draw image)", level: "warning" });
@@ -2788,4 +2793,89 @@ test("79. the pane viewer transmits the PNG once, redraws without erasing the di
 	assert.equal(dropped.code, 0, "q still exits 0 when the picture cannot be shown");
 	assert.equal(count(dropped.out, "a=t,"), 2, "a terminal that keeps dropping the picture is sent it twice, not on every reply");
 	assert.ok(dropped.out.includes(" cannot show the picture (ENOENT: image not found)"), "the header says why nothing is drawn");
+});
+
+test("80. with the Rex app on another machine, ⧉ html and ▣ png start no helper and copy plain text with a warning that says why", async () => {
+	const restoreHost = clipboardHost("windows");
+	const helper = recordHelpers();
+	const here = createHarness();
+	cleanupFn = () => {
+		helper.restore();
+		restoreHost();
+	};
+	await here.emit("session_start");
+	press(reply(TABLE_SOURCE), 100, "⧉ html", false);
+	await until(() => helper.calls.length === 1);
+	assert.deepEqual(here.notifications.at(-1), { text: "Copied formatted table", level: "info" }, "with the pasteboard reachable, the helper runs");
+	here.cleanup();
+
+	helper.calls.length = 0;
+	const away = createHarness(undefined, recordingDesktop(true, "the Rex app is on another machine"));
+	cleanupFn = () => {
+		helper.restore();
+		away.cleanup();
+		restoreHost();
+	};
+	await away.emit("session_start");
+	for (const label of ["⧉ html", "▣ png"]) {
+		copiedTexts.length = 0;
+		press(reply(TABLE_SOURCE), 100, label, false);
+		await until(() => away.notifications.length > 0);
+		assert.deepEqual(away.notifications.pop(), { text: "Copied as plain text (the Rex app is on another machine)", level: "warning" }, label);
+		assert.equal(copiedTexts.length, 1, `${label}: the plain text goes to pi's text copy`);
+		assert.ok(copiedTexts[0]!.includes("苹果"), `${label}: ${copiedTexts[0]}`);
+	}
+	assert.equal(helper.calls.length, 0, "neither button started a helper");
+});
+
+test("81. the system desktop reports the pasteboard away only when the Rex app is on another machine, and then copyPng points at preview and never starts osascript", async () => {
+	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-pasteboard-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const log = join(dir, "osascript.log");
+	const osascript = join(dir, "osascript");
+	writeFileSync(osascript, `#!/bin/sh\ncat > /dev/null\necho run >> "${log}"\n`, { mode: 0o755 });
+	const png = pngOf(16, 16);
+	const desktopFor = (viewer: "none" | "here" | "elsewhere") => systemDesktop({ pictures: true, osascript, rex: stubRex(viewer) });
+
+	assert.equal(await desktopFor("elsewhere").pasteboard(), "the Rex app is on another machine");
+	assert.equal(await desktopFor("here").pasteboard(), null);
+	assert.equal(await desktopFor("none").pasteboard(), null);
+
+	assert.equal(await desktopFor("elsewhere").copyPng(png), "the Rex app is on another machine, use preview");
+	assert.equal(existsSync(log), false, "osascript never started");
+	for (const viewer of ["here", "none"] as const) {
+		rmSync(log, { force: true });
+		assert.equal(await desktopFor(viewer).copyPng(png), null, viewer);
+		assert.equal(existsSync(log), true, `${viewer}: osascript ran`);
+	}
+});
+
+test("82. sendCopiesThroughRex turns pi's OSC 52 copies on inside Rex, unless the user already chose", async () => {
+	const { sendCopiesThroughRex } = await import("../extensions/prism/rex.ts");
+	const run = (env: NodeJS.ProcessEnv) => (sendCopiesThroughRex(env), env.PI_CLIPBOARD_OSC52);
+
+	assert.equal(run({ REX_SESSION: "s1" }), "1", "unset in Rex becomes 1");
+	assert.equal(run({ REX_SESSION: "s1", PI_CLIPBOARD_OSC52: "0" }), "0", "an explicit 0 stays");
+	assert.equal(run({ REX_SESSION: "s1", PI_CLIPBOARD_OSC52: "1" }), "1", "an explicit 1 stays");
+	assert.equal(run({}), undefined, "outside Rex nothing is set");
+});
+
+test("83. ⧉ image toasts the reason when the desktop cannot copy the PNG", async () => {
+	const terminal = plantumlTerminal();
+	const recording = recordingDesktop();
+	recording.desktop.copyPng = async () => "the Rex app is on another machine, use preview";
+	const h = createHarness(undefined, recording);
+	cleanupFn = () => {
+		terminal.restore();
+		h.cleanup();
+	};
+	await h.emit("session_start");
+	const comp = reply(diagram("copy failure"));
+	comp.render(100);
+	await plantumlJobs.idle();
+
+	press(comp, 100, "⧉ image", false);
+	await until(() => h.notifications.length > 0);
+	assert.deepEqual(h.notifications.at(-1), { text: "Image copy failed (the Rex app is on another machine, use preview)", level: "error" });
 });
