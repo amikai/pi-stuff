@@ -2490,6 +2490,7 @@ const stubRex = (viewer: "none" | "here" | "elsewhere", reason: string | null = 
 	const panes: string[] = [];
 	return {
 		panes,
+		sendPng: async () => "the real rex must not run in this test",
 		viewer: async () => viewer,
 		openPane: async (file: string) => {
 			panes.push(file);
@@ -2878,4 +2879,79 @@ test("83. ⧉ image toasts the reason when the desktop cannot copy the PNG", asy
 	press(comp, 100, "⧉ image", false);
 	await until(() => h.notifications.length > 0);
 	assert.deepEqual(h.notifications.at(-1), { text: "Image copy failed (the Rex app is on another machine, use preview)", level: "error" });
+});
+
+const noisyBytes = (length: number) => Buffer.from(Array.from({ length }, (_, i) => (i * 131 + (i >> 8) * 17 + 7) & 255));
+
+const decodeCopy = (sequence: string) => {
+	const match = /^\x1b\]52;c;([A-Za-z0-9+/=]*)\x07$/.exec(sequence);
+	assert.ok(match, `one OSC 52 copy: ${sequence.slice(0, 40)}`);
+	return Buffer.from(match[1]!, "base64").toString();
+};
+
+test("84. sendPng writes the PNG as ordered OSC 52 copies of at most 45,000 base64 characters, which join back to the PNG", async () => {
+	const { PNG_MARK, systemRex } = await import("../extensions/prism/rex.ts");
+	const png = noisyBytes(100_000);
+	const writes: string[] = [];
+	const rex = systemRex({ env: {}, write: (text) => void writes.push(text), partGapMs: 0 });
+
+	assert.equal(await rex.sendPng(png), null, "a PNG that is written resolves null");
+	const parts = writes.map((write) => {
+		const text = decodeCopy(write);
+		const match = new RegExp(`^${PNG_MARK}([0-9a-f]{8}):(\\d+)/(\\d+):([A-Za-z0-9+/=]*)$`).exec(text);
+		assert.ok(match, `a marked part: ${text.slice(0, 40)}`);
+		return { id: match[1]!, i: Number(match[2]), n: Number(match[3]), data: match[4]! };
+	});
+	assert.ok(parts.length > 2, `${parts.length} parts`);
+	assert.deepEqual(parts.map((part) => part.i), parts.map((_, k) => k + 1), "parts are numbered from 1 and in order");
+	assert.ok(parts.every((part) => part.n === parts.length), "every part names the same total");
+	assert.ok(parts.every((part) => part.id === parts[0]!.id), "every part carries the same id");
+	assert.ok(parts.every((part) => part.data.length <= 45_000), "no part holds more than 45,000 characters");
+	assert.deepEqual(Buffer.from(parts.map((part) => part.data).join(""), "base64"), png, "the parts joined and decoded are the PNG");
+
+	writes.length = 0;
+	await rex.sendPng(Buffer.from(png));
+	assert.equal(decodeCopy(writes[0]!).split(":")[1], parts[0]!.id, "the same bytes get the same id");
+	writes.length = 0;
+	await rex.sendPng(noisyBytes(100_001));
+	assert.notEqual(decodeCopy(writes[0]!).split(":")[1], parts[0]!.id, "other bytes get another id");
+});
+
+test("85. two sendPng calls started together do not interleave their parts, and each part waits partGapMs", async () => {
+	const { systemRex } = await import("../extensions/prism/rex.ts");
+	const first = noisyBytes(70_000);
+	const second = noisyBytes(70_001);
+	const writes: { id: string; at: number }[] = [];
+	const rex = systemRex({
+		env: {},
+		write: (text) => void writes.push({ id: decodeCopy(text).split(":")[1]!, at: performance.now() }),
+		partGapMs: 30,
+	});
+
+	const results = await Promise.all([rex.sendPng(first), rex.sendPng(second)]);
+	assert.deepEqual(results, [null, null]);
+	const ids = writes.map((write) => write.id);
+	const firstCount = ids.filter((id) => id === ids[0]).length;
+	assert.ok(firstCount > 1 && ids.length > firstCount * 1.5, `${ids.length} writes, ${firstCount} for the first picture`);
+	assert.deepEqual(ids, [...ids].sort((a, b) => ids.indexOf(a) - ids.indexOf(b)), "all parts of the first picture precede all parts of the second");
+	for (let k = 1; k < writes.length; k++) assert.ok(writes[k]!.at - writes[k - 1]!.at >= 25, `write ${k} came after the gap`);
+});
+
+test("86. sendPng refuses a PNG over 1 MiB with a reason that names the limit, and writes nothing", async () => {
+	const { systemRex } = await import("../extensions/prism/rex.ts");
+	const writes: string[] = [];
+	const rex = systemRex({ env: {}, write: (text) => void writes.push(text), partGapMs: 0 });
+
+	const reason = await rex.sendPng(Buffer.alloc(1024 * 1024 + 1));
+	assert.match(reason ?? "", /1 MiB/);
+	assert.deepEqual(writes, [], "nothing is written");
+	assert.equal(await rex.sendPng(Buffer.alloc(1024 * 1024)), null, "a PNG of exactly 1 MiB is sent");
+	assert.ok(writes.length > 0);
+});
+
+test("87. rex-image-clipboard.lua listens for the mark that sendPng writes", async () => {
+	const { PNG_MARK } = await import("../extensions/prism/rex.ts");
+	const lua = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/rex-image-clipboard.lua"), "utf8");
+	assert.ok(lua.includes(PNG_MARK), `the script names ${PNG_MARK}`);
+	assert.ok(lua.includes(PNG_MARK.replace("-", "%-")), "the script's pattern matches the mark");
 });
