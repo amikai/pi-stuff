@@ -15,8 +15,12 @@ export type Desktop = {
 	readonly pictures: boolean;
 	/** Resolves null when a copy to this machine's pasteboard reaches the user, else a short reason. */
 	pasteboard(): Promise<string | null>;
-	/** Puts the PNG on the pasteboard. Resolves null on success, else a short reason. Takes up to 5 s. */
-	copyPng(png: Uint8Array): Promise<string | null>;
+	/**
+	 * Puts the PNG on the clipboard the user pastes from. Resolves null on success, else a short reason.
+	 * When the Rex app runs on another machine the PNG goes through Rex if rexHelper says
+	 * rex-image-clipboard.lua runs there, and is refused otherwise. Takes up to 5 s, longer for a large picture through Rex.
+	 */
+	copyPng(png: Uint8Array, options: { rexHelper: boolean }): Promise<string | null>;
 	/**
 	 * Shows the PNG and returns at once. Every call opens its own panel: a Rex floating pane when the
 	 * Rex app that owns pi's pane runs on another machine, else Quick Look. Notices and later failures go to report.
@@ -88,9 +92,9 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 	return {
 		pictures,
 		pasteboard,
-		copyPng: async (png) => {
+		copyPng: async (png, { rexHelper }) => {
 			const away = await pasteboard();
-			if (away !== null) return `${away}, use preview`;
+			if (away !== null) return rexHelper ? rex.sendPng(png) : `${away}, use preview`;
 			const command = pngCopyCommand(osascript);
 			const [bin, ...args] = command.argv;
 			try {

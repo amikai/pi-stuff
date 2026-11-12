@@ -75,11 +75,11 @@ const stripAnsi = (s: string) =>
 		.replace(/\x1b\]133;[A-Z]\x07/g, "");
 
 function recordingDesktop(pictures = true, away: string | null = null) {
-	const did = { pngs: [] as Buffer[], previews: [] as Buffer[], previewReports: [] as Parameters<Desktop["previewPng"]>[1][] };
+	const did = { pngs: [] as Buffer[], pngOptions: [] as { rexHelper: boolean }[], previews: [] as Buffer[], previewReports: [] as Parameters<Desktop["previewPng"]>[1][] };
 	const desktop: Desktop = {
 		pictures,
 		pasteboard: async () => away,
-		copyPng: async (png) => (did.pngs.push(Buffer.from(png)), null),
+		copyPng: async (png, options) => (did.pngs.push(Buffer.from(png)), did.pngOptions.push(options), null),
 		previewPng: (png, report) => {
 			did.previews.push(Buffer.from(png));
 			did.previewReports.push(report);
@@ -1238,19 +1238,19 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	writeFileSync(helperSource, "// helper v1\n");
 	const helperDir = join(dir, "helpers");
 	const previews = join(dir, "previews");
-	const rex = { viewer: async () => "none" as const, openPane: async () => "the real rex must not run in this test" };
+	const rex = { viewer: async () => "none" as const, openPane: async () => "the real rex must not run in this test", sendPng: async () => "the real rex must not run in this test" };
 	const options = { pictures: true, osascript, qlmanage, swiftc: fakeSwiftc("swiftc", fakePanel("helper", "$1"), 1), helperSource, helperDir, dir: previews, rex };
 	const desktop = systemDesktop(options);
 	const first = pngOf(320, 280);
 	const second = pngOf(200, 100);
 
-	assert.equal(await desktop.copyPng(first), null, "copyPng reports success when osascript exits 0");
+	assert.equal(await desktop.copyPng(first, { rexHelper: false }), null, "copyPng reports success when osascript exits 0");
 	assert.deepEqual(readFileSync(join(dir, "stdin.bin")), first, "osascript receives the PNG bytes on stdin");
 	const args = readFileSync(join(dir, "osascript.args"), "utf8").split("\n");
 	assert.deepEqual(args.slice(0, 3), ["-l", "JavaScript", "-e"], "osascript runs the JavaScript for Automation script");
 	assert.ok(args.slice(3).join("\n").includes("NSPasteboardTypePNG"), "the script writes the PNG type");
 	const broken = systemDesktop({ pictures: true, osascript: fakeBin("osascript-fails", `cat > /dev/null\necho 'no pasteboard' >&2\nexit 1`), rex });
-	assert.equal(await broken.copyPng(first), "no pasteboard", "copyPng returns what osascript printed when it exits 1");
+	assert.equal(await broken.copyPng(first, { rexHelper: false }), "no pasteboard", "copyPng returns what osascript printed when it exits 1");
 
 	const session = recorder();
 	const before = performance.now();
@@ -2843,12 +2843,14 @@ test("81. the system desktop reports the pasteboard away only when the Rex app i
 	assert.equal(await desktopFor("here").pasteboard(), null);
 	assert.equal(await desktopFor("none").pasteboard(), null);
 
-	assert.equal(await desktopFor("elsewhere").copyPng(png), "the Rex app is on another machine, use preview");
+	assert.equal(await desktopFor("elsewhere").copyPng(png, { rexHelper: false }), "the Rex app is on another machine, use preview");
 	assert.equal(existsSync(log), false, "osascript never started");
 	for (const viewer of ["here", "none"] as const) {
-		rmSync(log, { force: true });
-		assert.equal(await desktopFor(viewer).copyPng(png), null, viewer);
-		assert.equal(existsSync(log), true, `${viewer}: osascript ran`);
+		for (const rexHelper of [false, true]) {
+			rmSync(log, { force: true });
+			assert.equal(await desktopFor(viewer).copyPng(png, { rexHelper }), null, `${viewer}, rexHelper ${rexHelper}`);
+			assert.equal(existsSync(log), true, `${viewer}, rexHelper ${rexHelper}: osascript ran`);
+		}
 	}
 });
 
@@ -2954,4 +2956,53 @@ test("87. rex-image-clipboard.lua listens for the mark that sendPng writes", asy
 	const lua = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/rex-image-clipboard.lua"), "utf8");
 	assert.ok(lua.includes(PNG_MARK), `the script names ${PNG_MARK}`);
 	assert.ok(lua.includes(PNG_MARK.replace("-", "%-")), "the script's pattern matches the mark");
+});
+
+test("88. away with rexHelper, copyPng sends the PNG through Rex and never starts osascript, and returns Rex's answer", async () => {
+	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-rex-copy-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const log = join(dir, "osascript.log");
+	const osascript = join(dir, "osascript");
+	writeFileSync(osascript, `#!/bin/sh\ncat > /dev/null\necho run >> "${log}"\n`, { mode: 0o755 });
+	const png = pngOf(16, 16);
+	const sent: Uint8Array[] = [];
+	const rex = (answer: string | null) => ({ ...stubRex("elsewhere"), sendPng: async (bytes: Uint8Array) => (sent.push(bytes), answer) });
+
+	assert.equal(await systemDesktop({ pictures: true, osascript, rex: rex(null) }).copyPng(png, { rexHelper: true }), null, "a picture that was sent resolves null");
+	assert.deepEqual(sent.map((bytes) => Buffer.from(bytes)), [png], "Rex gets the same bytes");
+	assert.equal(await systemDesktop({ pictures: true, osascript, rex: rex("the picture is over the 1 MiB limit") }).copyPng(png, { rexHelper: true }), "the picture is over the 1 MiB limit", "Rex's reason comes back");
+	assert.equal(existsSync(log), false, "osascript never started");
+
+	sent.length = 0;
+	await systemDesktop({ pictures: true, osascript, rex: rex(null) }).copyPng(png, { rexHelper: false });
+	assert.deepEqual(sent, [], "without rexHelper nothing goes through Rex");
+	for (const viewer of ["here", "none"] as const) {
+		await systemDesktop({ pictures: true, osascript, rex: { ...stubRex(viewer), sendPng: async (bytes: Uint8Array) => (sent.push(bytes), null) } }).copyPng(png, { rexHelper: true });
+	}
+	assert.deepEqual(sent, [], "with the pasteboard reachable nothing goes through Rex");
+});
+
+test("89. ⧉ image asks for the Rex helper unless prism.json sets rexImageCopy to false", async () => {
+	const terminal = plantumlTerminal();
+	const run = async (config?: Record<string, unknown>) => {
+		const recording = recordingDesktop();
+		const h = createHarness(config, recording);
+		cleanupFn = () => {
+			terminal.restore();
+			h.cleanup();
+		};
+		await h.emit("session_start");
+		const comp = reply(diagram(`rex helper ${JSON.stringify(config)}`));
+		comp.render(100);
+		await plantumlJobs.idle();
+		press(comp, 100, "⧉ image", false);
+		await until(() => h.notifications.length > 0);
+		h.cleanup();
+		return recording.did.pngOptions;
+	};
+
+	assert.deepEqual(await run(), [{ rexHelper: true }], "on by default");
+	assert.deepEqual(await run({ rexImageCopy: true }), [{ rexHelper: true }], "on when set");
+	assert.deepEqual(await run({ rexImageCopy: false }), [{ rexHelper: false }], "off when set to false");
 });

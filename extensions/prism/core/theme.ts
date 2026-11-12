@@ -80,6 +80,7 @@ export type Style = {
 	latex: boolean;
 	plantuml: boolean;
 	pele: boolean;
+	rexImageCopy: boolean;
 	overSsh: boolean;
 	cwd: string;
 	home: string;
@@ -126,6 +127,7 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		latex: options.latex === true,
 		plantuml: options.plantuml !== false,
 		pele: options.pele !== false,
+		rexImageCopy: options.rexImageCopy !== false,
 		overSsh: false,
 		cwd: "",
 		home: "",

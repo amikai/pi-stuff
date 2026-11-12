@@ -29,8 +29,8 @@ const FAILED = "rex failed";
 
 /** What rex-image-clipboard.lua looks for at the start of a copied text. */
 export const PNG_MARK = "prism-png:";
-// A copy up to 48 KiB rides inside the Rex event and a larger one makes the Rex app lose its connection,
-// so a part stays well below it.
+// A copy up to 48 KiB rides inside the Rex event. A single 327 KB copy never reached the other Mac's
+// clipboard, so a part stays below 48 KiB.
 const PART_CHARS = 45_000;
 // Rex keeps about one copy per 100 ms: eight copies 80 ms apart lost one, and 150 ms apart all arrived.
 const PART_GAP_MS = 200;
