@@ -274,7 +274,7 @@ test("2. decodeDocument accepts the showcase document and rejects malformed or u
 	);
 });
 
-test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the Mermaid 12.2.0 matrix across all 5 supported families, and handle width, warning, and source fallbacks", () => {
+test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the Mermaid 12.2.0 matrix across all 9 supported families, and handle width, warning, and source fallbacks", () => {
 	assert.equal(diagramCodeSpan(""), "`\u00a0`");
 	assert.equal(diagramCodeSpan("plain row"), "`plain row`");
 	assert.equal(diagramCodeSpan("one ` tick"), "``one ` tick``");
@@ -306,13 +306,9 @@ test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the
 
 	const unsupportedMermaid12Headers = [
 		["flowchart-elk", "flowchart-elk LR\n  A[Start] --> B[End]"],
-		["pie", "pie title Pets\n  \"Dogs\" : 45\n  \"Cats\" : 30"],
 		["gantt", "gantt\n  title Roadmap\n  section Phase 1\n  Design :a1, 2026-01-01, 5d"],
 		["xychart-beta", "xychart-beta\n  title \"Latency\"\n  x-axis [Q1, Q2]\n  bar [12, 18]"],
 		["xychart", "xychart\n  title \"Latency\"\n  x-axis [Q1, Q2]\n  bar [12, 18]"],
-		["gitGraph", "gitGraph\n  commit\n  branch feat\n  checkout feat\n  commit"],
-		["mindmap", "mindmap\n  root((Pi))\n    Extensions\n    Themes"],
-		["timeline", "timeline\n  title Releases\n  2026 : v1.4.0"],
 		["journey", "journey\n  title Onboarding\n  section Sign up\n    Open CLI: 5: User"],
 		["quadrantChart", "quadrantChart\n  title Priority\n  x-axis Low --> High\n  y-axis Low --> High\n  Item A: [0.3, 0.8]"],
 		["sankey-beta", "sankey-beta\n  Input,Process,10"],
@@ -661,7 +657,8 @@ test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the
 				"«service»",
 				"UserService",
 				"+Repository<User> repo",
-				"1 manages 0..*",
+				"manages",
+				"0..*",
 				"extends",
 				"△",
 				"▽",
@@ -695,13 +692,87 @@ test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the
 				"string email UK",
 				"ORDER",
 				"int order_id PK",
-				"1 places 0..*",
-				"1..* contains 1",
-				"1..* labels 1..*",
-				"0..1 has 0..1",
-				"0..* applies 0..*",
+				"places",
+				"contains",
+				"labels",
+				"has",
+				"applies",
+				"1..*",
+				"0..1",
 				"╎",
 			],
+		},
+		{
+			status: "rendered",
+			name: "flowchart Mermaid v11 @{ shape: ... } syntax",
+			source: fence('flowchart LR\n  A@{ shape: cyl, label: "Database" } --> B[Service]'),
+			expectedSubstrings: ["Database", "Service", "▶"],
+		},
+		{
+			status: "rendered",
+			name: "YAML frontmatter title above a flowchart",
+			source: fence("---\ntitle: Sample\n---\nflowchart LR\n  A --> B"),
+			expectedSubstrings: ["Sample", "A", "B", "▶"],
+		},
+		{
+			status: "rendered",
+			name: "multi-word ER entity alias",
+			source: fence('erDiagram\n  CUSTOMER["Customer Account"] ||--o{ ORDER : places'),
+			expectedSubstrings: ["Customer Account", "ORDER", "places"],
+		},
+		{
+			status: "rendered",
+			name: "pie with showData and title",
+			source: fence(
+				['pie showData', '  title Pets', '  "Dogs" : 45', '  "Cats" : 30'].join("\n"),
+			),
+			expectedSubstrings: ["Pets", "Dogs", "Cats", "60%", "40%", "(45)", "(30)", "█", "░"],
+		},
+		{
+			status: "rendered",
+			name: "mindmap nested tree",
+			source: fence(
+				[
+					"mindmap",
+					"  root((Pi))",
+					"    Extensions",
+					"      Prism",
+					"      Render",
+					"    Themes",
+				].join("\n"),
+			),
+			expectedSubstrings: ["Pi", "Extensions", "Prism", "Render", "Themes", "├── ", "│   └── ", "└── "],
+		},
+		{
+			status: "rendered",
+			name: "timeline sections with multiple events per period",
+			source: fence(
+				[
+					"timeline",
+					"  title Releases",
+					"  section Early",
+					"    2025 : v1.3.0 : v1.4.0",
+					"  section Current",
+					"    2026 : v1.5.0",
+				].join("\n"),
+			),
+			expectedSubstrings: ["Releases", "Early", "2025", "v1.3.0", "v1.4.0", "Current", "2026", "v1.5.0"],
+		},
+		{
+			status: "rendered",
+			name: "gitGraph branch, commit ids, merge, and tag",
+			source: fence(
+				[
+					"gitGraph",
+					'  commit id: "init"',
+					"  branch feat",
+					"  checkout feat",
+					'  commit id: "work"',
+					"  checkout main",
+					'  merge feat tag: "v1.0"',
+				].join("\n"),
+			),
+			expectedSubstrings: ["init", "work", "(feat)", "(main)", "[v1.0]", "⇐ feat", "├─┐", "├─┘"],
 		},
 		{
 			status: "warning-fallback",
@@ -717,48 +788,55 @@ test("3. diagramCodeSpan and transformBuiltInMermaid escape backticks, cover the
 		},
 		{
 			status: "warning-fallback",
-			name: "flowchart Mermaid v11 @{ shape: ... } syntax",
-			source: fence('flowchart LR\n  A@{ shape: cyl, label: "Database" } --> B[Service]'),
-			expectedWarning:
-				'Mermaid diagram not rendered: dropped, expected a link: "@{ shape: cyl, label: "Database" } --> B[Service]"',
-		},
-		{
-			status: "warning-fallback",
 			name: "sequenceDiagram with unreadable final line",
 			source: fence("sequenceDiagram\n  Alice->>Bob: Hello\n  unreadable final line"),
 			expectedWarning:
-				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+				'Mermaid diagram not rendered: dropped, unreadable statement: "unreadable final line"',
 		},
 		{
 			status: "warning-fallback",
 			name: "stateDiagram-v2 with unreadable final line",
 			source: fence("stateDiagram-v2\n  [*] --> Idle\n  unreadable final line"),
 			expectedWarning:
-				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+				'Mermaid diagram not rendered: dropped, unreadable statement: "unreadable final line"',
 		},
 		{
 			status: "warning-fallback",
 			name: "classDiagram with unreadable final line",
 			source: fence("classDiagram\n  Animal <|-- Duck\n  unreadable final line"),
 			expectedWarning:
-				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+				'Mermaid diagram not rendered: dropped, unreadable statement: "unreadable final line"',
 		},
 		{
 			status: "warning-fallback",
 			name: "erDiagram with unreadable final line",
 			source: fence("erDiagram\n  CUSTOMER ||--o{ ORDER : places\n  unreadable final line"),
 			expectedWarning:
-				'Mermaid diagram not rendered: dropped, unreadable final line: "unreadable final line"',
+				'Mermaid diagram not rendered: dropped, unreadable statement: "unreadable final line"',
+		},
+		{
+			status: "warning-fallback",
+			name: "sequenceDiagram with an unreadable statement before valid ones",
+			source: fence("sequenceDiagram\n  Alice->>Bob: Hello\n  garbage here\n  Bob->>Alice: Hi"),
+			expectedWarning: 'Mermaid diagram not rendered: dropped, unreadable statement: "garbage here"',
+		},
+		{
+			status: "warning-fallback",
+			name: "flowchart over the 128 node cap",
+			source: fence(
+				["flowchart TD", ...Array.from({ length: 130 }, (_, i) => `  N${i} --> N${i + 1}`)].join("\n"),
+			),
+			expectedWarning: "Mermaid diagram not rendered: diagram truncated: node cap (128) reached",
 		},
 		{
 			status: "source-fallback",
-			name: "YAML frontmatter before flowchart",
-			source: fence("---\ntitle: Sample\n---\nflowchart LR\n  A --> B"),
+			name: "class diagram lollipop interface",
+			source: fence("classDiagram\n  Animal ()-- Dog"),
 		},
 		{
 			status: "source-fallback",
-			name: "multi-word ER entity alias",
-			source: fence('erDiagram\n  CUSTOMER["Customer Account"] ||--o{ ORDER : places'),
+			name: "ER diagram word-based cardinality",
+			source: fence("erDiagram\n  A one or zero to many B : r"),
 		},
 		...unsupportedMermaid12Headers.map(
 			([header, body]): MermaidCase => ({
@@ -890,14 +968,15 @@ test("4. BuiltInDocumentComponent renders every section within width bounds, for
 		new BuiltInDocumentComponent(sectionDocument("mermaid"), activePiGlobalTheme).render(100).join("\n"),
 	);
 	assert.ok(mermaidPlain.includes("mermaid@12.2.0"), "includes official Mermaid 12.2.0 baseline version");
-	assert.ok(mermaidPlain.includes("grok-mermaid@0.2.3"), "includes bundled grok-mermaid 0.2.3 version");
+	assert.ok(mermaidPlain.includes("lovely-mermaid@0.3.3"), "includes bundled lovely-mermaid 0.3.3 version");
+	assert.ok(mermaidPlain.includes("pi-coding-agent@1.5.2"), "includes Pi 1.5.2 version");
 	assert.ok(mermaidPlain.includes("subroutine") && mermaidPlain.includes("cylinder"), "renders flowchart box art");
 	assert.ok(
 		mermaidPlain.includes("1. solid open") && mermaidPlain.includes("8. dashed async"),
 		"renders sequenceDiagram box art",
 	);
 	assert.ok(
-		mermaidPlain.includes("●") && mermaidPlain.includes("Waiting for request"),
+		mermaidPlain.includes("●") && mermaidPlain.includes("Idle State Waiting") && mermaidPlain.includes("request"),
 		"renders stateDiagram-v2 box art",
 	);
 	assert.ok(
@@ -905,20 +984,36 @@ test("4. BuiltInDocumentComponent renders every section within width bounds, for
 		"renders classDiagram box art",
 	);
 	assert.ok(
-		mermaidPlain.includes("1 places 0..*") && mermaidPlain.includes("uuid id PK"),
+		mermaidPlain.includes("places") && mermaidPlain.includes("1..*") && mermaidPlain.includes("uuid id PK"),
 		"renders erDiagram box art",
 	);
 	assert.ok(
 		mermaidPlain.includes("Mermaid diagram not rendered:"),
 		"includes syntax warning fallback diagnostic",
 	);
+	assert.ok(
+		mermaidPlain.includes("55%") && mermaidPlain.includes("(45)") && !mermaidPlain.includes('"TypeScript" : 55'),
+		"renders pie box art",
+	);
+	assert.ok(
+		mermaidPlain.includes("├── Prism") && mermaidPlain.includes("└── Tools"),
+		"renders mindmap tree",
+	);
+	assert.ok(
+		mermaidPlain.includes("2025 ─ v1.3.0") && mermaidPlain.includes("Current"),
+		"renders timeline events",
+	);
+	assert.ok(
+		mermaidPlain.includes("feat-b (develop)") && mermaidPlain.includes("[v1.1] ⇐ develop"),
+		"renders gitGraph lanes",
+	);
+	assert.ok(
+		mermaidPlain.includes("Frontmatter Title") && mermaidPlain.includes("Database"),
+		"renders flowchart frontmatter title and v11 shape syntax",
+	);
 	for (const unsupportedHeader of [
-		"pie title Pets",
 		"gantt",
 		"xychart-beta",
-		"gitGraph",
-		"mindmap",
-		"timeline",
 		"journey",
 		"quadrantChart",
 		"sankey-beta",

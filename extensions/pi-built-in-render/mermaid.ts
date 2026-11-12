@@ -1,11 +1,13 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { getPackageDir, type Theme as PiTheme } from "@earendil-works/pi-coding-agent";
-import { Marked } from "@earendil-works/pi-tui";
+import { getPackageDir, type Theme as PiTheme, type ThemeColor } from "@earendil-works/pi-coding-agent";
+import { getCapabilities, Marked } from "@earendil-works/pi-tui";
 
+type Role = "border" | "text" | "edge" | "edgeLabel" | "title" | "none";
 type Span = {
-	readonly cls: "border" | "text" | "edge" | "edgeLabel" | "title" | "none";
+	readonly role: Role;
 	readonly text: string;
+	readonly href?: string;
 };
 type MermaidArt = {
 	readonly width: number;
@@ -14,31 +16,34 @@ type MermaidArt = {
 	readonly styled: readonly (readonly Span[])[];
 };
 
-const { render }: { render: (source: string) => MermaidArt | null } =
-	createRequire(join(getPackageDir(), "package.json"))("grok-mermaid");
+const { render, toAnsi }: {
+	render: (source: string) => MermaidArt | null;
+	toAnsi: (art: MermaidArt, theme: Partial<Record<Role, string>>) => string[];
+} = createRequire(join(getPackageDir(), "package.json"))("lovely-mermaid");
 const parser = new Marked();
 
 export function diagramCodeSpan(row: string): string {
-	const content = row || "\u00a0";
+	const content = row || " ";
 	const longestRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0].length));
 	const delimiter = "`".repeat(longestRun + 1);
 	const padding = content.startsWith("`") || content.endsWith("`") ? " " : "";
 	return `${delimiter}${padding}${content}${padding}${delimiter}`;
 }
 
-function styleSpan(span: Span, theme: PiTheme): string {
-	switch (span.cls) {
-		case "border": return theme.fg("borderMuted", span.text);
-		case "text": return theme.fg("text", span.text);
-		case "edge": return theme.fg("accent", span.text);
-		case "edgeLabel": return theme.fg("muted", span.text);
-		case "title": return theme.fg("accent", theme.bold(span.text));
-		case "none": return span.text;
-		default: {
-			const _exhaustive: never = span.cls;
-			return _exhaustive;
-		}
-	}
+function themedRows(art: MermaidArt, theme: PiTheme): string[] {
+	const sgr = (color: ThemeColor) => theme.getFgAnsi(color).slice(2, -1);
+	const linkLabels = getCapabilities().hyperlinks;
+	// Stock Pi wraps only label text in an OSC 8 link, never the box around it.
+	const styled = art.styled.map((row) =>
+		row.map(({ href, ...span }) => (linkLabels && span.role === "text" && href !== undefined ? { ...span, href } : span)),
+	);
+	return toAnsi({ ...art, styled }, {
+		border: sgr("borderMuted"),
+		text: sgr("text"),
+		edge: sgr("accent"),
+		edgeLabel: sgr("text"),
+		title: `1;${sgr("accent")}`,
+	});
 }
 
 export function transformBuiltInMermaid(markdown: string, availableWidth: number, piTheme?: PiTheme): string {
@@ -54,9 +59,7 @@ export function transformBuiltInMermaid(markdown: string, availableWidth: number
 			const styledWarning = piTheme ? piTheme.fg("warning", warning) : warning;
 			return `${token.raw}\n${diagramCodeSpan(styledWarning)}  \n`;
 		}
-		const rows = piTheme
-			? art.styled.map((row) => row.map((span) => styleSpan(span, piTheme)).join(""))
-			: art.plain;
+		const rows = piTheme ? themedRows(art, piTheme) : art.plain;
 		return `${rows.map(diagramCodeSpan).join("  \n")}\n`;
 	}).join("");
 }
