@@ -139,7 +139,6 @@ function createDualHarness(initialPrismConfig?: Record<string, unknown>) {
 		registerCommand: (name: string, def: any) => {
 			commands.set(name, def);
 		},
-		registerShortcut: () => {},
 		registerMessageRenderer: (customType: string, renderer: any) => {
 			messageRenderers.set(customType, renderer);
 		},

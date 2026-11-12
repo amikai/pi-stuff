@@ -28,7 +28,6 @@ Code-shaped prose stays as written: f(*args, **kwargs), a link with parentheses 
 | \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
 | \`/prism checkhealth\` | This screen |
 | \`/prism checkhealth-rtl\` | Hebrew right-to-left showcase |
-| \`/prism paste\` | Paste the clipboard picture of the Mac you sit at into the editor, inside Rex when its app runs on another machine |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 
@@ -416,7 +415,6 @@ export const helpText = (): string => `
 | \`/prism setup\` | Pick how tables, tasks, headings, copy buttons, prompts, times and pie charts look, from drawn samples |
 | \`/prism checkhealth\` | Full showcase, every element and diagram, plus a section in your language (Korean so far, or \`checkhealth ko\`) |
 | \`/prism checkhealth-rtl\` | Hebrew right-to-left showcase |
-| \`/prism paste\` | Paste the clipboard picture of the Mac you sit at into the editor, inside Rex when its app runs on another machine |
 
 Colors follow Pi's active theme (\`/settings\` → \`Theme\`).
 

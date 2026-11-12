@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,8 +12,6 @@ export type Rex = {
 	openPane(file: string): Promise<string | null>;
 	/** Sends the PNG to the Rex app as marked text parts for rex-image-clipboard.lua. Resolves null once every part is written, else a short reason. */
 	sendPng(png: Uint8Array): Promise<string | null>;
-	/** Asks rex-image-clipboard.lua for the picture on the clipboard of the machine the Rex app runs on. Resolves the PNG file it wrote on this machine, or a short reason. */
-	fetchPng(): Promise<{ file: string } | { reason: string }>;
 };
 
 type SystemRexOptions = {
@@ -25,10 +22,6 @@ type SystemRexOptions = {
 	viewerScript?: string;
 	write?: (text: string) => void;
 	partGapMs?: number;
-	/** The directory rex-image-clipboard.lua writes the fetched picture to. */
-	pasteDir?: string;
-	pollMs?: number;
-	fetchTimeoutMs?: number;
 };
 
 const TIMEOUT_MS = 3000;
@@ -42,20 +35,6 @@ const PART_CHARS = 45_000;
 // Rex keeps about one copy per 100 ms: eight copies 80 ms apart lost one, and 150 ms apart all arrived.
 const PART_GAP_MS = 200;
 const MAX_PNG_BYTES = 1024 * 1024;
-
-/** The message rex-image-clipboard.lua answers, followed by a space and a number of digits. */
-export const PASTE_REQUEST = "clipboard image wanted";
-/** The script writes <prefix><number>.png, or <prefix><number>.err holding a reason, in the paste directory. */
-export const PASTE_PREFIX = "prism-paste-";
-const PASTE_DIR = "/tmp";
-const PASTE_POLL_MS = 100;
-// Longer than the 35 s the script waits for its own upload, so a slow upload is not cut short here.
-const PASTE_TIMEOUT_MS = 40_000;
-const NO_ANSWER = "no answer from rex-image-clipboard.lua on the Mac you sit at";
-const NO_REASON = "rex-image-clipboard.lua left no reason";
-
-const statusReport = (state: "working" | "idle", message?: string) =>
-	`\x1b]7501;state=${state}:app=prism${message === undefined ? "" : `:msg=${Buffer.from(message).toString("base64")}`}\x1b\\`;
 
 type Json = Record<string, unknown>;
 
@@ -76,9 +55,6 @@ export function systemRex(options: SystemRexOptions = {}): Rex {
 		viewerScript = join(dirname(fileURLToPath(import.meta.url)), "pane-viewer.mjs"),
 		write = (text) => void process.stdout.write(text),
 		partGapMs = PART_GAP_MS,
-		pasteDir = PASTE_DIR,
-		pollMs = PASTE_POLL_MS,
-		fetchTimeoutMs = PASTE_TIMEOUT_MS,
 	} = options;
 	const session = env.REX_SESSION;
 	const block = env.REX_BLOCK;
@@ -135,33 +111,6 @@ export function systemRex(options: SystemRexOptions = {}): Rex {
 	// The listener restarts whenever the id changes, so parts of two pictures must never interleave.
 	let sending: Promise<unknown> = Promise.resolve();
 
-	const askForPng = async (): Promise<{ file: string } | { reason: string }> => {
-		const number = `${Date.now()}${String(Math.floor(Math.random() * 1000)).padStart(3, "0")}`;
-		const file = join(pasteDir, `${PASTE_PREFIX}${number}.png`);
-		const failure = join(pasteDir, `${PASTE_PREFIX}${number}.err`);
-		const deadline = Date.now() + fetchTimeoutMs;
-		try {
-			write(statusReport("working", `${PASTE_REQUEST} ${number}`));
-			for (;;) {
-				if (existsSync(file)) return { file };
-				if (existsSync(failure)) {
-					try {
-						return { reason: readFileSync(failure, "utf8").trim() || NO_REASON };
-					} catch {
-						return { reason: NO_REASON };
-					} finally {
-						rmSync(failure, { force: true });
-					}
-				}
-				if (Date.now() >= deadline) return { reason: NO_ANSWER };
-				await new Promise((resolve) => setTimeout(resolve, pollMs));
-			}
-		} finally {
-			write(statusReport("idle"));
-		}
-	};
-	let fetching: Promise<{ file: string } | { reason: string }> | null = null;
-
 	return {
 		viewer: async () => {
 			if (!session || !block) return "none";
@@ -200,10 +149,6 @@ export function systemRex(options: SystemRexOptions = {}): Rex {
 			const sent = sending.then(() => sendParts(png));
 			sending = sent;
 			return sent;
-		},
-		fetchPng: () => {
-			fetching ??= askForPng().finally(() => (fetching = null));
-			return fetching;
 		},
 	};
 }
