@@ -24,6 +24,14 @@ const FAILED = "rex failed";
 
 type Json = Record<string, unknown>;
 
+/**
+ * Inside Rex the app that holds the user's clipboard may run on another machine, and pi sends a copy
+ * through the terminal (OSC 52) only when told to. An explicit PI_CLIPBOARD_OSC52, "0" included, wins.
+ */
+export function sendCopiesThroughRex(env: NodeJS.ProcessEnv = process.env): void {
+	if (env.REX_SESSION && env.PI_CLIPBOARD_OSC52 === undefined) env.PI_CLIPBOARD_OSC52 = "1";
+}
+
 export function systemRex(options: SystemRexOptions = {}): Rex {
 	const {
 		env = process.env,

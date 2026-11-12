@@ -93,6 +93,7 @@ import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./c
 import { DEFAULT_THEME, isColor, resolveStyle, TOKENS, type Style, type Theme } from "./core/theme.ts";
 import { clearHover, watchPointerLeave } from "../lib/pointer-hover.ts";
 import { systemDesktop, type Desktop } from "./desktop.ts";
+import { sendCopiesThroughRex } from "./rex.ts";
 import { PrismComponent, renderNode, type ImageStore } from "./renderer.ts";
 
 const CUSTOM_MESSAGE_TYPE = "prism-output";
@@ -624,6 +625,7 @@ export default function prismExtension(
 	desktop: Desktop = systemDesktop({ pictures: detectHtmlClipboardBackend() === "macos" }),
 ) {
 	ensureMessagePrototypesPatched();
+	sendCopiesThroughRex();
 
 	let options = loadOptions();
 	let style = resolveStyle(options);
@@ -726,18 +728,21 @@ export default function prismExtension(
 				label,
 				onPress: () => {
 					const content = typeof text === "function" ? text() : text;
-					if (rich && style.htmlCopy) {
-						const failure = runHelperSync(style.htmlCopy, richCommand(style, style.htmlCopy, content, rich));
-						if (failure === null) {
-							toast(rich === "png" ? "Copied as image" : "Copied formatted table", "info");
-							return;
-						}
-						try {
-							copyToClipboard(content);
-							toast(`Copied as plain text (${failure})`, "warning");
-						} catch {
-							toast("Copy failed", "error");
-						}
+					const backend = style.htmlCopy;
+					if (rich && backend) {
+						void desktop.pasteboard().then((away) => {
+							const failure = away ?? runHelperSync(backend, richCommand(style, backend, content, rich));
+							if (failure === null) {
+								toast(rich === "png" ? "Copied as image" : "Copied formatted table", "info");
+								return;
+							}
+							try {
+								copyToClipboard(content);
+								toast(`Copied as plain text (${failure})`, "warning");
+							} catch {
+								toast("Copy failed", "error");
+							}
+						});
 						return;
 					}
 					try {
@@ -761,9 +766,10 @@ export default function prismExtension(
 					variant: "primary",
 					label: "⧉ image",
 					onPress: () => {
-						const failure = desktop.copyPng(bytes());
-						if (failure === null) toast("Copied image", "info");
-						else toast(`Image copy failed (${failure})`, "error");
+						void desktop.copyPng(bytes()).then((failure) => {
+							if (failure === null) toast("Copied image", "info");
+							else toast(`Image copy failed (${failure})`, "error");
+						});
 					},
 				}),
 				h(EL.Button, {
