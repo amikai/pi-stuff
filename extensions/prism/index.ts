@@ -137,7 +137,6 @@ const DEFAULT_OPTIONS: PrismOptions = {
 	latex: false,
 	plantuml: true,
 	pele: true,
-	rexImageCopy: true,
 };
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
@@ -767,7 +766,7 @@ export default function prismExtension(
 					variant: "primary",
 					label: "⧉ image",
 					onPress: () => {
-						void desktop.copyPng(bytes(), { rexHelper: style.rexImageCopy }).then((failure) => {
+						void desktop.copyPng(bytes()).then((failure) => {
 							if (failure === null) toast("Copied image", "info");
 							else toast(`Image copy failed (${failure})`, "error");
 						});
