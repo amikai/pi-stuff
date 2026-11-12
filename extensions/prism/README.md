@@ -92,13 +92,13 @@ Limits:
 |---|---|---|---|
 | `rexPasteKey` | `string` | `"ctrl+shift+v"` | The key that pastes the picture on the clipboard of the Mac you sit at. It is registered only when `REX_SESSION` is set, and not at all when the value is `""`. |
 
-pi's own paste key (`ctrl+v`) reads the clipboard of the machine pi runs on, Rex pastes only text, and dragging a file into the Rex app does nothing for a server on another machine. When the Rex app runs on another machine, press `rexPasteKey` or run `/prism paste` instead. `prism` shows `Asking the Mac you sit at for its clipboard picture`, asks [`rex-image-clipboard.lua`](rex-image-clipboard.lua) on that Mac for the picture, and then puts the path of the PNG, `/tmp/prism-paste-<number>.png` on the machine pi runs on, into the editor and shows `Pasted image`, as pi's own paste key does. When there is no picture, or the script does not answer, it shows `Image paste failed (<reason>)` and leaves the editor alone. When the Rex app runs on the machine pi runs on, the key and the command fetch nothing and give the reason `the Rex app runs on this machine, use pi's paste key`.
+pi's own paste key (`ctrl+v`) reads the clipboard of the machine pi runs on, Rex pastes only text, and dragging a file into the Rex app does nothing for a server on another machine. When the Rex app runs on another machine, press `rexPasteKey` or run `/prism paste` instead. `prism` shows `Asking the Mac you sit at for its clipboard picture`, asks [`rex-image-clipboard.lua`](rex-image-clipboard.lua) on that Mac for the picture, and then puts the path of the PNG, `/tmp/prism-paste-<number>.png` on the machine pi runs on, into the editor and shows `Pasted image`, as pi's own paste key does. When there is no picture, or the script does not answer, it shows `Image paste failed (<reason>)` and leaves the editor alone. When the Rex app runs on the machine pi runs on, the key and the command fetch nothing and give the reason `this machine's clipboard is the one to paste from, use pi's paste key`.
 
 The picture can be a screenshot taken to the clipboard, an image copied in an app, or an image file copied in Finder.
 
 Limits:
 
-- The wait ends after 30 s with the reason `no answer from rex-image-clipboard.lua on the Mac you sit at`. This is also what shows when the script does not run on that Mac.
+- The wait ends after 40 s with the reason `no answer from rex-image-clipboard.lua on the Mac you sit at`. This is also what shows when the script does not run on that Mac.
 - A tab named `prism paste` shows in the Rex server's window during the upload. A 70 KB picture took a few seconds over a VPN, and a 2.2 MB picture under a second on the same machine.
 - A second press while a request is waiting joins that request and sends no new one.
 - The PNG files stay in `/tmp`. `prism` does not delete them.

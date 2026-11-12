@@ -45,7 +45,7 @@ type SystemDesktopOptions = {
 };
 
 const REX_AWAY = "the Rex app is on another machine";
-const REX_HERE = "the Rex app runs on this machine, use pi's paste key";
+const REX_HERE = "this machine's clipboard is the one to paste from, use pi's paste key";
 const BUILDING = "Building the Quick Look helper (first use, about 10 s)";
 
 export function systemDesktop(options: SystemDesktopOptions): Desktop {

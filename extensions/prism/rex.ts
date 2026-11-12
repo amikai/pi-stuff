@@ -49,7 +49,8 @@ export const PASTE_REQUEST = "clipboard image wanted";
 export const PASTE_PREFIX = "prism-paste-";
 const PASTE_DIR = "/tmp";
 const PASTE_POLL_MS = 100;
-const PASTE_TIMEOUT_MS = 30_000;
+// Longer than the 35 s the script waits for its own upload, so a slow upload is not cut short here.
+const PASTE_TIMEOUT_MS = 40_000;
 const NO_ANSWER = "no answer from rex-image-clipboard.lua on the Mac you sit at";
 const NO_REASON = "rex-image-clipboard.lua left no reason";
 

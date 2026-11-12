@@ -3110,7 +3110,7 @@ test("94. the system desktop fetches the picture through Rex only when the Rex a
 	assert.deepEqual(await desktopFor("elsewhere").pastePng(), answer, "what fetchPng resolves comes back");
 	assert.deepEqual(fetched, ["elsewhere"]);
 	for (const viewer of ["here", "none"] as const) {
-		assert.deepEqual(await desktopFor(viewer).pastePng(), { reason: "the Rex app runs on this machine, use pi's paste key" }, viewer);
+		assert.deepEqual(await desktopFor(viewer).pastePng(), { reason: "this machine's clipboard is the one to paste from, use pi's paste key" }, viewer);
 	}
 	assert.deepEqual(fetched, ["elsewhere"], "here and none never ask Rex");
 });
