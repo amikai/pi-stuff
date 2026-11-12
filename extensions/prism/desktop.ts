@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { pngCopyCommand } from "./core/clipboard.ts";
+import { type Rex, systemRex } from "./rex.ts";
 
 type Report = (text: string, level: "info" | "warning" | "error") => void;
 
@@ -15,8 +16,8 @@ export type Desktop = {
 	/** Puts the PNG on the pasteboard. Returns null on success, else a short reason. Blocks up to 5 s. */
 	copyPng(png: Uint8Array): string | null;
 	/**
-	 * Shows the PNG in Quick Look and returns at once. Every call opens its own panel.
-	 * Notices and later failures go to report.
+	 * Shows the PNG and returns at once. Every call opens its own panel: a Rex floating pane when the
+	 * Rex app that owns pi's pane runs on another machine, else Quick Look. Notices and later failures go to report.
 	 */
 	previewPng(png: Uint8Array, report: Report): void;
 };
@@ -29,6 +30,7 @@ type SystemDesktopOptions = {
 	helperSource?: string;
 	helperDir?: string;
 	dir?: string;
+	rex?: Rex;
 };
 
 const BUILDING = "Building the Quick Look helper (first use, about 10 s)";
@@ -42,6 +44,7 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 		helperSource = join(dirname(fileURLToPath(import.meta.url)), "quicklook.swift"),
 		helperDir = join(getAgentDir(), "prism"),
 		dir = join(tmpdir(), "prism-preview"),
+		rex = systemRex(),
 	} = options;
 	let helper: Promise<string | null> | null = null;
 	let building = false;
@@ -98,8 +101,13 @@ export function systemDesktop(options: SystemDesktopOptions): Desktop {
 				report("Cannot write preview image", "error");
 				return;
 			}
-			quickLookHelper(report)
-				.then((bin) => open(file, bin, report))
+			rex
+				.viewer()
+				.then(async (viewer) => {
+					if (viewer !== "elsewhere") return open(file, await quickLookHelper(report), report);
+					const reason = await rex.openPane(file);
+					if (reason !== null) report(`Rex preview failed (${reason})`, "error");
+				})
 				.catch(() => report("Quick Look is unavailable", "error"));
 		},
 	};
