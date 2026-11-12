@@ -81,6 +81,7 @@ export type Style = {
 	plantuml: boolean;
 	pele: boolean;
 	rexImageCopy: boolean;
+	rexPasteKey: string;
 	overSsh: boolean;
 	cwd: string;
 	home: string;
@@ -128,6 +129,7 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		plantuml: options.plantuml !== false,
 		pele: options.pele !== false,
 		rexImageCopy: options.rexImageCopy !== false,
+		rexPasteKey: typeof options.rexPasteKey === "string" ? options.rexPasteKey.trim() : "ctrl+shift+v",
 		overSsh: false,
 		cwd: "",
 		home: "",

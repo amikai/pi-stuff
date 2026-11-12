@@ -102,6 +102,8 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 	const entryRenderers = new Map<string, (entry: any, opts: any, theme: any) => any>();
 	const toolRenderers: ((toolName: string, next: () => any) => any)[] = [];
 	const markdownTransformers: ((md: string, ctx: any) => string)[] = [];
+	const shortcuts = new Map<string, { description?: string; handler: (ctx: any) => Promise<void> }>();
+	const pastedToEditor: string[] = [];
 	const notifications: { text: string; level: string }[] = [];
 	const sentCustomMessages: any[] = [];
 	const appendedEntries: { customType: string; data: any }[] = [];
@@ -141,6 +143,9 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 				activePiTheme = name;
 				return { success: true };
 			},
+			pasteToEditor: (text: string) => {
+				pastedToEditor.push(text);
+			},
 			setWorkingIndicator: () => {},
 			setWidget: (_key: string, factory: unknown) => {
 				if (typeof factory === "function") factory(screenTui);
@@ -164,6 +169,9 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 		},
 		registerCommand: (name: string, def: any) => {
 			commands.set(name, def);
+		},
+		registerShortcut: (key: string, def: any) => {
+			shortcuts.set(key, def);
 		},
 		registerMessageRenderer: (customType: string, renderer: any) => {
 			messageRenderers.set(customType, renderer);
@@ -206,6 +214,8 @@ function createHarness(initialConfig?: Record<string, unknown>, recording = reco
 		sm,
 		emit,
 		commands,
+		shortcuts,
+		pastedToEditor,
 		messageRenderers,
 		entryRenderers,
 		toolRenderers,
@@ -390,8 +400,8 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
 	assert.ok(rtlPlain.includes("עברית מימין לשמאל"), "checkhealth-rtl renders the Hebrew showcase");
 	assert.deepEqual(
 		cmd.getArgumentCompletions("").map((item: { value: string }) => item.value),
-		["setup", "checkhealth", "checkhealth-rtl"],
-		"completions list the renamed subcommands",
+		["setup", "checkhealth", "checkhealth-rtl", "paste"],
+		"completions list every subcommand",
 	);
 
 	await cmd.handler("", h.ctx);
@@ -3110,4 +3120,68 @@ test("95. rex-image-clipboard.lua answers the request and writes the files that 
 	const lua = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/rex-image-clipboard.lua"), "utf8");
 	assert.ok(lua.includes(PASTE_REQUEST), `the script names "${PASTE_REQUEST}"`);
 	assert.ok(lua.includes(`/tmp/${PASTE_PREFIX}`), `the script writes ${PASTE_PREFIX}<number> in /tmp`);
+});
+
+const inRex = (rex: string | undefined, test: () => Promise<void>) => async () => {
+	const saved = { rex: process.env.REX_SESSION, osc: process.env.PI_CLIPBOARD_OSC52 };
+	if (rex === undefined) delete process.env.REX_SESSION;
+	else process.env.REX_SESSION = rex;
+	try {
+		await test();
+	} finally {
+		for (const [name, value] of [["REX_SESSION", saved.rex], ["PI_CLIPBOARD_OSC52", saved.osc]] as const) {
+			if (value === undefined) delete process.env[name];
+			else process.env[name] = value;
+		}
+	}
+};
+
+test("96. /prism paste puts the fetched file in the editor and toasts Pasted image", async () => {
+	const h = createHarness(undefined, recordingDesktop(true, null, { file: "/tmp/prism-paste-1.png" }));
+	cleanupFn = h.cleanup;
+	await h.commands.get("prism")!.handler("paste", h.ctx);
+
+	assert.deepEqual(h.pastedToEditor, ["/tmp/prism-paste-1.png"]);
+	assert.deepEqual(h.notifications, [
+		{ text: "Asking the Mac you sit at for its clipboard picture", level: "info" },
+		{ text: "Pasted image", level: "info" },
+	]);
+	assert.deepEqual(h.commands.get("prism")!.getArgumentCompletions!("pa"), [{ value: "paste", label: "paste" }], "paste is completed");
+});
+
+test("97. /prism paste toasts the reason as an error and leaves the editor alone", async () => {
+	const h = createHarness(undefined, recordingDesktop(true, null, { reason: "no image on the clipboard of the Mac you sit at" }));
+	cleanupFn = h.cleanup;
+	await h.commands.get("prism")!.handler("paste", h.ctx);
+
+	assert.deepEqual(h.pastedToEditor, []);
+	assert.deepEqual(h.notifications.at(-1), { text: "Image paste failed (no image on the clipboard of the Mac you sit at)", level: "error" });
+});
+
+test("98. inside Rex the shortcut is registered under rexPasteKey, defaults to ctrl+shift+v, and does what /prism paste does", inRex("s1", async () => {
+	const recording = recordingDesktop(true, null, { file: "/tmp/prism-paste-2.png" });
+	const byDefault = createHarness(undefined, recording);
+	assert.deepEqual([...byDefault.shortcuts.keys()], ["ctrl+shift+v"]);
+	assert.match(byDefault.shortcuts.get("ctrl+shift+v")!.description ?? "", /picture/);
+	await byDefault.shortcuts.get("ctrl+shift+v")!.handler(byDefault.ctx);
+	assert.deepEqual(byDefault.pastedToEditor, ["/tmp/prism-paste-2.png"]);
+	assert.equal(byDefault.notifications.at(-1)?.text, "Pasted image");
+	byDefault.cleanup();
+
+	const custom = createHarness({ rexPasteKey: "ctrl+alt+v" });
+	cleanupFn = custom.cleanup;
+	assert.deepEqual([...custom.shortcuts.keys()], ["ctrl+alt+v"]);
+}));
+
+test("99. no shortcut is registered outside Rex or with rexPasteKey set to an empty string", async () => {
+	await inRex(undefined, async () => {
+		const outside = createHarness();
+		cleanupFn = outside.cleanup;
+		assert.equal(outside.shortcuts.size, 0, "outside Rex");
+	})();
+	await inRex("s1", async () => {
+		const off = createHarness({ rexPasteKey: "" });
+		cleanupFn = off.cleanup;
+		assert.equal(off.shortcuts.size, 0, "with an empty key");
+	})();
 });
