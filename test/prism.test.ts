@@ -1236,7 +1236,8 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	writeFileSync(helperSource, "// helper v1\n");
 	const helperDir = join(dir, "helpers");
 	const previews = join(dir, "previews");
-	const options = { pictures: true, osascript, qlmanage, swiftc: fakeSwiftc("swiftc", fakePanel("helper", "$1"), 1), helperSource, helperDir, dir: previews };
+	const rex = { viewer: async () => "none" as const, openPane: async () => "the real rex must not run in this test" };
+	const options = { pictures: true, osascript, qlmanage, swiftc: fakeSwiftc("swiftc", fakePanel("helper", "$1"), 1), helperSource, helperDir, dir: previews, rex };
 	const desktop = systemDesktop(options);
 	const first = pngOf(320, 280);
 	const second = pngOf(200, 100);
@@ -1253,6 +1254,7 @@ test("25. the system desktop sends the PNG to osascript on stdin, builds the Qui
 	const before = performance.now();
 	desktop.previewPng(first, session.report);
 	assert.ok(performance.now() - before < 500, "previewPng returns while the 1 s helper build runs");
+	await until(() => session.reports.length === 1);
 	assert.deepEqual(session.reports, [[building, "info"]], "the first preview says the helper is building");
 	await until(() => opens().length === 1);
 	assert.equal(builds("swiftc").length, 1, "the first preview runs swiftc once");
@@ -2477,4 +2479,297 @@ test("68. the markdown transformer keeps the text pie, since it rewrites text an
 
 	const transformed = h.markdownTransformers[0]!(PIE, { messageType: "assistant", isStreaming: false, availableWidth: 100 });
 	assert.ok(hasTextPie(transformed) && transformed.includes("Dogs"), transformed);
+});
+
+const stubRex = (viewer: "none" | "here" | "elsewhere", reason: string | null = null) => {
+	const panes: string[] = [];
+	return {
+		panes,
+		viewer: async () => viewer,
+		openPane: async (file: string) => {
+			panes.push(file);
+			return reason;
+		},
+	};
+};
+
+test("69. a preview opens a Rex pane when the Rex app is on another machine, and Quick Look when it is here or Rex is absent", async () => {
+	const { systemDesktop } = await import("../extensions/prism/desktop.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-rex-route-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const log = join(dir, "tools.log");
+	const tool = (name: string) => {
+		const file = join(dir, name);
+		writeFileSync(file, `#!/bin/sh\necho "${name} $*" >> "${log}"\n`, { mode: 0o755 });
+		return file;
+	};
+	const calls = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+	const reports = () => {
+		const seen: [string, string][] = [];
+		return { seen, report: (text: string, level: string) => void seen.push([text, level]) };
+	};
+	const qlmanage = tool("qlmanage");
+	const swiftc = tool("swiftc");
+	const helperDir = join(dir, "helpers");
+	const open = (rex: ReturnType<typeof stubRex>) =>
+		systemDesktop({ pictures: true, qlmanage, swiftc, helperDir, dir: join(dir, "previews"), rex });
+	const png = pngOf(64, 48);
+
+	const remote = stubRex("elsewhere");
+	const remoteReports = reports();
+	const before = performance.now();
+	open(remote).previewPng(png, remoteReports.report);
+	assert.ok(performance.now() - before < 500, "previewPng returns before the pane opens");
+	await until(() => remote.panes.length === 1);
+	assert.match(basename(remote.panes[0]!), /^diagram-[0-9a-f]{12}\.png$/, "the pane gets the preview file");
+	assert.deepEqual(readFileSync(remote.panes[0]!), png, "the pane's file holds the PNG");
+	await sleep(200);
+	assert.deepEqual(calls(), [], "a pane preview starts neither swiftc nor qlmanage nor the helper");
+	assert.equal(existsSync(helperDir), false, "a pane preview builds no Quick Look helper");
+	assert.deepEqual(remoteReports.seen, [], "a pane that opens reports nothing");
+
+	const refused = reports();
+	open(stubRex("elsewhere", "layer refused")).previewPng(png, refused.report);
+	await until(() => refused.seen.length === 1);
+	assert.deepEqual(refused.seen, [["Rex preview failed (layer refused)", "error"]], "a failed pane reports its reason as an error");
+	await sleep(200);
+	assert.deepEqual(calls(), [], "a failed pane does not fall back to Quick Look");
+
+	let opened = 0;
+	for (const viewer of ["here", "none"] as const) {
+		const local = stubRex(viewer);
+		open(local).previewPng(png, reports().report);
+		await until(() => calls().filter((line) => line.startsWith("qlmanage ")).length === opened + 1);
+		opened++;
+		assert.deepEqual(local.panes, [], `${viewer}: no Rex pane opens`);
+		assert.ok(calls().at(-1)!.startsWith("qlmanage -p "), `${viewer}: Quick Look opens the file`);
+	}
+});
+
+test("70. the Rex viewer is none without a Rex block or CLI, elsewhere when the owner is unknown or arrives through a proxy, and here for a local app", async () => {
+	const { systemRex } = await import("../extensions/prism/rex.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-rex-viewer-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const log = join(dir, "calls.log");
+	const calls = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+	const reset = () => rmSync(log, { force: true });
+	const answer = (reply: string | number) => (typeof reply === "string" ? `printf '%s' '${reply}'` : `echo "no such thing" >&2\nexit ${reply}`);
+	const fakeRex = (name: string, replies: { block: string | number; client?: string | number }) => {
+		const file = join(dir, name);
+		const script = [
+			`echo "rex $*" >> "${log}"`,
+			`case "$1 $2" in`,
+			`"block inspect") ${answer(replies.block)} ;;`,
+			`"client inspect") ${answer(replies.client ?? 9)} ;;`,
+			`esac`,
+		];
+		writeFileSync(file, `#!/bin/sh\n${script.join("\n")}\n`, { mode: 0o755 });
+		return file;
+	};
+	const fakePs = (name: string, comm: string | number) => {
+		const file = join(dir, name);
+		writeFileSync(file, `#!/bin/sh\necho "ps $*" >> "${log}"\n${answer(comm)}\n`, { mode: 0o755 });
+		return file;
+	};
+	const env = { REX_SESSION: "session:s1", REX_BLOCK: "block:b1" };
+	const block = (owner?: unknown) => JSON.stringify({ block: { block_id: "block:b1", window_id: "window:w1", ...(owner === undefined ? {} : { owner }) } });
+	const client = (principal: object) => JSON.stringify({ client: { principal } });
+	const peer = { kind: "peer", transport: "unix", pid: 93101 };
+	const viewer = (rex: string, ps = fakePs("ps-unused", 1), withEnv: NodeJS.ProcessEnv = env) => systemRex({ env: withEnv, rex, ps }).viewer();
+
+	const known = fakeRex("rex-known", { block: block("client:c1") });
+	assert.equal(await viewer(known, undefined, { REX_BLOCK: "block:b1" }), "none", "no REX_SESSION is none");
+	assert.equal(await viewer(known, undefined, { REX_SESSION: "session:s1" }), "none", "no REX_BLOCK is none");
+	assert.deepEqual(calls(), [], "outside a Rex block no CLI runs");
+
+	assert.equal(await viewer(join(dir, "absent-rex")), "none", "a missing rex CLI is none");
+	assert.equal(await viewer(fakeRex("rex-gone", { block: 3 })), "none", "a block that does not exist (exit 3) is none");
+	assert.equal(await viewer(fakeRex("rex-junk", { block: "not json" })), "none", "output that is not JSON is none");
+
+	reset();
+	assert.equal(await viewer(fakeRex("rex-orphan", { block: block() })), "elsewhere", "a block with no owner is elsewhere");
+	assert.equal(await viewer(fakeRex("rex-number", { block: block(7) })), "elsewhere", "an owner that is not a string is elsewhere");
+	assert.deepEqual(calls().filter((line) => line.startsWith("rex client")), [], "an unknown owner is never inspected");
+
+	assert.equal(await viewer(fakeRex("rex-client-gone", { block: block("client:c1"), client: 4 })), "elsewhere", "a client that cannot be inspected is elsewhere");
+	for (const [label, principal] of [
+		["a non-peer principal", { ...peer, kind: "token" }],
+		["a non-unix transport", { ...peer, transport: "tcp" }],
+		["a principal without a pid", { kind: "peer", transport: "unix" }],
+		["a pid that is not a number", { ...peer, pid: "93101" }],
+	] as const) {
+		reset();
+		assert.equal(await viewer(fakeRex("rex-principal", { block: block("client:c1"), client: client(principal) })), "elsewhere", `${label} is elsewhere`);
+		assert.deepEqual(calls().filter((line) => line.startsWith("ps")), [], `${label} never reaches ps`);
+	}
+
+	reset();
+	const owned = fakeRex("rex-owned", { block: block("client:c1"), client: client(peer) });
+	assert.equal(await viewer(owned, fakePs("ps-app", "/Applications/Rex.app/Contents/MacOS/Rex")), "here", "a peer process inside an .app bundle is here");
+	assert.deepEqual(
+		calls(),
+		["rex block inspect -s session:s1 block:b1 --json", "rex client inspect client:c1 --json", "ps -o comm= -p 93101"],
+		"the viewer asks about the block, its owner, then the owner's process",
+	);
+	assert.equal(await viewer(owned, fakePs("ps-proxy", "/opt/homebrew/bin/caddy")), "elsewhere", "a peer process that is a proxy is elsewhere");
+	assert.equal(await viewer(owned, fakePs("ps-fails", 1)), "elsewhere", "a ps that fails is elsewhere");
+});
+
+test("71. openPane gives rex the block's window and a command that runs the viewer on the file, and returns rex's first stderr line on failure", async () => {
+	const { systemRex } = await import("../extensions/prism/rex.ts");
+	const dir = mkdtempSync(join(tmpdir(), "prism-rex-pane-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const args = join(dir, "api.args");
+	const fakeRex = (name: string, apiStatus: number) => {
+		const file = join(dir, name);
+		const script = [
+			`case "$1 $2" in`,
+			`"block inspect") printf '%s' '{"block":{"window_id":"window:w9","owner":"client:c1"}}' ;;`,
+			`"api call") printf '%s\\n' "$@" > "${args}"`,
+			apiStatus === 0 ? `printf '%s' '{"layer_id":"layer:l1","block_ids":["block:b2"],"revision":4}'` : `printf 'layer refused\\nsecond line\\n' >&2\nexit ${apiStatus}`,
+			`;;`,
+			`esac`,
+		];
+		writeFileSync(file, `#!/bin/sh\n${script.join("\n")}\n`, { mode: 0o755 });
+		return file;
+	};
+	const env = { REX_SESSION: "session:s1", REX_BLOCK: "block:b1" };
+	const rex = (name: string, status: number) =>
+		systemRex({ env, rex: fakeRex(name, status), node: "/fake/node", viewerScript: "/fake/pane-viewer.mjs" });
+
+	assert.equal(await rex("rex-ok", 0).openPane("/tmp/p/diagram-1.png"), null, "a layer that opens resolves null");
+	const [api, call, flag, session, method, json] = readFileSync(args, "utf8").split("\n");
+	assert.deepEqual([api, call, flag, session, method], ["api", "call", "-s", "session:s1", "session.new_layer"], "rex is told to make a layer in the session");
+	const layer = JSON.parse(json!);
+	assert.equal(layer.window_id, "window:w9", "the layer goes over the window of pi's block");
+	assert.equal(layer.focus, true, "the pane takes focus");
+	assert.equal(layer.bounds.length, 4, "the pane has bounds");
+	assert.equal(layer.layout.block.flavor, "com.superlogical.terminal.shell", "the pane is a shell block");
+	assert.deepEqual(layer.layout.block.options.command, ["/fake/node", "/fake/pane-viewer.mjs", "/tmp/p/diagram-1.png"], "the pane runs the viewer on the file");
+
+	assert.equal(await rex("rex-refused", 1).openPane("/tmp/p/diagram-1.png"), "layer refused", "a failing rex resolves the first line of its stderr");
+	const absent = join(dir, "absent-rex");
+	assert.equal(await systemRex({ env, rex: absent }).openPane("/tmp/p/diagram-1.png"), `${absent} not found`, "a missing CLI resolves a reason");
+});
+
+test("72. the pane viewer fits the whole picture at zoom 1, zooms around the center, clamps a pan at each edge, and reads input split across chunks", async () => {
+	const { fit, initialModel, pan, zoomBy, decode, keyAction, pngSize, header, MAX_ZOOM } = await import("../extensions/prism/pane-viewer.mjs");
+	const screen = (iw: number, ih: number, cols: number, rows: number, cellW: number, cellH: number) => ({ iw, ih, cols, rows, cellW, cellH });
+	const rect = (view: ReturnType<typeof fit>) => ({ x: view.x, y: view.y, w: view.w, h: view.h, c: view.c, r: view.r, col: view.col });
+
+	assert.deepEqual(pngSize(pngOf(320, 280)), { width: 320, height: 280 }, "the size comes from the IHDR chunk");
+
+	const wide = screen(1000, 500, 100, 41, 10, 20);
+	assert.deepEqual(rect(fit(initialModel(1000, 500), wide)), { x: 0, y: 0, w: 1000, h: 500, c: 100, r: 25, col: 1 }, "a wide pane shows the whole picture at 1 cell per 10 by 20 pixels");
+	const narrow = screen(1000, 500, 50, 33, 10, 25);
+	assert.deepEqual(rect(fit(initialModel(1000, 500), narrow)), { x: 0, y: 0, w: 1000, h: 500, c: 50, r: 10, col: 1 }, "a narrow pane shrinks the whole picture to its width");
+	const tall = screen(500, 1000, 100, 41, 10, 20);
+	assert.deepEqual(rect(fit(initialModel(500, 1000), tall)), { x: 0, y: 0, w: 500, h: 1000, c: 40, r: 40, col: 31 }, "a tall picture is fit to the height and centered across the columns");
+
+	const doubled = zoomBy(initialModel(1000, 500), 2);
+	assert.deepEqual(rect(fit(doubled, wide)), { x: 250, y: 50, w: 500, h: 400, c: 100, r: 40, col: 1 }, "zoom 2 shows half the span, centered");
+	assert.equal(zoomBy(initialModel(1000, 500), 0.5).zoom, 1, "zoom stops at 1");
+	assert.equal(zoomBy(initialModel(1000, 500), 1000).zoom, MAX_ZOOM, "zoom stops at 16");
+
+	assert.equal(fit(pan(doubled, wide, 1, 0), wide).x, 325, "one step right moves 15% of the 500 pixel span");
+	let model = doubled;
+	for (let i = 0; i < 20; i++) model = pan(model, wide, 1, 1);
+	assert.deepEqual([fit(model, wide).x, fit(model, wide).y], [500, 100], "panning right and down stops at the bottom right edge");
+	for (let i = 0; i < 40; i++) model = pan(model, wide, -1, -1);
+	assert.deepEqual([fit(model, wide).x, fit(model, wide).y], [0, 0], "panning left and up stops at the top left edge");
+	assert.deepEqual(rect(fit(pan(initialModel(1000, 500), wide, 1, 1), wide)), rect(fit(initialModel(1000, 500), wide)), "a picture that fits has nowhere to pan");
+	assert.equal(header(2.5, 200).startsWith(" zoom 250%"), true, "the header shows the zoom percent");
+	assert.equal(header(1, 12), " zoom 100%  ", "the header is cut to the pane width");
+
+	const first = decode("\x1b_Gi=7,p=1;O");
+	assert.deepEqual(first, { events: [], rest: "\x1b_Gi=7,p=1;O" }, "half a graphics reply waits");
+	assert.deepEqual(decode(first.rest + "K\x1b\\q"), { events: [{ kind: "reply", text: "i=7,p=1;OK" }, { kind: "key", key: "q" }], rest: "" }, "the rest of the reply completes it, and a key may follow");
+	const wheel = decode("+\x1b[<64;12");
+	assert.deepEqual(wheel, { events: [{ kind: "key", key: "+" }], rest: "\x1b[<64;12" }, "half a wheel report waits");
+	assert.deepEqual(decode(wheel.rest + ";5M\x1b[<65;1;1M").events, [{ kind: "wheel", dir: "up" }, { kind: "wheel", dir: "down" }], "button 64 zooms in and 65 zooms out");
+	const arrow = decode("\x1b");
+	assert.deepEqual(arrow, { events: [], rest: "\x1b" }, "a lone Esc waits for the next chunk or a timeout");
+	assert.deepEqual(decode(arrow.rest + "[D\x1b[A").events, [{ kind: "key", key: "left" }, { kind: "key", key: "up" }], "an arrow split after Esc is still an arrow");
+	assert.deepEqual(decode("\x1b[6;18;9t").events, [{ kind: "cell", h: 18, w: 9 }], "a cell size report gives the height first");
+	assert.deepEqual(decode("\x1b[<0;3;4m\x1b[200~x").events, [{ kind: "key", key: "x" }], "other sequences are dropped");
+
+	assert.deepEqual(["+", "=", "-", "0", "h", "j", "k", "l", "left", "q", "x"].map((key) => keyAction(key)), [
+		{ zoom: 1.25 },
+		{ zoom: 1.25 },
+		{ zoom: 0.8 },
+		{ reset: true },
+		{ pan: [-1, 0] },
+		{ pan: [0, 1] },
+		{ pan: [0, -1] },
+		{ pan: [1, 0] },
+		{ pan: [-1, 0] },
+		{ quit: true },
+		null,
+	], "the keys do what the header says");
+});
+
+test("73. the pane viewer transmits the PNG once, redraws without erasing the display, sends the picture again after ENOENT, and cleans up on q", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "prism-pane-viewer-"));
+	cleanupFn = () => rmSync(dir, { recursive: true, force: true });
+	const file = join(dir, "picture.png");
+	writeFileSync(file, pngOf(320, 280));
+	const viewer = resolve(dirname(fileURLToPath(import.meta.url)), "../extensions/prism/pane-viewer.mjs");
+	const run = async (script: (send: (text: string) => void, seen: () => string) => Promise<void>) => {
+		const child = childProcess.spawn(process.execPath, [viewer, file], { stdio: ["pipe", "pipe", "ignore"] });
+		let out = "";
+		child.stdout.on("data", (chunk) => (out += chunk));
+		child.stdin.on("error", () => {});
+		const exited = new Promise<number | null>((done) => child.once("close", done));
+		await script((text) => child.stdin.write(text), () => out);
+		const code = await exited;
+		return { out, code };
+	};
+	const count = (text: string, part: string) => text.split(part).length - 1;
+
+	const answered = await run(async (send, seen) => {
+		await until(() => seen().includes("\x1b[16t"));
+		send("\x1b[6;16;16t");
+		await until(() => seen().includes("a=p,"));
+		send("\x1b_Gi=7,p=1;OK\x1b\\+");
+		await until(() => count(seen(), "a=p,") === 2);
+		send("\x1b_Gi=7,p=1;ENOENT: image not found\x1b\\");
+		await until(() => count(seen(), "a=t,") === 2 && count(seen(), "a=p,") === 3);
+		send("q");
+	});
+	assert.equal(answered.code, 0, "q exits 0");
+	assert.ok(answered.out.includes("\x1b[?1000h\x1b[?1006h"), "mouse reporting is on");
+	assert.equal(count(answered.out, "a=t,"), 2, "the PNG is sent once, and again after ENOENT");
+	assert.ok(answered.out.includes("a=t,f=100,t=d,i=7,m=0;") || answered.out.includes("a=t,f=100,t=d,i=7,m=1;"), "the PNG goes inline");
+	assert.equal(answered.out.includes("\x1b[2J"), false, "the display is never erased");
+	assert.ok(answered.out.includes("a=d,d=i,i=7"), "each redraw deletes the placement and keeps the data");
+	assert.ok(answered.out.includes("a=p,i=7,p=1,x=0,y=0,w=320,h=280,c=26,r=23,C=1"), "the first placement shows the whole picture at the reported cell size");
+	assert.ok(answered.out.includes(" zoom 125%"), "a + zooms in by a quarter");
+	assert.ok(answered.out.endsWith("\x1b[?1000l\x1b[?1006l\x1b_Ga=d,d=I,i=7,q=2\x1b\\\x1b[?25h"), "exit turns mouse reporting off, deletes the image and shows the cursor");
+
+	const silent = await run(async (send, seen) => {
+		await until(() => seen().includes("a=p,"), 2000);
+		send("q");
+	});
+	assert.equal(silent.code, 0, "q exits 0 when the terminal never reported a cell size");
+	assert.ok(silent.out.includes("a=p,i=7,p=1,x=0,y=0,w=320,h=280,c=53,r=23,C=1"), "without a report the picture is placed with 8 by 16 pixel cells");
+
+	const closed = await run(async (send) => {
+		send("\x1b[6;16;8t");
+		await sleep(50);
+		send("\x1b[<64;1;1");
+		await sleep(50);
+		send("M");
+		await sleep(100);
+		send("\x1b[B");
+		await sleep(100);
+		send("q");
+	});
+	assert.equal(closed.code, 0, "a wheel report and an arrow split across writes do not stop the viewer");
+	assert.ok(closed.out.includes(" zoom 125%"), "the wheel report split across writes zoomed in");
+
+	const escaped = await run(async (send, seen) => {
+		await until(() => seen().includes("a=p,"), 2000);
+		send("\x1b");
+	});
+	assert.equal(escaped.code, 0, "a lone Esc exits 0");
 });
