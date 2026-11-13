@@ -22,7 +22,7 @@ export function pngSize(bytes) {
  * Model: { zoom, cx, cy } with the center in image pixels.
  * Screen: { iw, ih, cols, rows, cellW, cellH }. Row 1 holds the header, so the picture gets rows - 1.
  * Returns the source rectangle (x, y, w, h in image pixels), its size in cells (c, r), the 1-based
- * column that centers it, and the clamped center.
+ * column and row that center it below the header, and the clamped center.
  */
 export function fit(model, screen) {
   const { iw, ih, cols, rows, cellW, cellH } = screen;
@@ -43,6 +43,7 @@ export function fit(model, screen) {
     c,
     r,
     col: 1 + Math.max(0, Math.floor((cols - c) / 2)),
+    row: 2 + Math.max(0, Math.floor((rows - 1 - r) / 2)),
     cx,
     cy,
   };
@@ -196,7 +197,7 @@ export function main(file) {
     model = { ...model, cx: view.cx, cy: view.cy };
     // Never write ESC[2J here: Rex drops the transmitted image data when the display is erased, and the next placement then fails with ENOENT.
     write(
-      `\x1b_Ga=d,d=i,i=${IMAGE_ID},q=2\x1b\\\x1b[H\x1b[2K\x1b[?25l${header(model.zoom, s.cols)}\x1b[2;${view.col}H` +
+      `\x1b_Ga=d,d=i,i=${IMAGE_ID},q=2\x1b\\\x1b[H\x1b[2K\x1b[?25l${header(model.zoom, s.cols)}\x1b[${view.row};${view.col}H` +
         `\x1b_Ga=p,i=${IMAGE_ID},p=1,x=${view.x},y=${view.y},w=${view.w},h=${view.h},c=${view.c},r=${view.r},C=1\x1b\\`,
     );
   };
