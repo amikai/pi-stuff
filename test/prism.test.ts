@@ -2895,3 +2895,81 @@ test("83. ⧉ image toasts the reason when the desktop cannot copy the PNG", asy
 	await until(() => h.notifications.length > 0);
 	assert.deepEqual(h.notifications.at(-1), { text: "Image copy failed (the Rex app is on another machine, use preview)", level: "error" });
 });
+
+test("84. a picture's row limit is 4096 on Kitty and 20 on iTerm2, and the width rule does not change", async () => {
+	const { fitImage, pictureRows } = await import("../extensions/prism/core/latex.ts");
+	assert.deepEqual([pictureRows("kitty"), pictureRows("iterm2"), pictureRows(null), pictureRows("sixel")], [4096, 20, 20, 20]);
+
+	const size = { width: 1600, height: 1200 };
+	assert.deepEqual(fitImage(size, 120, pictureRows("kitty")), { columns: 117, rows: 44 }, "height follows width when the limit does not bind");
+	assert.deepEqual(fitImage(size, 120, pictureRows("iterm2")), { columns: 53, rows: 20 }, "columns shrink to keep the aspect ratio when the limit binds");
+	assert.deepEqual(fitImage({ width: 100, height: 50 }, 120, 4096), fitImage({ width: 100, height: 50 }, 120, 20), "a small picture is the same under both limits");
+	assert.deepEqual(fitImage({ width: 100, height: 50 }, 120, 4096), { columns: 10, rows: 3 }, "a small picture is not enlarged to the width");
+	assert.equal(fitImage({ width: 100, height: 1_000_000 }, 120, 4096).rows, 4096, "a very tall picture stops at 4096 rows");
+});
+
+test("85. a large Markdown picture is drawn tall on Kitty, at most 20 rows on iTerm2, and not at all without a picture protocol", async () => {
+	const src = `data:image/png;base64,${pngOf(1600, 1200).toString("base64")}`;
+	const drawn = async (images: "kitty" | "iterm2" | null) => {
+		const terminal = plantumlTerminal({ images });
+		const h = createHarness();
+		try {
+			await h.emit("session_start");
+			const lines = reply(`![big](${src})`).render(fittedAt(120));
+			const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
+			if (at < 0) return null;
+			if (images === "kitty") return { columns: Number(/[,;]c=(\d+)/.exec(lines[at]!)?.[1]), rows: Number(/[,;]r=(\d+)/.exec(lines[at]!)?.[1]) };
+			return { rows: Number(/\x1b\[(\d+)A/.exec(lines[at]!)?.[1] ?? 0) + 1 };
+		} finally {
+			terminal.restore();
+			h.cleanup();
+		}
+	};
+	assert.deepEqual(await drawn("kitty"), { columns: 117, rows: 44 });
+	assert.ok((await drawn("iterm2"))!.rows <= 20, "iTerm2 keeps the picture within 20 rows");
+	assert.equal(await drawn(null), null, "no picture without a protocol");
+});
+
+test("86. a tall PlantUML diagram is drawn with more than 20 rows on Kitty and at most 20 on iTerm2", async () => {
+	const tall = Array.from({ length: 60 }, (_, i) => `Alice -> Bob : step ${i}`).join("\n");
+	const rowsUnder = async (images: "kitty" | "iterm2") => {
+		const terminal = plantumlTerminal({ images });
+		const h = createHarness();
+		try {
+			await h.emit("session_start");
+			const comp = reply(diagram(`tall ${images}`, tall));
+			comp.render(100);
+			await plantumlJobs.idle();
+			const lines = comp.render(100);
+			const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
+			assert.ok(at >= 0, `${images}: the diagram is drawn`);
+			return images === "kitty" ? Number(/[,;]r=(\d+)/.exec(lines[at]!)?.[1]) : Number(/\x1b\[(\d+)A/.exec(lines[at]!)?.[1] ?? 0) + 1;
+		} finally {
+			terminal.restore();
+			h.cleanup();
+		}
+	};
+	assert.ok((await rowsUnder("kitty")) > 20, "Kitty draws it taller than 20 rows");
+	assert.ok((await rowsUnder("iterm2")) <= 20, "iTerm2 keeps it within 20 rows");
+});
+
+test("87. a tall pele picture is drawn with more than 20 rows on Kitty and at most 20 on iTerm2", async () => {
+	const source = "timeline\n  2020 : start";
+	const rowsUnder = async (images: "kitty" | "iterm2") => {
+		const fake = peleFixture({ images });
+		const h = createHarness();
+		try {
+			await h.emit("session_start");
+			peleJobs.put(source, pictureOf(pngOf(800, 1600)));
+			const lines = reply(mermaidFence(source)).render(100);
+			const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
+			assert.ok(at >= 0, `${images}: the picture is drawn`);
+			return images === "kitty" ? Number(/[,;]r=(\d+)/.exec(lines[at]!)?.[1]) : Number(/\x1b\[(\d+)A/.exec(lines[at]!)?.[1] ?? 0) + 1;
+		} finally {
+			fake.restore();
+			h.cleanup();
+		}
+	};
+	assert.ok((await rowsUnder("kitty")) > 20, "Kitty draws it taller than 20 rows");
+	assert.ok((await rowsUnder("iterm2")) <= 20, "iTerm2 keeps it within 20 rows");
+});

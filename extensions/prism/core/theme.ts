@@ -1,5 +1,6 @@
 import type { ClipboardBackend } from "./clipboard.ts";
 import type { PluginOptions } from "./jsx.ts";
+import { pictureRows } from "./latex.ts";
 import { TERMINALS, type Shape, type Terminal } from "./rtl.ts";
 
 export const TOKENS = [
@@ -68,6 +69,7 @@ export type Style = {
 	copyButtonStyle: "inline" | "hover";
 	htmlCopy: ClipboardBackend | null;
 	images: boolean;
+	pictureRows: number;
 	httpLinks: boolean;
 	editorLinks: boolean;
 	fileLinks: string | null;
@@ -115,6 +117,7 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
 		copyButtonStyle: pick(options.copyButtonStyle, ["inline", "hover"] as const, "inline"),
 		htmlCopy: null,
 		images: false,
+		pictureRows: pictureRows(null),
 		httpLinks: false,
 		editorLinks: false,
 		fileLinks: null,

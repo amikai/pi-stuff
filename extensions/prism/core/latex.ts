@@ -98,7 +98,12 @@ export const pickFormula = (formula: Exclude<Formula, { error: true }>, columns:
 export const renderedOf = (stdout: string): Set<number> => new Set([...stdout.matchAll(/^OK\s+(\d+)\s/gm)].map(m => Number(m[1])))
 
 const IMAGE_PX_PER_COLUMN = 10
-const IMAGE_MAX_ROWS = 20
+
+// A Kitty picture taller than the screen is cropped to the rows in view. iTerm2 places a picture by moving the cursor up its row count, which fails past the screen height.
+const PICTURE_ROWS = new Map([['kitty', 4096], ['iterm2', 20]])
+const DEFAULT_PICTURE_ROWS = 20
+
+export const pictureRows = (protocol: string | null | undefined): number => PICTURE_ROWS.get(protocol ?? '') ?? DEFAULT_PICTURE_ROWS
 
 export const imageOf = (block: Block): { alt: string; src: string } | null => {
   if (block.kind !== 'paragraph') return null
@@ -127,9 +132,9 @@ export const imageFile = (src: string, home: string): { png: string } | { path: 
   return /^[a-z][a-z0-9+.-]*:/i.test(src) ? null : local(src)
 }
 
-export const fitImage = (size: Size, columns: number): Fit => {
+export const fitImage = (size: Size, columns: number, maxRows: number): Fit => {
   const aspect = size.width / size.height / CELL_RATIO
   const wide = Math.max(1, Math.min(255, columns - 2, Math.ceil(size.width / IMAGE_PX_PER_COLUMN)))
-  const rows = Math.max(1, Math.min(IMAGE_MAX_ROWS, Math.round(wide / aspect)))
+  const rows = Math.max(1, Math.min(maxRows, Math.round(wide / aspect)))
   return { columns: Math.max(1, Math.min(wide, Math.round(rows * aspect))), rows }
 }

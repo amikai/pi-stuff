@@ -34,7 +34,7 @@ export const PELE_KINDS = [
   'requirementDiagram',
 ] as const
 
-export const PELE_HINT = `Other \`\`\`mermaid kinds (${PELE_KINDS.join(', ')}) are drawn by prism as an image on a white background, at most about 20 terminal rows tall, so keep them small.`
+export const PELE_HINT = `Other \`\`\`mermaid kinds (${PELE_KINDS.join(', ')}) are drawn by prism as an image on a white background, no wider than the terminal, so keep them small.`
 
 const FRONT_MATTER = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/
 

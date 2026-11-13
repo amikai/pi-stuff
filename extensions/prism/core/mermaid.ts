@@ -408,7 +408,7 @@ const mermaidBlock = (el, style: Style, block: Extract<Block, { kind: 'code' }>,
   const picture: Picture = images ? pelePicture(source.replace(INLINE_TAG, ''), images) : { state: 'declined' };
   const out = fallback(verdict, picture);
   if ('note' in out) return out;
-  const fit = fitImage(out, columns);
+  const fit = fitImage(out, columns, style.pictureRows);
   return { element: h(el.Image, { key: `b${i}`, source: { png: out.png }, columns: fit.columns, rows: fit.rows, alt: 'mermaid diagram' }), png: out.png };
 };
 

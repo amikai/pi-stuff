@@ -68,6 +68,10 @@ Any of the 20 semantic color slots (`accentColor`, `headingColor`, `tableHeaderC
 |---|---|---|---|
 | `pele` | `boolean` | `true` | Lets pele draw ```` ```mermaid ```` blocks the text renderer cannot draw. When `false`, `prism` never starts pele, and those blocks keep the dim note and the plain code block. pele is also off over SSH (`SSH_CONNECTION` or `SSH_TTY` set), as are image and preview copy. |
 
+### Picture size
+
+A Markdown, pele or PlantUML picture is as wide as its pixels need, at most the terminal width minus 2 columns and never more than 255 columns. Its height follows its width by the aspect ratio. On Kitty-protocol terminals (Kitty, Ghostty, WezTerm, Warp, Rex) the height is limited to 4096 rows, so a large diagram stays readable. On iTerm2 the limit is 20 rows, because iTerm2 places a picture by moving the cursor up its row count, which fails for a picture taller than the screen. When the limit binds, the picture gets narrower to keep its aspect ratio. A small picture is not enlarged. Formulas and round pie charts keep their own sizes.
+
 ### PlantUML
 
 | Field | Type | Default | Behavior |
