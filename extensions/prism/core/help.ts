@@ -367,7 +367,7 @@ treemap-beta
 requirementDiagram
     requirement fits {
         id: 1
-        text: a diagram fits twenty rows
+        text: a diagram keeps its shape
         risk: low
         verifymethod: demonstration
     }
@@ -383,6 +383,29 @@ PlantUML draws from a fenced \`plantuml\` block as an image in kitty and Ghostty
 @startuml
 You -> prism : markdown
 prism --> You : drawn reply
+@enduml
+\`\`\`
+
+A picture's height follows its width. A terminal that speaks the kitty protocol, such as kitty, Ghostty or Rex, draws a tall diagram at its full size. iTerm2 fits it into 20 rows.
+
+\`\`\`plantuml
+@startuml
+participant You
+participant pi
+participant prism
+participant pele
+You -> pi : prompt
+pi -> prism : reply text
+prism -> prism : parse the Markdown
+prism -> pele : mermaid source
+prism --> pi : source, with a note
+pi --> You : reply, still drawing
+pele --> prism : PNG
+prism -> prism : fit the picture to the width
+prism --> pi : picture
+pi --> You : drawn reply
+You -> prism : press preview
+prism --> You : Quick Look panel
 @enduml
 \`\`\`
 
