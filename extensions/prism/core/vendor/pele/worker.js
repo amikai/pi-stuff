@@ -29,7 +29,8 @@ await initWasm(resvgWasm)
 const ZOOM = 2
 const LIMIT = 100000
 
-const draw = (source, theme) => {
+// With a pixel width the picture is drawn that wide, whatever the diagram's own size. Without one it is drawn at ZOOM times that size.
+const draw = (source, theme, width) => {
   let drawn
   try {
     drawn = render(source, { limit: LIMIT })
@@ -40,14 +41,14 @@ const draw = (source, theme) => {
   if (svg === null) return { error: 'diagram has a color pele left unset' }
   const resvg = new Resvg(svg, {
     background: theme['--pele-bg'] ?? '#ffffff',
-    fitTo: { mode: 'zoom', value: ZOOM },
+    fitTo: width ? { mode: 'width', value: width } : { mode: 'zoom', value: ZOOM },
     font: { fontBuffers: fontsFor(drawnText(svg)).map(font), loadSystemFonts: false, defaultFontFamily: FAMILY, sansSerifFamily: FAMILY },
   })
   // resvg's objects live in wasm memory, which garbage collection never reaches, so each is freed by hand.
   try {
     const image = resvg.render()
     try {
-      return { png: image.asPng() }
+      return { png: image.asPng(), width: drawn.width, height: drawn.height }
     } finally {
       image.free()
     }
@@ -56,10 +57,10 @@ const draw = (source, theme) => {
   }
 }
 
-parentPort.on('message', ({ id, source, theme }) => {
+parentPort.on('message', ({ id, source, theme, width }) => {
   let result
   try {
-    result = draw(source, theme ?? {})
+    result = draw(source, theme ?? {}, Number.isInteger(width) && width > 0 ? width : null)
   } catch (error) {
     result = { error: `diagram failed to render: ${error?.message ?? error}` }
   }
