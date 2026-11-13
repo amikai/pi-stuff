@@ -49,7 +49,7 @@ export const PELE_KINDS = [
   "requirementDiagram",
 ] as const;
 
-export const PELE_HINT = `Other \`\`\`mermaid kinds (${PELE_KINDS.join(", ")}) are drawn by prism as an image on a white background, no wider than the terminal, so keep them small.`;
+export const PELE_HINT = `Other \`\`\`mermaid kinds (${PELE_KINDS.join(", ")}) are drawn by prism as an image on a white background, which can be as wide as the terminal and is then as tall as its shape needs, so lay them out wide, not tall, and keep them small.`;
 
 const FRONT_MATTER = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(\r?\n|$)/;
 

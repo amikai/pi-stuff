@@ -139,6 +139,7 @@ const DEFAULT_OPTIONS: PrismOptions = {
   latex: false,
   plantuml: true,
   pele: true,
+  pictureFill: true,
 };
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {

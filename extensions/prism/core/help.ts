@@ -411,7 +411,7 @@ prism -> PlantUML : plantuml source
 prism --> pi : text, tables and code
 pi --> Rex : first frame, diagrams still source
 pele -> resvg : SVG with the bundled fonts
-resvg --> pele : pixels at twice the size
+resvg --> pele : pixels at the width asked
 pele --> prism : PNG
 PlantUML --> prism : PNG
 prism -> prism : fit each picture to the width

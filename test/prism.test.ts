@@ -3902,7 +3902,9 @@ test("92. widening the terminal draws a wider PNG and keeps the old picture on s
   assert.equal(cachedPicture(source).png, wide.png, "and keeps it");
 });
 
-test("93. pele draws at twice the diagram's size and fills nothing on iTerm2, with pictureFill off, and with no picture protocol", async () => {
+test("93. pele draws at twice the diagram's size and fills nothing on iTerm2 or with pictureFill off", async () => {
+  assert.equal(resolveStyle({}).pictureFill, true, "pictureFill is on unless prism.json turns it off");
+  assert.equal(resolveStyle({ pictureFill: false }).pictureFill, false);
   const source = timeline("natural");
   const sizes: Record<string, { cells: number; pixels: number }> = {};
   for (const [name, images, config] of [
