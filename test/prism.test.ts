@@ -3001,3 +3001,21 @@ test("88. /prism checkhealth holds a PlantUML sample that Kitty draws taller tha
 	assert.ok(Math.max(...kitty) > 20, `one sample is taller than 20 rows on Kitty, got ${kitty}`);
 	assert.ok(Math.max(...(await rowsUnder("iterm2"))) <= 20, "iTerm2 keeps every sample within 20 rows");
 });
+
+test("89. the wide /prism checkhealth sample fills a 250-column terminal on Kitty", async () => {
+	const sample = [...showcaseText().matchAll(/```plantuml\n[\s\S]*?\n```/g)].map((match) => match[0]).at(-1)!;
+	const terminal = plantumlTerminal({ images: "kitty" });
+	const h = createHarness();
+	try {
+		await h.emit("session_start");
+		const comp = reply(sample);
+		comp.render(fittedAt(250));
+		await plantumlJobs.idle();
+		const line = comp.render(fittedAt(250)).find((drawn) => drawn.includes(KITTY_IMAGE)) ?? "";
+		const columns = Number(/[,;]c=(\d+)/.exec(line)?.[1]);
+		assert.ok(columns >= 246, `the picture spans the terminal, got ${columns} columns`);
+	} finally {
+		terminal.restore();
+		h.cleanup();
+	}
+});
