@@ -8,7 +8,7 @@ out="$here/../pele.js"
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-cp "$here/worker.js" "$here/svg.js" "$here/fonts.js" "$here/package.json" "$here/package-lock.json" "$stage/"
+cp "$here/worker.js" "$here/budget.js" "$here/svg.js" "$here/fonts.js" "$here/package.json" "$here/package-lock.json" "$stage/"
 (cd "$stage" && npm ci --no-audit --no-fund --ignore-scripts)
 # pele's MIT notice travels beside the bundle. @resvg/resvg-wasm ships no LICENSE file, so LICENSE.resvg-wasm is kept by hand.
 cp "$stage/node_modules/pele/LICENSE" "$here/LICENSE.pele"

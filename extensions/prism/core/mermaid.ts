@@ -3,7 +3,7 @@ import type { ChartArt, Pie, Rgb } from "./charts.ts";
 import { ganttText, pieRgba, pieText, rgbaPng } from "./charts.ts";
 import { drawFigure, isFigureLang } from "./figure.ts";
 import { type ElementComponent, type ElementTable, h, type RenderElement } from "./jsx.ts";
-import { fitImage, ratexColor } from "./latex.ts";
+import { fillColumns, fitImage, ratexColor } from "./latex.ts";
 import type { Block } from "./markdown.ts";
 import type { Picture } from "./pele.ts";
 import { pelePicture } from "./pele.ts";
@@ -580,10 +580,11 @@ const mermaidBlock = (
     return { element: chartElement(el, style, art, block, source, `b${i}`), art: art.text };
   }
   if (block.isOpen) return undefined;
-  const picture: Picture = images ? pelePicture(source.replace(INLINE_TAG, ""), images) : { state: "declined" };
+  const pixels = style.pictureFill ? fillColumns(columns) * style.cellWidthPx : null;
+  const picture: Picture = images ? pelePicture(source.replace(INLINE_TAG, ""), images, pixels) : { state: "declined" };
   const out = fallback(verdict, picture);
   if ("note" in out) return out;
-  const fit = fitImage(out, columns, style.pictureRows);
+  const fit = fitImage(out, columns, style.pictureRows, style.pictureFill ? "fill" : "natural");
   return {
     element: h(el.Image as ElementComponent, {
       key: `b${i}`,

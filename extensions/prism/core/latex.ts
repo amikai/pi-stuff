@@ -166,9 +166,15 @@ export const imageFile = (src: string, home: string): { png: string } | { path: 
   return /^[a-z][a-z0-9+.-]*:/i.test(src) ? null : local(src);
 };
 
-export const fitImage = (size: Size, columns: number, maxRows: number): Fit => {
+/** How a picture's width starts: as wide as its pixels need, or as wide as the terminal allows. */
+export type PictureWidth = "natural" | "fill";
+
+export const fillColumns = (columns: number): number => Math.max(1, Math.min(255, columns - 2));
+
+export const fitImage = (size: Size, columns: number, maxRows: number, width: PictureWidth): Fit => {
   const aspect = size.width / size.height / CELL_RATIO;
-  const wide = Math.max(1, Math.min(255, columns - 2, Math.ceil(size.width / IMAGE_PX_PER_COLUMN)));
+  const room = fillColumns(columns);
+  const wide = width === "fill" ? room : Math.max(1, Math.min(room, Math.ceil(size.width / IMAGE_PX_PER_COLUMN)));
   const rows = Math.max(1, Math.min(maxRows, Math.round(wide / aspect)));
   return { columns: Math.max(1, Math.min(wide, Math.round(rows * aspect))), rows };
 };

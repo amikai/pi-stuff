@@ -75,6 +75,7 @@ const { headerWord, PELE_HINT, PELE_KINDS, peleJobs, pelePicture, peleTimeout, p
   "../extensions/prism/core/pele.ts"
 );
 const { flatten } = await import("../extensions/prism/core/vendor/pele/svg.js");
+const { allowedWidth, BUDGET, widthFor } = await import("../extensions/prism/core/vendor/pele/budget.js");
 const { fontsFor, SOURCES: PELE_FONTS } = await import("../extensions/prism/core/vendor/pele/fonts.js");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
@@ -2027,9 +2028,9 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
 
 const drawnBy = async (source: string) => {
   const wake = { requestRender: () => {} };
-  assert.equal(pelePicture(source, wake).state, "pending");
+  assert.equal(pelePicture(source, wake, null).state, "pending");
   await peleJobs.idle();
-  return pelePicture(source, wake);
+  return pelePicture(source, wake, null);
 };
 
 test("37. pele declines an unknown header word and a broken flowchart, and draws a timeline and a hyphenated flowchart", async () => {
@@ -2055,23 +2056,23 @@ test("38. a pele picture between 2 and 3 MiB reaches the terminal and the clipbo
   await h.emit("session_start");
   const png = hugePng(2000, 1500, 2.5 * 1024 * 1024);
   assert.equal(
-    pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024)).state,
+    pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024), { width: 4070, height: 2265 }).state,
     "drawn",
     "a PNG exactly 3 MiB is accepted even when both sides exceed 4096 pixels",
   );
   assert.deepEqual(
-    pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024 + 1)),
+    pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024 + 1), { width: 4070, height: 2265 }),
     { state: "declined" },
     "a PNG over 3 MiB is declined",
   );
   assert.deepEqual(
-    pictureOf(new Uint8Array([1, 2, 3])),
+    pictureOf(new Uint8Array([1, 2, 3]), { width: 1, height: 1 }),
     { state: "declined" },
     "bytes that are not a PNG are declined",
   );
 
   const source = "timeline\n  2020 : big";
-  peleJobs.put(source, pictureOf(png));
+  peleJobs.put(source, pictureOf(png, { width: 1000, height: 750 }));
   const comp = reply(mermaidFence(source));
   const drawn = comp.render(100).join("\n");
   const sent = [...drawn.matchAll(/\x1b_G[^;\x1b]*;([^\x1b]*)\x1b\\/g)].map((m) => m[1]).join("");
@@ -2165,22 +2166,29 @@ test("42. pele draws every /prism checkhealth sample as a picture", async () => 
   peleJobs.clear();
   const wake = { requestRender: () => {} };
   for (const source of demoKinds().filter((source) => PELE_KINDS.includes(headerWord(source) as never))) {
-    assert.equal(pelePicture(source, wake).state, "pending", headerWord(source));
+    assert.equal(pelePicture(source, wake, null).state, "pending", headerWord(source));
     await peleJobs.idle();
-    assert.equal(pelePicture(source, wake).state, "drawn", `${headerWord(source)} draws`);
+    assert.equal(pelePicture(source, wake, null).state, "drawn", `${headerWord(source)} draws`);
   }
   peleJobs.clear();
 });
 
 const pngWidth = (png: string) => pngPixels(png).width;
 
-test("43. a picture is reported at half its pixels, so it fills the columns a 1x image would", async () => {
-  assert.deepEqual(pictureOf(pngOf(320, 280)), {
+test("43. a drawn picture reports the diagram's own size, and drawn with no width its PNG is twice that", async () => {
+  assert.deepEqual(pictureOf(pngOf(320, 280), { width: 160, height: 140 }), {
     state: "drawn",
     png: pngOf(320, 280).toString("base64"),
     width: 160,
     height: 140,
+    pixels: 320,
+    reach: { kind: "open" },
   });
+  assert.deepEqual(
+    pictureOf(pngOf(320, 280), { width: 0, height: 140 }),
+    { state: "declined" },
+    "a diagram with no size is declined",
+  );
   peleJobs.clear();
   const picture = await drawnBy("timeline\n  2020 : start");
   assert.ok(picture.state === "drawn");
@@ -3605,30 +3613,44 @@ test("84. a picture's row limit is 4096 on Kitty and 20 on iTerm2, and the width
 
   const size = { width: 1600, height: 1200 };
   assert.deepEqual(
-    fitImage(size, 120, pictureRows("kitty")),
+    fitImage(size, 120, pictureRows("kitty"), "natural"),
     { columns: 117, rows: 44 },
     "height follows width when the limit does not bind",
   );
   assert.deepEqual(
-    fitImage(size, 120, pictureRows("iterm2")),
+    fitImage(size, 120, pictureRows("iterm2"), "natural"),
     { columns: 53, rows: 20 },
     "columns shrink to keep the aspect ratio when the limit binds",
   );
   assert.deepEqual(
-    fitImage({ width: 100, height: 50 }, 120, 4096),
-    fitImage({ width: 100, height: 50 }, 120, 20),
+    fitImage({ width: 100, height: 50 }, 120, 4096, "natural"),
+    fitImage({ width: 100, height: 50 }, 120, 20, "natural"),
     "a small picture is the same under both limits",
   );
   assert.deepEqual(
-    fitImage({ width: 100, height: 50 }, 120, 4096),
+    fitImage({ width: 100, height: 50 }, 120, 4096, "natural"),
     { columns: 10, rows: 3 },
     "a small picture is not enlarged to the width",
   );
   assert.equal(
-    fitImage({ width: 100, height: 1_000_000 }, 120, 4096).rows,
+    fitImage({ width: 100, height: 1_000_000 }, 120, 4096, "natural").rows,
     4096,
     "a very tall picture stops at 4096 rows",
   );
+
+  const small = { width: 100, height: 50 };
+  assert.deepEqual(
+    fitImage(small, 120, 4096, "fill"),
+    { columns: 118, rows: 30 },
+    "a picture that fills spans the terminal width minus 2 columns, and its height follows",
+  );
+  assert.deepEqual(
+    fitImage(small, 120, 20, "fill"),
+    { columns: 80, rows: 20 },
+    "a filled picture gets narrower when the row limit binds",
+  );
+  assert.equal(fitImage(small, 400, 4096, "fill").columns, 255, "a filled picture is at most 255 columns");
+  assert.equal(fitImage(small, 2, 4096, "fill").columns, 1, "and at least one column");
 });
 
 test("85. a large Markdown picture is drawn tall on Kitty, at most 20 rows on iTerm2, and not at all without a picture protocol", async () => {
@@ -3689,7 +3711,7 @@ test("87. a tall pele picture is drawn with more than 20 rows on Kitty and at mo
     const h = createHarness();
     try {
       await h.emit("session_start");
-      peleJobs.put(source, pictureOf(pngOf(800, 1600)));
+      peleJobs.put(source, pictureOf(pngOf(2000, 4000), { width: 1000, height: 2000 }));
       const lines = reply(mermaidFence(source)).render(100);
       const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
       assert.ok(at >= 0, `${images}: the picture is drawn`);
@@ -3784,5 +3806,312 @@ test("90. prism's hints reach the system prompt that pi builds", async () => {
     assert.ok(prompt.includes("drawn by prism inside Pi"), "the diagram hint is in the prompt pi sends to the model");
   } finally {
     h.cleanup();
+  }
+});
+
+const timeline = (label: string) => `timeline\n  2020 : ${label}`;
+
+// The Kitty placement of the first picture in a frame, and the PNG bytes sent for it.
+const kittyPicture = (lines: string[]) => {
+  const line = lines.find((l) => l.includes(KITTY_IMAGE)) ?? "";
+  return {
+    columns: Number(/[,;]c=(\d+)/.exec(line)?.[1]),
+    rows: Number(/[,;]r=(\d+)/.exec(line)?.[1]),
+    sent: sentPayload(lines.join("\n")),
+  };
+};
+
+const cachedPicture = (source: string) => {
+  const entry = peleJobs.cache.get(source);
+  assert.ok(entry?.state === "drawn", "pele drew the source");
+  return { ...pngPixels(entry.png), bytes: Buffer.from(entry.png, "base64").length, png: entry.png };
+};
+
+function peleFillFixture(options: { images?: "kitty" | "iterm2" | null } = {}, config?: Record<string, unknown>) {
+  const savedCell = getCellDimensions();
+  setCellDimensions({ widthPx: 10, heightPx: 20 });
+  const fake = peleFixture(options);
+  const h = createHarness(config);
+  return {
+    h,
+    cleanup: () => {
+      fake.restore();
+      h.cleanup();
+      setCellDimensions(savedCell);
+    },
+  };
+}
+
+test("91. under Kitty a small pele diagram spans the terminal and is drawn at the terminal's pixel width", async () => {
+  const fill = peleFillFixture();
+  cleanupFn = fill.cleanup;
+  await fill.h.emit("session_start");
+
+  const source = timeline("start");
+  for (const columns of [100, 200]) {
+    peleJobs.clear();
+    const comp = reply(mermaidFence(source));
+    comp.render(fittedAt(columns));
+    await peleJobs.idle();
+    const picture = kittyPicture(comp.render(fittedAt(columns)));
+    assert.ok(
+      picture.columns === columns - 2 || picture.columns === columns - 3,
+      `${columns} columns: the picture spans the terminal, got ${picture.columns} cells`,
+    );
+    const drawn = cachedPicture(source);
+    assert.ok(drawn.width >= (columns - 2) * 10, `${columns} columns: the PNG is ${drawn.width} px wide, 10 px a cell`);
+    assert.ok(drawn.width % 256 === 0, "the PNG width is a multiple of 256");
+    assert.ok(drawn.bytes < 3 * 1024 * 1024);
+  }
+});
+
+test("92. widening the terminal draws a wider PNG and keeps the old picture on screen meanwhile, and narrowing draws nothing", async () => {
+  const fill = peleFillFixture();
+  cleanupFn = fill.cleanup;
+  await fill.h.emit("session_start");
+
+  const source = timeline("widen");
+  const comp = reply(mermaidFence(source));
+  comp.render(fittedAt(100));
+  await peleJobs.idle();
+  const narrow = cachedPicture(source);
+  assert.equal(narrow.width, 1024, "980 pixels are drawn as 1024");
+  assert.equal(kittyPicture(comp.render(fittedAt(100))).sent, narrow.png);
+
+  comp.render(fittedAt(102));
+  assert.equal(peleJobs.pending.size, 0, "1000 pixels fit in the PNG that is there");
+
+  const frame = comp.render(fittedAt(200));
+  assert.equal(peleJobs.pending.size, 1, "a wider terminal starts one render");
+  const meanwhile = kittyPicture(frame);
+  assert.equal(meanwhile.sent, narrow.png, "the old picture stays on screen");
+  assert.ok(!stripAnsi(frame.join("\n")).includes("drawing with pele"), "with no pending note");
+  assert.ok(meanwhile.columns >= 197, `scaled to the new width, got ${meanwhile.columns} cells`);
+  comp.render(fittedAt(200));
+  assert.equal(peleJobs.pending.size, 1, "more frames join that render");
+
+  await peleJobs.idle();
+  const wide = cachedPicture(source);
+  assert.equal(wide.width, 2048, "1980 pixels are drawn as 2048");
+  assert.equal(peleJobs.cache.size, 1, "one picture is kept for the source");
+  assert.equal(kittyPicture(comp.render(fittedAt(200))).sent, wide.png, "the wider picture replaces it");
+
+  const back = kittyPicture(comp.render(fittedAt(100)));
+  assert.equal(peleJobs.pending.size, 0, "narrowing starts no render");
+  assert.equal(back.sent, wide.png, "it scales the PNG it has");
+  assert.ok(back.columns <= 98);
+  assert.equal(cachedPicture(source).png, wide.png, "and keeps it");
+});
+
+test("93. pele draws at twice the diagram's size and fills nothing on iTerm2 or with pictureFill off", async () => {
+  assert.equal(resolveStyle({}).pictureFill, true, "pictureFill is on unless prism.json turns it off");
+  assert.equal(resolveStyle({ pictureFill: false }).pictureFill, false);
+  const source = timeline("natural");
+  const sizes: Record<string, { cells: number; pixels: number }> = {};
+  for (const [name, images, config] of [
+    ["kitty, pictureFill off", "kitty", { pictureFill: false }],
+    ["iterm2", "iterm2", {}],
+  ] as const) {
+    const fill = peleFillFixture({ images }, config);
+    try {
+      await fill.h.emit("session_start");
+      const comp = reply(mermaidFence(source));
+      comp.render(fittedAt(200));
+      await peleJobs.idle();
+      const lines = comp.render(fittedAt(200));
+      const line = lines.find((l) => l.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE)) ?? "";
+      const cells = Number((images === "kitty" ? /[,;]c=(\d+)/ : /width=(\d+)/).exec(line)?.[1]);
+      sizes[name] = { cells, pixels: cachedPicture(source).width };
+      comp.render(fittedAt(300));
+      assert.equal(peleJobs.pending.size, 0, `${name}: a wider terminal starts no render`);
+    } finally {
+      fill.cleanup();
+    }
+  }
+  for (const [name, size] of Object.entries(sizes)) {
+    assert.deepEqual(size, { cells: 22, pixels: 424 }, `${name}: 212 px of diagram take 22 cells, drawn at twice that`);
+  }
+});
+
+test("94. a PlantUML picture and a Markdown picture keep their natural size under Kitty", async () => {
+  const fill = peleFillFixture();
+  const terminal = plantumlTerminal();
+  cleanupFn = () => {
+    terminal.restore();
+    fill.cleanup();
+  };
+  await fill.h.emit("session_start");
+
+  const markdown = kittyPicture(
+    reply(`![small](data:image/png;base64,${pngOf(320, 280).toString("base64")})`).render(fittedAt(200)),
+  );
+  assert.equal(markdown.columns, 32, "320 pixels take 32 cells, not 198");
+
+  const comp = reply(diagram("natural"));
+  comp.render(fittedAt(200));
+  await plantumlJobs.idle();
+  const uml = kittyPicture(comp.render(fittedAt(200)));
+  const image = cachedImages().at(-1);
+  assert.ok(image, "the diagram is drawn");
+  const natural = pngPixels(image.png);
+  assert.equal(uml.columns, Math.ceil(natural.width / 10), "a PlantUML picture takes the cells its pixels need");
+  assert.ok(uml.columns < 198, `and is not widened to the terminal, got ${uml.columns}`);
+});
+
+// Heavy text with no repeats compresses poorly. Eight periods of it make a 1584 x 4072 px diagram. A 1024 px PNG of it is under 3 MiB, and the 1764 px one that the pixel budget allows at the terminal's width is over.
+const denseTimeline = () => {
+  let seed = 7;
+  const next = (below: number) => {
+    seed = (seed * 16807) % 2147483647;
+    return seed % below;
+  };
+  const word = () => Array.from({ length: 6 + next(6) }, () => "MWQ8B0DOGRHNKSEA"[next(16)]).join("");
+  const period = (n: number) => `  ${2000 + n} : ${Array.from({ length: 250 }, word).join(" ")}`;
+  return ["timeline", ...Array.from({ length: 8 }, (_, n) => period(n))].join("\n");
+};
+
+test("95. a larger render that pele declines leaves the picture on screen and is not asked for again", async () => {
+  const fill = peleFillFixture();
+  cleanupFn = fill.cleanup;
+  await fill.h.emit("session_start");
+
+  const source = denseTimeline();
+  const comp = reply(mermaidFence(source));
+  comp.render(fittedAt(100));
+  await peleJobs.idle(20000);
+  const small = cachedPicture(source);
+  assert.equal(small.width, 1024);
+
+  comp.render(fittedAt(200));
+  assert.equal(peleJobs.pending.size, 1, "a wider terminal starts a render");
+  await peleJobs.idle(20000);
+  assert.equal(cachedPicture(source).png, small.png, "the wider picture is over 3 MiB, so the old one stays");
+  assert.equal(kittyPicture(comp.render(fittedAt(200))).sent, small.png, "and stays on screen");
+  assert.equal(peleJobs.pending.size, 0, "it is not asked for again");
+
+  comp.render(fittedAt(300));
+  comp.render(fittedAt(200));
+  assert.equal(peleJobs.pending.size, 0, "not at that width, and not at a wider one");
+  comp.render(fittedAt(100));
+  assert.equal(peleJobs.pending.size, 0);
+});
+
+test("96. a diagram whose budget width is under twice its own size is drawn at twice its size, and is not asked for at that width again", async () => {
+  const fill = peleFillFixture();
+  cleanupFn = fill.cleanup;
+  await fill.h.emit("session_start");
+
+  // 20000 characters make a 276 x 12118 px strip. At 1024 px it would be 46 million pixels, so the budget lets it no more than twice its width.
+  const source = timeline("x".repeat(20000));
+  const comp = reply(mermaidFence(source));
+  comp.render(fittedAt(100));
+  await peleJobs.idle(20000);
+  assert.equal(cachedPicture(source).width, 552, "the picture is drawn at twice its size");
+  assert.equal(drawnImages(comp, fittedAt(100)), 1, "and is shown");
+  assert.equal(peleJobs.pending.size, 0, "the width that was cut is not asked for again");
+  comp.render(fittedAt(300));
+  assert.equal(peleJobs.pending.size, 0, "nor a wider one");
+});
+
+test("97. pelePicture draws a PNG in steps of 256 pixels and at least twice the diagram's width, and never draws narrower", async () => {
+  peleJobs.clear();
+  const source = "flowchart LR\n  A[Alpha] --> B[Beta] --> C[Gamma] --> D[Delta] --> E[Epsilon]";
+  const wake = { requestRender: () => {} };
+  assert.equal(pelePicture(source, wake, 300).state, "pending");
+  await peleJobs.idle();
+  assert.equal(cachedPicture(source).width, 512, "300 pixels are drawn as 512");
+
+  pelePicture(source, wake, 100);
+  assert.equal(peleJobs.pending.size, 0, "a narrower need draws nothing");
+  pelePicture(source, wake, 512);
+  assert.equal(peleJobs.pending.size, 0, "a need the PNG meets draws nothing");
+
+  pelePicture(source, wake, 513);
+  assert.equal(peleJobs.pending.size, 1);
+  await peleJobs.idle();
+  assert.equal(cachedPicture(source).width, 1218, "513 pixels give 768, raised to twice the 609 px diagram");
+  peleJobs.clear();
+});
+
+// Text art cannot draw this kind, so pele does. Six requirements in a chain make a 187 x 1471 px picture, about 8 times taller than wide.
+const tallChain = [
+  "requirementDiagram",
+  ...Array.from(
+    { length: 6 },
+    (_, n) =>
+      `  requirement r${n} {\n    id: ${n}\n    text: do thing ${n}\n    risk: high\n    verifymethod: test\n  }`,
+  ),
+  ...Array.from({ length: 5 }, (_, n) => `  r${n} - derives -> r${n + 1}`),
+].join("\n");
+
+test("98. a tall diagram under Kitty is drawn within 8 million pixels and 8192 a side, still spans the terminal, and is not drawn again", async () => {
+  const fill = peleFillFixture();
+  cleanupFn = fill.cleanup;
+  await fill.h.emit("session_start");
+
+  const comp = reply(mermaidFence(tallChain));
+  comp.render(fittedAt(200));
+  await peleJobs.idle();
+  const picture = kittyPicture(comp.render(fittedAt(200)));
+  assert.ok(
+    picture.columns === 198 || picture.columns === 197,
+    `the picture spans the terminal, got ${picture.columns}`,
+  );
+  const drawn = cachedPicture(tallChain);
+  assert.ok(drawn.height > 4 * drawn.width, `a tall diagram, ${drawn.width} x ${drawn.height}`);
+  assert.ok(drawn.width * drawn.height <= BUDGET.pixels, `${drawn.width} x ${drawn.height} is within 8 million pixels`);
+  assert.ok(Math.max(drawn.width, drawn.height) <= BUDGET.side);
+  assert.ok(drawn.width < 2048, "cut below the 2048 px the terminal asked for");
+  assert.equal(picture.sent, drawn.png, "and that picture is on screen");
+
+  assert.equal(peleJobs.pending.size, 0, "a second draw at the same width starts no render");
+  comp.render(fittedAt(300));
+  assert.equal(peleJobs.pending.size, 0, "nor at a wider terminal, which would be cut the same");
+  assert.equal(cachedPicture(tallChain).png, drawn.png);
+});
+
+test("99. a wide diagram is not cut, and the budget rule keeps twice the natural size and never exceeds the request", async () => {
+  const fill = peleFillFixture();
+  cleanupFn = fill.cleanup;
+  await fill.h.emit("session_start");
+  const source = timeline("wide");
+  const comp = reply(mermaidFence(source));
+  comp.render(fittedAt(200));
+  await peleJobs.idle();
+  const entry = peleJobs.cache.get(source);
+  assert.ok(
+    entry?.state === "drawn" && entry.reach.kind === "open",
+    "a picture inside the budget stays open to growth",
+  );
+  assert.equal(cachedPicture(source).width, 2048);
+
+  assert.deepEqual(BUDGET, { pixels: 8_000_000, side: 8192 });
+  assert.equal(allowedWidth(136, 932), 1080, "a tall diagram: the pixel count binds");
+  assert.deepEqual(widthFor(2048, 136, 932), { width: 1080, limited: true });
+  assert.deepEqual(widthFor(1024, 136, 932), { width: 1024, limited: false });
+  assert.equal(allowedWidth(4000, 200), 8192, "a wide diagram: the side binds");
+  assert.deepEqual(widthFor(9000, 4000, 200), { width: 8192, limited: true });
+  assert.deepEqual(widthFor(4096, 4000, 200), { width: 4096, limited: false });
+  assert.equal(allowedWidth(2000, 2000), 2828);
+  assert.deepEqual(
+    widthFor(4096, 2000, 2000),
+    { width: 4000, limited: true },
+    "twice the natural size is kept past the budget",
+  );
+  assert.deepEqual(widthFor(3000, 2000, 2000), { width: 3000, limited: false }, "and the request is not exceeded");
+  for (const [w, h] of [
+    [80, 656],
+    [124, 748],
+    [187, 1471],
+    [500, 3000],
+    [300, 4000],
+    [3000, 300],
+  ]) {
+    const { width } = widthFor(8192, w, h);
+    const height = Math.floor((h * width) / w);
+    assert.ok(
+      width * height <= BUDGET.pixels && Math.max(width, height) <= BUDGET.side,
+      `${w} x ${h} gives ${width} x ${height}`,
+    );
   }
 });
