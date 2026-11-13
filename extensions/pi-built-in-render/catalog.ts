@@ -1,22 +1,24 @@
 import type { DemoDocument, SectionBlock } from "./render.ts";
 
 export type SectionSpec = {
-	readonly title: string;
-	readonly description: string;
-	readonly blocks: readonly [SectionBlock, ...SectionBlock[]];
+  readonly title: string;
+  readonly description: string;
+  readonly blocks: readonly [SectionBlock, ...SectionBlock[]];
 };
 
 function markdown(source: string): SectionBlock {
-	return { kind: "markdown", source };
+  return { kind: "markdown", source };
 }
 
-const BAND_PNG = "iVBORw0KGgoAAAANSUhEUgAAAUAAAAAoCAIAAAAAIrR+AAACdElEQVR42u3TewcQBgAA8ZNkkkySJEmSJJOWrW3t/cyWJJlMkmQmSZIkSSaTJEmSJEmStLS0trX3smVLkiRJkiTJZCZJdrNvsP0xNu73Fc4hOBAfwyH4OA7HkTgax+J4nIiTcQpOw+k4A1/EV/FNfBtn41x8F9/DhbgY38eluBxX4mpci+vxQ/wIN+NW3I47cTfuxf14EA/jUTyOJ/EUfo3f44/4M57DC3gJr+A1vIG38A7+ir/hfXyIf/BIHsjvck/uym25KdflqlyWi3JezsoZOS3fyVfyuZyQY3JEDskB2Sd7ZJfskG2yRTbJRtkg62SNrJIVskw+kCWySBbIfJknc2SWzJQ35BV5QZ6Vp2SqPCGTZIKMkzEySkbIMBkqg2WQDPgrwAAchINxKA7DETgKx+A4nICT8Amcik/hM/g8voyv40ychXNwHs7HBbgIl+AHuAxX4Cpcg+twA27ETbgFt+EO3IV7cB8ewEN4BI/hCfwMv8Rv8TSewbN4Hi/iZbyK1/Em3sa7eA9/xwf4iD/kodyX3+RXuSO35IZckytySS7IOflFfpIf5Bs5JSfluByVw3JQ9ste2S07Zbtslc3ykXwo62WtrJaVslyWyvuyWBbKe/KuzJXZ8o68Ja/JSzJDpss0mSKTZaKMl7EyWkbKcHlchshjMvDvHvAkPo3P/TsHfIyf4Kf4xT88YABJ/rcaOGngJA2cpIGTBk7SwEkaOEkDJw2cpIGTNHDSwEkaOEkDJ2ngpIGTNHCSBk7SwEkDJ2ngJA2cNHCSBk7SwEkaOGngJA2cpIGTNHDSwEkaOEkDJw2cpIGTNHCSBk4aOMl/yZ8SRd1gPq93WQAAAABJRU5ErkJggg==";
+const BAND_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAUAAAAAoCAIAAAAAIrR+AAACdElEQVR42u3TewcQBgAA8ZNkkkySJEmSJJOWrW3t/cyWJJlMkmQmSZIkSSaTJEmSJEmStLS0trX3smVLkiRJkiTJZCZJdrNvsP0xNu73Fc4hOBAfwyH4OA7HkTgax+J4nIiTcQpOw+k4A1/EV/FNfBtn41x8F9/DhbgY38eluBxX4mpci+vxQ/wIN+NW3I47cTfuxf14EA/jUTyOJ/EUfo3f44/4M57DC3gJr+A1vIG38A7+ir/hfXyIf/BIHsjvck/uym25KdflqlyWi3JezsoZOS3fyVfyuZyQY3JEDskB2Sd7ZJfskG2yRTbJRtkg62SNrJIVskw+kCWySBbIfJknc2SWzJQ35BV5QZ6Vp2SqPCGTZIKMkzEySkbIMBkqg2WQDPgrwAAchINxKA7DETgKx+A4nICT8Amcik/hM/g8voyv40ychXNwHs7HBbgIl+AHuAxX4Cpcg+twA27ETbgFt+EO3IV7cB8ewEN4BI/hCfwMv8Rv8TSewbN4Hi/iZbyK1/Em3sa7eA9/xwf4iD/kodyX3+RXuSO35IZckytySS7IOflFfpIf5Bs5JSfluByVw3JQ9ste2S07Zbtslc3ykXwo62WtrJaVslyWyvuyWBbKe/KuzJXZ8o68Ja/JSzJDpss0mSKTZaKMl7EyWkbKcHlchshjMvDvHvAkPo3P/TsHfIyf4Kf4xT88YABJ/rcaOGngJA2cpIGTBk7SwEkaOEkDJw2cpIGTNHDSwEkaOEkDJ2ngpIGTNHCSBk7SwEkDJ2ngJA2cNHCSBk7SwEkaOGngJA2cpIGTNHDSwEkaOEkDJw2cpIGTNHCSBk4aOMl/yZ8SRd1gPq93WQAAAABJRU5ErkJggg==";
 
 export const SECTIONS = {
-	markdown: {
-		title: "Markdown typography",
-		description: "Stock headings, emphasis, code, and terminal hyperlinks.",
-		blocks: [markdown(`# Heading 1
+  markdown: {
+    title: "Markdown typography",
+    description: "Stock headings, emphasis, code, and terminal hyperlinks.",
+    blocks: [
+      markdown(`# Heading 1
 ## Heading 2
 ### Heading 3
 #### Heading 4
@@ -27,12 +29,14 @@ export const SECTIONS = {
 A bare URL also becomes a link: https://example.com/pi-built-in-render
 
 **中文強調**與*斜體* keep emphasis next to CJK characters.
-`)],
-	},
-	lists: {
-		title: "Lists and tasks",
-		description: "Unordered markers, numbered starts, nesting, and checkboxes.",
-		blocks: [markdown(`- Dash marker
+`),
+    ],
+  },
+  lists: {
+    title: "Lists and tasks",
+    description: "Unordered markers, numbered starts, nesting, and checkboxes.",
+    blocks: [
+      markdown(`- Dash marker
 - Another dash
   - Nested unordered item
     1. Nested ordered item
@@ -52,12 +56,14 @@ A list with a custom start follows.
 - [x] Completed task
 - [ ] Pending task
   - [x] Completed nested task
-`)],
-	},
-	quotes: {
-		title: "Quotes and rules",
-		description: "Multiple paragraphs, nested quotes, and block content inside quotes.",
-		blocks: [markdown(`> First quoted paragraph with **emphasis**.
+`),
+    ],
+  },
+  quotes: {
+    title: "Quotes and rules",
+    description: "Multiple paragraphs, nested quotes, and block content inside quotes.",
+    blocks: [
+      markdown(`> First quoted paragraph with **emphasis**.
 >
 > Second quoted paragraph keeps the same quote border.
 >
@@ -73,23 +79,27 @@ A list with a custom start follows.
 ---
 
 A horizontal rule separates this paragraph from the quote.
-`)],
-	},
-	tables: {
-		title: "Tables",
-		description: "GFM tables use box-drawn borders such as ┌─┬─┐ and wrap cells to the available width.",
-		blocks: [markdown(`| Left aligned | Center aligned | Right aligned |
+`),
+    ],
+  },
+  tables: {
+    title: "Tables",
+    description: "GFM tables use box-drawn borders such as ┌─┬─┐ and wrap cells to the available width.",
+    blocks: [
+      markdown(`| Left aligned | Center aligned | Right aligned |
 | :--- | :---: | ---: |
 | **Bold cell** | *Italic cell* | 42 |
 | 中文欄位 | 日本語の文字 | 1234 |
 | \`inline code\` | [Link](https://example.com) | 9 |
 | This deliberately long description wraps across multiple lines in the stock table renderer, including at a terminal width of ninety columns. | Another long cell contains enough words to show centered multiline content without dropping CJK characters 中文. | 98765 |
-`)],
-	},
-	code: {
-		title: "Code fences",
-		description: "Language-specific highlighting and an unlabelled text fallback.",
-		blocks: [markdown(`\`\`\`ts
+`),
+    ],
+  },
+  code: {
+    title: "Code fences",
+    description: "Language-specific highlighting and an unlabelled text fallback.",
+    blocks: [
+      markdown(`\`\`\`ts
 interface Greeting { name: string }
 const greet = ({ name }: Greeting): string => \`Hello, \${name}!\`;
 console.log(greet({ name: "Pi" }));
@@ -115,12 +125,14 @@ done
 Unlabelled code preserves    spaces.
 No language-specific highlighting is requested.
 \`\`\`
-`)],
-	},
-	math: {
-		title: "LaTeX math",
-		description: "Stock inline symbols and two-dimensional display math.",
-		blocks: [markdown(String.raw`Inline dollars $\alpha + \beta = \gamma$ and parentheses \(x_i^2 \neq y\).
+`),
+    ],
+  },
+  math: {
+    title: "LaTeX math",
+    description: "Stock inline symbols and two-dimensional display math.",
+    blocks: [
+      markdown(String.raw`Inline dollars $\alpha + \beta = \gamma$ and parentheses \(x_i^2 \neq y\).
 
 Operators and relations $\sin\theta + \cos\theta \leq 2$, $x \not\in \mathbb{Z}$, and $x \in \mathbb{R}$.
 
@@ -162,13 +174,15 @@ a + b &= c \\
 x &= \frac{c-b}{a}
 \end{aligned}
 \]
-`)],
-	},
-	mermaid: {
-		title: "Mermaid diagrams",
-		description: "Mermaid 12.2.0 vs lovely-mermaid 0.3.3 support table, 9 native diagram families, syntax warnings, and source fallbacks.",
-		blocks: [
-			markdown(`Baseline comparison of official \`mermaid@12.2.0\` (35 diagram families) against stock Pi's bundled \`lovely-mermaid@0.3.3\` in \`@earendil-works/pi-coding-agent@1.5.2\`.
+`),
+    ],
+  },
+  mermaid: {
+    title: "Mermaid diagrams",
+    description:
+      "Mermaid 12.2.0 vs lovely-mermaid 0.3.3 support table, 9 native diagram families, syntax warnings, and source fallbacks.",
+    blocks: [
+      markdown(`Baseline comparison of official \`mermaid@12.2.0\` (35 diagram families) against stock Pi's bundled \`lovely-mermaid@0.3.3\` in \`@earendil-works/pi-coding-agent@1.5.2\`.
 
 | Category | Mermaid 12.2.0 families and stock Pi behavior |
 | :--- | :--- |
@@ -178,7 +192,7 @@ x &= \frac{c-b}{a}
 | Warnings | Partial parses emit the original \`\`\`\` \`\`\`mermaid \`\`\`\` source fence followed by \`Mermaid diagram not rendered: ...\`. |
 | Overflow | Diagrams wider than the available terminal width stay as \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning. |
 `),
-			markdown(`### 1. Flowchart (\`flowchart\` and \`graph\`)
+      markdown(`### 1. Flowchart (\`flowchart\` and \`graph\`)
 
 Directions (\`LR\`, \`TD\`, \`RL\`, \`BT\`), \`%%{init: ...}%%\` directives, and \`subgraph\` containers.
 
@@ -202,7 +216,7 @@ flowchart BT
   A[Bottom] --> B[Top]
 \`\`\`
 `),
-			markdown(`All 9 native flowchart node shapes (\`[rect]\`, \`(round)\`, \`([stadium])\`, \`[[subroutine]]\`, \`[(cylinder)]\`, \`((circle))\`, \`{diamond}\`, \`{{hexagon}}\`, \`>asymmetric]\`).
+      markdown(`All 9 native flowchart node shapes (\`[rect]\`, \`(round)\`, \`([stadium])\`, \`[[subroutine]]\`, \`[(cylinder)]\`, \`((circle))\`, \`{diamond}\`, \`{{hexagon}}\`, \`>asymmetric]\`).
 
 \`\`\`mermaid
 flowchart TD
@@ -251,7 +265,7 @@ flowchart TD
   P -- inline --> Q
 \`\`\`
 `),
-			markdown(`### 2. Sequence diagram (\`sequenceDiagram\`)
+      markdown(`### 2. Sequence diagram (\`sequenceDiagram\`)
 
 \`autonumber\`, \`participant\` and \`actor\` with \`as\`, all 8 message arrows (\`->\`, \`-->\`, \`->>\`, \`-->>\`, \`-x\`, \`--x\`, \`-)\`, \`--)\`), \`+\` and \`-\` activations, \`Note left of\`, \`Note right of\`, \`Note over\`, and control blocks (\`loop\`, \`alt\`/\`else\`, \`opt\`, \`par\`/\`and\`, \`critical\`/\`option\`, \`break\`).
 
@@ -298,7 +312,7 @@ sequenceDiagram
   end
 \`\`\`
 `),
-			markdown(`### 3. State diagram (\`stateDiagram-v2\` and \`stateDiagram\`)
+      markdown(`### 3. State diagram (\`stateDiagram-v2\` and \`stateDiagram\`)
 
 \`[*]\` start and end terminals, \`state "Label" as id\`, \`id: description\`, \`<<choice>>\`, \`<<fork>>\`, \`<<join>>\`, and composite state \`state Comp { ... }\`, drawn as a nested frame. \`note\` lines are parsed but not drawn.
 
@@ -328,7 +342,7 @@ stateDiagram
   Ready --> [*]
 \`\`\`
 `),
-			markdown(`### 4. Class diagram (\`classDiagram\`)
+      markdown(`### 4. Class diagram (\`classDiagram\`)
 
 \`<<interface>>\`, \`+\`/\`-\`/\`#\` visibility, generics \`~T~\` (\`<T>\`), major relationship operators (\`<|--\`, \`<|..\`, \`*--\`, \`o--\`, \`-->\`, \`..>\`, \`--\`, \`..\`), and quoted cardinalities \`"1" --> "0..*"\`.
 
@@ -354,7 +368,7 @@ classDiagram
   Gamma .. Delta
 \`\`\`
 `),
-			markdown(`### 5. ER diagram (\`erDiagram\`)
+      markdown(`### 5. ER diagram (\`erDiagram\`)
 
 Entities with \`PK\`, \`FK\`, and \`UK\` attributes and quoted comments, single-word entity alias \`CUSTOMER[Account]\`, and identifying (\`--\`) and non-identifying (\`..\`) crow's-foot cardinalities (\`||\`, \`|o\`, \`o|\`, \`}o\`, \`o{\`, \`|{\`, \`}|\`).
 
@@ -375,7 +389,7 @@ erDiagram
   PROFILE }o..o{ COUPON : applies
 \`\`\`
 `),
-			markdown(`### 6. Pie chart (\`pie\`)
+      markdown(`### 6. Pie chart (\`pie\`)
 
 Drawn as a labelled bar list with each share as a percentage. \`showData\` appends the raw values.
 
@@ -393,7 +407,7 @@ pie showData
   "Cats" : 30
 \`\`\`
 `),
-			markdown(`### 7. Mindmap (\`mindmap\`)
+      markdown(`### 7. Mindmap (\`mindmap\`)
 
 The indentation tree, drawn with \`├──\` and \`└──\` guides. Node shape markers such as \`((Pi))\` are dropped.
 
@@ -409,7 +423,7 @@ mindmap
     Tools
 \`\`\`
 `),
-			markdown(`### 8. Timeline (\`timeline\`)
+      markdown(`### 8. Timeline (\`timeline\`)
 
 Periods and events as a vertical list. \`section\` lines become headers, and a period can carry several events.
 
@@ -422,7 +436,7 @@ timeline
     2026 : v1.5.0
 \`\`\`
 `),
-			markdown(`### 9. Git graph (\`gitGraph\`)
+      markdown(`### 9. Git graph (\`gitGraph\`)
 
 Commit lanes in \`git log --graph\` style with the newest commit on top. Branch heads, \`tag\`, \`merge\`, and quoted branch names are drawn.
 
@@ -439,7 +453,7 @@ gitGraph
   commit
 \`\`\`
 `),
-			markdown(`### 10. Syntax warning fallbacks
+      markdown(`### 10. Syntax warning fallbacks
 
 Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fence plus \`Mermaid diagram not rendered: ...\` warning for unclosed brackets (\`A[unclosed --> B\`), \`(((doublecircle)))\`, and an unreadable statement in a strict-grammar diagram.
 
@@ -459,7 +473,7 @@ sequenceDiagram
   unreadable final line
 \`\`\`
 `),
-			markdown(`### 11. Source fallbacks
+      markdown(`### 11. Source fallbacks
 
 Retained \`\`\`\` \`\`\`mermaid \`\`\`\` source fences with no warning for width overflow and unsupported \`mermaid@12.2.0\` families (\`gantt\`, \`xychart-beta\`, \`journey\`, \`quadrantChart\`, \`sankey-beta\`, \`requirementDiagram\`, \`C4Context\`, \`kanban\`, \`block-beta\`, \`packet-beta\`, \`architecture-beta\`, \`radar-beta\`, \`treemap\`, \`zenuml\`).
 
@@ -560,12 +574,16 @@ zenuml
   Alice->Bob.greet()
 \`\`\`
 `),
-		],
-	},
-	diff: {
-		title: "Numbered diffs",
-		description: "The isolated one-line replacement uses inverse styling for changed words. A separate hunk replaces several lines.",
-		blocks: [{ kind: "diff", numberedDiff: ` 11 function greet() {
+    ],
+  },
+  diff: {
+    title: "Numbered diffs",
+    description:
+      "The isolated one-line replacement uses inverse styling for changed words. A separate hunk replaces several lines.",
+    blocks: [
+      {
+        kind: "diff",
+        numberedDiff: ` 11 function greet() {
 -12   return "Hello world";
 +12   return "Hello Pi";
  13 }
@@ -576,19 +594,24 @@ zenuml
 +16   const source = readFile("settings.json");
 +17   const settings = JSON.parse(source);
 +18   return validate(settings);
- 19 }` }],
-	},
-	image: {
-		title: "Inline images",
-		description: "Kitty and iTerm2 terminals can display this embedded PNG inline. Other terminals show Pi's text fallback with the filename and dimensions.",
-		blocks: [{ kind: "image", mimeType: "image/png", base64: BAND_PNG, filename: "built-in-band.png" }],
-	},
+ 19 }`,
+      },
+    ],
+  },
+  image: {
+    title: "Inline images",
+    description:
+      "Kitty and iTerm2 terminals can display this embedded PNG inline. Other terminals show Pi's text fallback with the filename and dimensions.",
+    blocks: [{ kind: "image", mimeType: "image/png", base64: BAND_PNG, filename: "built-in-band.png" }],
+  },
 } satisfies Record<string, SectionSpec>;
 
 export function makeDocument(): DemoDocument {
-	const blocks: [SectionBlock, ...SectionBlock[]] = [markdown("# Pi built-in render\n\nThese examples use stock Pi components without assistant-message transforms.")];
-	for (const section of Object.values(SECTIONS)) {
-		blocks.push(markdown(`## ${section.title}\n\n${section.description}`), ...section.blocks);
-	}
-	return { version: 1, blocks };
+  const blocks: [SectionBlock, ...SectionBlock[]] = [
+    markdown("# Pi built-in render\n\nThese examples use stock Pi components without assistant-message transforms."),
+  ];
+  for (const section of Object.values(SECTIONS)) {
+    blocks.push(markdown(`## ${section.title}\n\n${section.description}`), ...section.blocks);
+  }
+  return { version: 1, blocks };
 }
