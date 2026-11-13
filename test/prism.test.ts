@@ -3314,6 +3314,19 @@ test("78. the pane viewer fits the whole picture at zoom 1, zooms around the cen
     "a tall picture is fit to the height and centered across the columns",
   );
 
+  assert.equal(fit(initialModel(1000, 500), wide).row, 9, "a picture 25 rows high in 40 rows leaves 7 rows above it");
+  assert.equal(
+    fit(initialModel(500, 1000), tall).row,
+    2,
+    "a picture as tall as the pane starts right below the header",
+  );
+  const short = screen(1000, 100, 100, 41, 10, 20);
+  assert.deepEqual(
+    [fit(initialModel(1000, 100), short).r, fit(initialModel(1000, 100), short).row],
+    [5, 2 + Math.floor((40 - 5) / 2)],
+    "a wide picture in a tall pane is centered between the header and the bottom",
+  );
+
   const doubled = zoomBy(initialModel(1000, 500), 2);
   assert.deepEqual(
     rect(fit(doubled, wide)),
