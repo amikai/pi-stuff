@@ -36,7 +36,7 @@ Preconditions:
 ## Gotchas
 
 - tmux cannot show kitty images, so pele never runs in a tmux pane. The drive renders the real `AssistantMessageComponent` under a forced `setCapabilities({ images: "kitty" })`. The redraw after the job settles is the shared `core/background.ts`, which `test/prism.test.ts` test 9 covers for PlantUML.
-- The picture is pele's light palette on an opaque white background in every pi theme, drawn at 2x and reported at half its pixels. The longest side is capped at 4096 pixels.
+- The picture is pele's light palette on an opaque white background in every pi theme, drawn at twice the diagram's natural dimensions and reported at half its pixels. Diagrams grow with their content without a pixel-dimension cap. A PNG over 3 MiB is declined.
 - resvg reads no CSS custom properties, and pele colors everything through `var()`. `core/vendor/pele/svg.js` writes each `var()` as its value before resvg draws, and declines when one has no value. A black-box picture means that step was skipped.
 - pele throws on an unknown header word, an empty source and a broken body, and prism declines on any error.
 - Text is drawn with the fonts in `extensions/prism/core/vendor/pele/fonts/`, not the system's, so a picture looks the same on every machine. Chinese labels are drawn with Noto Sans TC, which the worker loads only for a picture whose text needs it. Korean, Thai, Devanagari and emoji draw as empty boxes.

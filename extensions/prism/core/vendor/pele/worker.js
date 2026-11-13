@@ -27,8 +27,6 @@ const drawnText = svg =>
 await initWasm(resvgWasm)
 
 const ZOOM = 2
-// The longest side of the PNG: a larger diagram is drawn smaller, keeping its shape.
-const MAX_SIDE = 4096
 const LIMIT = 100000
 
 const draw = (source, theme) => {
@@ -40,10 +38,9 @@ const draw = (source, theme) => {
   }
   const svg = flatten(drawn.svg, theme)
   if (svg === null) return { error: 'diagram has a color pele left unset' }
-  const zoom = Math.min(ZOOM, MAX_SIDE / Math.max(drawn.width, drawn.height, 1))
   const resvg = new Resvg(svg, {
     background: theme['--pele-bg'] ?? '#ffffff',
-    fitTo: { mode: 'zoom', value: zoom },
+    fitTo: { mode: 'zoom', value: ZOOM },
     font: { fontBuffers: fontsFor(drawnText(svg)).map(font), loadSystemFonts: false, defaultFontFamily: FAMILY, sansSerifFamily: FAMILY },
   })
   // resvg's objects live in wasm memory, which garbage collection never reaches, so each is freed by hand.
