@@ -142,7 +142,7 @@ const DEFAULT_OPTIONS: PrismOptions = {
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
   if (!piTheme || !piTheme.colors) return DEFAULT_THEME;
-  if (piTheme.name === "mono" || piTheme.getColorMode?.() === "none") return {};
+  if (piTheme.name === "mono") return {};
   const colors = piTheme.colors;
   const hex = (token: ThemeToken): string | undefined => {
     const c = colors[token];
@@ -174,7 +174,7 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
 
 export function backgroundFromPiTheme(piTheme: PiTheme | undefined): string | undefined {
   if (!piTheme || !piTheme.colors) return undefined;
-  if (piTheme.name === "mono" || piTheme.getColorMode?.() === "none") return undefined;
+  if (piTheme.name === "mono") return undefined;
   return piTheme.appearance === "light" ? "#ffffff" : "#000000";
 }
 
