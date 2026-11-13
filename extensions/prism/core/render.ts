@@ -1219,7 +1219,15 @@ const tableEdges = (style: Style, block: BlockOf<"table">, rtl: boolean, mirror:
   };
 };
 
-const renderTable = (el, style, block, columns, key, rtl, tip) => {
+const renderTable = (
+  el: ElementTable,
+  style: Style,
+  block: BlockOf<"table">,
+  columns: number,
+  key: string,
+  rtl: boolean,
+  tip?: Tip,
+): RenderElement => {
   const { Box, Text } = el;
   const t = style.theme;
   const box = style.tableStyle === "box";
@@ -1231,14 +1239,14 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
   const flip = rtl && !mirror;
   const { opening, wall, held, marked } = tableEdges(style, block, rtl, mirror);
   if (flip) order.reverse();
-  const lead = (k) => (opening ? h(Text, { key: `${k}.m`, color: t.rule }, opening) : null);
+  const lead = (k: string) => (opening ? h(Text, { key: `${k}.m`, color: t.rule }, opening) : null);
   const columnGap = held ? 0 : gap;
-  const spacer = (k) => (held ? h(Text, { key: k }, LTR_BLANK + " ".repeat(gap - 1)) : null);
+  const spacer = (k: string) => (held ? h(Text, { key: k }, LTR_BLANK + " ".repeat(gap - 1)) : null);
   const ruleChar = style.tableStyle === "grid" ? "━" : "─";
-  const justify = (c) =>
+  const justify = (c: number) =>
     block.align[c] === "right" ? "flex-end" : block.align[c] === "center" ? "center" : "flex-start";
 
-  const rule = (k, heavy) =>
+  const rule = (k: string, heavy: boolean) =>
     h(
       Box,
       { key: k, flexDirection: "row", columnGap: columnGap },
@@ -1253,19 +1261,19 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
       ]),
     );
 
-  const bar = (k, text, lines = 1) =>
+  const bar = (k: string, text: string, lines = 1) =>
     h(
       Text,
       { key: k, color: t.tableRule, dimColor: !t.tableRule },
       Array.from({ length: lines }, () => text).join("\n"),
     );
 
-  const clipped = (lines) => (k, text) => clip(el, width(text), bar(`${k}.b`, text, lines), k);
-  const edge = (k, [left, fill, mid, right]) =>
+  const clipped = (lines: number) => (k: string, text: string) => clip(el, width(text), bar(`${k}.b`, text, lines), k);
+  const edge = (k: string, [left, fill, mid, right]: string) =>
     bar(k, (mirror ? WALL : left) + order.map((c) => fill.repeat(widths[c] + 2)).join(mid) + (mirror ? WALL : right));
 
-  const terminalRow = (cells, k, isHeader) => {
-    const parts = box ? [{ kind: "dim", text: "│ " }] : [];
+  const terminalRow = (cells: Inline[][], k: string, isHeader: boolean) => {
+    const parts: Inline[] = box ? [{ kind: "dim", text: "│ " }] : [];
     order.forEach((c, i) => {
       if (i > 0) parts.push(box ? { kind: "dim", text: " │ " } : { kind: "text", text: " ".repeat(gap) });
       const cell = flowOf({ ...style, shape: "visual" }, cells[c] ?? [], Infinity);
@@ -1275,7 +1283,7 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
       const before = side === "flex-end" ? pad : side === "center" ? Math.floor(pad / 2) : 0;
       parts.push(
         { kind: "text", text: " ".repeat(before) },
-        ...(isHeader ? [{ kind: "strong", children: content }] : content),
+        ...(isHeader ? [{ kind: "strong", children: content } satisfies Inline] : content),
         { kind: "text", text: " ".repeat(pad - before) },
       );
     });
@@ -1283,7 +1291,7 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
     return h(Text, { key: k }, renderInline(el, style, terminalLine(parts), k));
   };
 
-  const row = (cells, k, isHeader, border = bar) =>
+  const row = (cells: Inline[][], k: string, isHeader: boolean, border = bar): RenderElement =>
     rtl && style.shape === "inverse"
       ? terminalRow(cells, k, isHeader)
       : h(
@@ -1334,7 +1342,7 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
           box && border(`${k}.r`, wall(" │")),
         );
 
-  const wrappedRow = (cells, k, isHeader) => {
+  const wrappedRow = (cells: Inline[][], k: string, isHeader: boolean): RenderElement[] => {
     if (!isHeader && cells.some(hasLink))
       return [
         row(
@@ -1376,7 +1384,7 @@ const renderTable = (el, style, block, columns, key, rtl, tip) => {
   return h(Box, _extends({ key: key, flexDirection: "column" }, flip ? { alignSelf: "flex-end" } : {}), body);
 };
 
-const renderHeading = (el, style, block, key) => {
+const renderHeading = (el: ElementTable, style: Style, block: BlockOf<"heading">, key: string): RenderElement => {
   const rtl = flowOf(style, block.inline, Infinity);
   if (!rtl) return drawHeading(el, style, block, block.inline, key);
   if (rtl.base === "R" && mirrored(style) && style.headingStyle === "banner" && block.level <= 2)
@@ -1385,7 +1393,13 @@ const renderHeading = (el, style, block, key) => {
   return rtl.base === "R" && !mirrored(style) ? h(el.Box, { key: key, alignSelf: "flex-end" }, heading) : heading;
 };
 
-const mirroredBanner = (el, style, level, inline, key) => {
+const mirroredBanner = (
+  el: ElementTable,
+  style: Style,
+  level: number,
+  inline: Inline[],
+  key: string,
+): RenderElement => {
   const { Box, Text } = el;
   const color = style.theme.heading;
   const text = h(
@@ -1396,11 +1410,18 @@ const mirroredBanner = (el, style, level, inline, key) => {
     level === 1 ? ` ${WALL}` : "",
   );
   if (level === 2) return text;
-  const edge = (k) => h(Text, { key: k, color: color }, WALL + "━".repeat(width(inlineText(inline)) + 2) + WALL);
+  const edge = (k: string) =>
+    h(Text, { key: k, color: color }, WALL + "━".repeat(width(inlineText(inline)) + 2) + WALL);
   return h(Box, { key: key, flexDirection: "column" }, edge(`${key}.t`), text, edge(`${key}.b`));
 };
 
-const drawHeading = (el, style, block, inline, key) => {
+const drawHeading = (
+  el: ElementTable,
+  style: Style,
+  block: BlockOf<"heading">,
+  inline: Inline[],
+  key: string,
+): RenderElement => {
   const { Box, Text } = el;
   const t = style.theme;
   const color = block.level <= 2 ? t.heading : (t.accent ?? t.heading);
@@ -1434,11 +1455,24 @@ const drawHeading = (el, style, block, inline, key) => {
   }
 };
 
-const ALERT_COLOR = { note: "blue", tip: "green", important: "magenta", warning: "yellow", caution: "red" };
+const ALERT_COLOR: Record<AlertLevel, string> = {
+  note: "blue",
+  tip: "green",
+  important: "magenta",
+  warning: "yellow",
+  caution: "red",
+};
 
-const prose = (style) => (style.inside === "quote" ? { italic: true, color: style.theme.quote } : {});
+const prose = (style: Style): Look => (style.inside === "quote" ? { italic: true, color: style.theme.quote } : {});
 
-const renderParagraph = (el, style, block, columns, key, tip) => {
+const renderParagraph = (
+  el: ElementTable,
+  style: Style,
+  block: BlockOf<"paragraph">,
+  columns: number,
+  key: string,
+  tip?: Tip,
+): RenderElement => {
   const { Box, Text } = el;
   const rtl = flowOf(style, block.inline, columns);
   if (rtl?.base === "R")
@@ -1454,14 +1488,23 @@ const renderParagraph = (el, style, block, columns, key, tip) => {
   );
 };
 
-const leadInline = (blocks) => {
+const leadInline = (blocks: Block[]): Inline[] => {
   const first = blocks[0];
   if (first?.kind === "paragraph" || first?.kind === "heading") return first.inline;
   if (first?.kind === "list") return first.items[0]?.inline ?? [];
   return first?.kind === "quote" || first?.kind === "alert" ? leadInline(first.blocks) : [];
 };
 
-const renderNested = (el, style, blocks, columns, key, copy, fold, tip) =>
+const renderNested = (
+  el: ElementTable,
+  style: Style,
+  blocks: Block[],
+  columns: number,
+  key: string,
+  copy?: CopyButton,
+  fold?: Fold,
+  tip?: Tip,
+): RenderElement[] =>
   renderBlocks(
     el,
     style,
@@ -1473,12 +1516,21 @@ const renderNested = (el, style, blocks, columns, key, copy, fold, tip) =>
     tip,
   );
 
-const quoteBar = (el, text, color, lines) =>
+const quoteBar = (el: ElementTable, text: string, color: string | undefined, lines: number): RenderElement =>
   lines <= 1
     ? h(el.Text, { color: color }, text)
     : clip(el, width(text), h(el.Text, { color: color }, Array.from({ length: lines }, () => text).join("\n")));
 
-const renderQuote = (el, style, block, columns, key, copy, fold, tip) => {
+const renderQuote = (
+  el: ElementTable,
+  style: Style,
+  block: BlockOf<"quote">,
+  columns: number,
+  key: string,
+  copy?: CopyButton,
+  fold?: Fold,
+  tip?: Tip,
+): RenderElement => {
   const { Box } = el;
   const t = style.theme;
   const inner = columns - 2;
@@ -1504,7 +1556,16 @@ const renderQuote = (el, style, block, columns, key, copy, fold, tip) => {
   );
 };
 
-const renderAlert = (el, style, block, columns, key, copy, fold, tip) => {
+const renderAlert = (
+  el: ElementTable,
+  style: Style,
+  block: BlockOf<"alert">,
+  columns: number,
+  key: string,
+  copy?: CopyButton,
+  fold?: Fold,
+  tip?: Tip,
+): RenderElement => {
   const { Box, Text } = el;
   const color = ALERT_COLOR[block.level];
   const inner = columns - 4;
@@ -1519,7 +1580,7 @@ const renderAlert = (el, style, block, columns, key, copy, fold, tip) => {
     : null;
   if (hebrew && mirrored(style)) {
     const lines = 1 + (block.blocks.length ? 1 + heightOf(block.blocks, inner) : 0);
-    const edge = (k) => h(Text, { key: k, color: color }, WALL + "─".repeat(inner + 2) + WALL);
+    const edge = (k: string) => h(Text, { key: k, color: color }, WALL + "─".repeat(inner + 2) + WALL);
     return h(
       Box,
       { key: key, flexDirection: "column", alignSelf: "flex-start" },
