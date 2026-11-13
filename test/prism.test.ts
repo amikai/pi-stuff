@@ -2973,3 +2973,31 @@ test("87. a tall pele picture is drawn with more than 20 rows on Kitty and at mo
 	assert.ok((await rowsUnder("kitty")) > 20, "Kitty draws it taller than 20 rows");
 	assert.ok((await rowsUnder("iterm2")) <= 20, "iTerm2 keeps it within 20 rows");
 });
+
+test("88. /prism checkhealth holds a PlantUML sample that Kitty draws taller than 20 rows and iTerm2 fits into 20", async () => {
+	const samples = [...showcaseText().matchAll(/```plantuml\n[\s\S]*?\n```/g)].map((match) => match[0]);
+	const rowsUnder = async (images: "kitty" | "iterm2") => {
+		const terminal = plantumlTerminal({ images });
+		const h = createHarness();
+		try {
+			await h.emit("session_start");
+			const rows: number[] = [];
+			for (const sample of samples) {
+				const comp = reply(sample);
+				comp.render(fittedAt(100));
+				await plantumlJobs.idle();
+				const lines = comp.render(fittedAt(100));
+				const at = lines.findIndex((line) => line.includes(images === "kitty" ? KITTY_IMAGE : ITERM2_IMAGE));
+				assert.ok(at >= 0, `${images}: the sample is drawn`);
+				rows.push(images === "kitty" ? Number(/[,;]r=(\d+)/.exec(lines[at]!)?.[1]) : Number(/\x1b\[(\d+)A/.exec(lines[at]!)?.[1] ?? 0) + 1);
+			}
+			return rows;
+		} finally {
+			terminal.restore();
+			h.cleanup();
+		}
+	};
+	const kitty = await rowsUnder("kitty");
+	assert.ok(Math.max(...kitty) > 20, `one sample is taller than 20 rows on Kitty, got ${kitty}`);
+	assert.ok(Math.max(...(await rowsUnder("iterm2"))) <= 20, "iTerm2 keeps every sample within 20 rows");
+});
