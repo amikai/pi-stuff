@@ -1721,6 +1721,7 @@ test("38. a pele picture between 2 and 3 MiB reaches the terminal and the clipbo
 	};
 	await h.emit("session_start");
 	const png = hugePng(2000, 1500, 2.5 * 1024 * 1024);
+	assert.equal(pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024)).state, "drawn", "a PNG exactly 3 MiB is accepted even when both sides exceed 4096 pixels");
 	assert.deepEqual(pictureOf(hugePng(8141, 4530, 3 * 1024 * 1024 + 1)), { state: "declined" }, "a PNG over 3 MiB is declined");
 	assert.deepEqual(pictureOf(new Uint8Array([1, 2, 3])), { state: "declined" }, "bytes that are not a PNG are declined");
 
@@ -1844,16 +1845,31 @@ test("44. pele draws every /prism checkhealth sample at twice the width it repor
 	peleJobs.clear();
 });
 
-test("45. pele draws a hyphenated flowchart the text renderer cannot fit, and caps the PNG's longest side at 4096 pixels", async () => {
+test("45. pele draws a hyphenated flowchart the text renderer cannot fit, and flowcharts and C4 grow beyond 4096 pixels without shrinking", async () => {
 	peleJobs.clear();
 	const hyphenated = fanOut((n) => `child-${n}`).split("\n").slice(1, -1).join("\n");
 	const style = resolveStyle({});
 	assert.equal(textVerdict(hyphenated, style, 80, 0).fits, false, "80 columns are too few for the text art");
 	assert.equal((await drawnBy(hyphenated)).state, "drawn");
-	const wide = await drawnBy(["flowchart LR", ...Array.from({ length: 60 }, (_, n) => `  n${n}[Node number ${n}] --> n${n + 1}`)].join("\n"));
-	assert.ok(wide.state === "drawn");
-	const pixels = pngPixels(wide.png);
-	assert.ok(Math.max(pixels.width, pixels.height) <= 4096 && Math.max(pixels.width, pixels.height) > 4000, `the longest side is capped near 4096, got ${pixels.width}x${pixels.height}`);
+	for (const kind of ["flowchart LR", "C4Component"]) {
+		let previous: { width: number; height: number } | null = null;
+		for (const count of [12, 16]) {
+			const source = kind === "flowchart LR"
+				? [kind, ...Array.from({ length: count }, (_, n) => `  n${n}[Node number ${n}] --> n${n + 1}`)].join("\n")
+				: [kind, 'UpdateLayoutConfig($c4ShapeInRow="16")', ...Array.from({ length: count }, (_, n) => `Component(n${n}, "Component ${n}", "Service", "Handles requests")`), ...Array.from({ length: count - 1 }, (_, n) => `Rel(n${n}, n${n + 1}, "Calls")`)].join("\n");
+			const picture = await drawnBy(source);
+			assert.ok(picture.state === "drawn", `${kind} with ${count} components draws`);
+			const pixels = pngPixels(picture.png);
+			assert.ok(pixels.width > 4096, `${kind} grows beyond 4096 pixels, got ${pixels.width}x${pixels.height}`);
+			assert.ok(Buffer.from(picture.png, "base64").length < 3 * 1024 * 1024, "the real PNG stays below 3 MiB");
+			assert.deepEqual({ width: picture.width, height: picture.height }, { width: pixels.width / 2, height: pixels.height / 2 }, "terminal dimensions stay at half the pixels");
+			if (previous) {
+				assert.ok(pixels.width > previous.width, `${kind} gets wider with more components`);
+				assert.equal(pixels.height, previous.height, `${kind} keeps its scale instead of shrinking to fit`);
+			}
+			previous = pixels;
+		}
+	}
 	peleJobs.clear();
 });
 
