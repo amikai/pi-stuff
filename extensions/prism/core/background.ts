@@ -6,6 +6,11 @@ export type Background<V> = {
    * keeps its own `wake.onInvalidate`, not only the first.
    */
   get(key: string, run: () => Promise<V>, wake: Wake): V | undefined;
+  /**
+   * Runs `run` for a key that already has a value, and replaces the value when it settles. Until then `get` keeps
+   * returning the old one. A key whose job is already running joins it.
+   */
+  refresh(key: string, run: () => Promise<V>, wake: Wake): void;
   put(key: string, value: V): void;
   readonly cache: ReadonlyMap<string, V>;
   readonly pending: ReadonlyMap<string, ReadonlySet<() => void>>;
@@ -44,6 +49,41 @@ export const background = <V>(options: BackgroundOptions<V>): Background<V> => {
     while (running < options.concurrency && queue.length > 0) queue.shift()!();
   };
 
+  const start = (key: string, run: () => Promise<V>, wake: Wake): void => {
+    if (!pending.has(key)) {
+      const invalidators = new Set<() => void>();
+      pending.set(key, invalidators);
+      queue.push(() => {
+        running++;
+        const started = generation;
+        run()
+          .catch(() => options.crashed)
+          .then((value) => {
+            if (started === generation) store(key, value);
+          })
+          .finally(() => {
+            if (started !== generation) {
+              running--;
+              pump();
+              return;
+            }
+            pending.delete(key);
+            running--;
+            pump();
+            try {
+              for (const invalidate of invalidators) invalidate();
+              wake.requestRender();
+            } finally {
+              release();
+            }
+          })
+          .catch(() => {});
+      });
+      pump();
+    }
+    if (wake.onInvalidate) pending.get(key)?.add(wake.onInvalidate);
+  };
+
   return {
     get(key, run, wake) {
       const hit = cache.get(key);
@@ -52,40 +92,10 @@ export const background = <V>(options: BackgroundOptions<V>): Background<V> => {
         cache.set(key, hit);
         return hit;
       }
-      if (!pending.has(key)) {
-        const invalidators = new Set<() => void>();
-        pending.set(key, invalidators);
-        queue.push(() => {
-          running++;
-          const started = generation;
-          run()
-            .catch(() => options.crashed)
-            .then((value) => {
-              if (started === generation) store(key, value);
-            })
-            .finally(() => {
-              if (started !== generation) {
-                running--;
-                pump();
-                return;
-              }
-              pending.delete(key);
-              running--;
-              pump();
-              try {
-                for (const invalidate of invalidators) invalidate();
-                wake.requestRender();
-              } finally {
-                release();
-              }
-            })
-            .catch(() => {});
-        });
-        pump();
-      }
-      if (wake.onInvalidate) pending.get(key)?.add(wake.onInvalidate);
+      start(key, run, wake);
       return undefined;
     },
+    refresh: start,
     put: store,
     cache,
     pending,

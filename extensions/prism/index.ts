@@ -15,6 +15,7 @@ import {
   Container,
   colorToHex,
   getCapabilities,
+  getCellDimensions,
   Markdown,
   matchesKey,
   type OverlayOptions,
@@ -940,10 +941,17 @@ export default function prismExtension(
     const copy = makeCopyButton();
     const picture = makePictureButtons();
     const fold = makeFolder(options?.onInvalidate);
-    const rowLimit = pictureRows(getCapabilities().images);
+    const protocol = getCapabilities().images;
+    const rowLimit = pictureRows(protocol);
     const drawn = drawDiagrams(
       EL,
-      { ...activeStyle, images: Boolean(getCapabilities().images), pictureRows: rowLimit },
+      {
+        ...activeStyle,
+        images: Boolean(protocol),
+        pictureRows: rowLimit,
+        pictureFill: activeStyle.pictureFill && protocol === "kitty",
+        cellWidthPx: getCellDimensions().widthPx,
+      },
       blocks,
       columns - markerRoom(activeStyle),
       peleEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate
@@ -977,7 +985,7 @@ export default function prismExtension(
       }
     }
     for (const [i, picture] of pictures) {
-      const fit = fitImage(picture, columns, rowLimit);
+      const fit = fitImage(picture, columns, rowLimit, "natural");
       drawn.set(i, {
         element: h(EL.Image!, {
           key: `b${i}`,

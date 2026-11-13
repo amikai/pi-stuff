@@ -30,7 +30,9 @@ const { AssistantMessageComponent, initTheme, SessionManager, VERSION } = await 
 const { setTheme, theme: activePiGlobalTheme } = await import(
   pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
 );
-const { matchesKey, resetCapabilitiesCache, setCapabilities, visibleWidth } = await import("@earendil-works/pi-tui");
+const { getCellDimensions, matchesKey, resetCapabilitiesCache, setCapabilities, visibleWidth } = await import(
+  "@earendil-works/pi-tui"
+);
 
 const stripAnsi = (s) =>
   s
@@ -651,6 +653,16 @@ if (cmd === "drive") {
     assert.ok(!drawnPlain.includes("(pele"), "and no note carries a pele suffix");
     assert.ok(!drawnPlain.includes("child-0[Child number 0]"), "the hyphenated fan-out is a picture, not source");
 
+    const placedColumns = [...drawnLines.join("\n").matchAll(/\x1b_G[^;\x1b]*[,;]c=(\d+)/g)].map((m) => Number(m[1]));
+    assert.equal(placedColumns.length, 3, "each picture has one kitty placement");
+    for (const columns of placedColumns) assert.ok(columns >= 77, `a picture spans the 80 columns, got ${columns}`);
+    const filled = peleJobs.cache.get(timeline);
+    assert.equal(filled?.state, "drawn", "the timeline is cached as a picture");
+    assert.ok(
+      Buffer.from(filled.png, "base64").readUInt32BE(16) >= 78 * getCellDimensions().widthPx,
+      "the PNG is at least as wide as the 78 columns it spans, in pixels",
+    );
+
     const widePlain = comp.render(wide).map(stripAnsi).join("\n");
     assert.equal(count(widePlain, "Child number 3"), 2, "at 140 columns both fan-outs are box art");
     assert.ok(
@@ -683,9 +695,9 @@ if (cmd === "drive") {
     const wake = { requestRender: () => {} };
     for (const word of PELE_KINDS) {
       assert.ok(PELE_HINT.includes(word), `the hint names ${word}`);
-      pelePicture(minimal[word], wake);
+      pelePicture(minimal[word], wake, null);
       await peleJobs.idle();
-      assert.equal(pelePicture(minimal[word], wake).state, "drawn", `pele draws ${word}`);
+      assert.equal(pelePicture(minimal[word], wake, null).state, "drawn", `pele draws ${word}`);
     }
 
     const picture = peleJobs.cache.get(timeline);

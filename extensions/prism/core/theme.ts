@@ -70,6 +70,8 @@ export type Style = {
   htmlCopy: ClipboardBackend | null;
   images: boolean;
   pictureRows: number;
+  pictureFill: boolean;
+  cellWidthPx: number;
   httpLinks: boolean;
   editorLinks: boolean;
   fileLinks: string | null;
@@ -118,6 +120,8 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
     htmlCopy: null,
     images: false,
     pictureRows: pictureRows(null),
+    pictureFill: options.pictureFill !== false,
+    cellWidthPx: 10,
     httpLinks: false,
     editorLinks: false,
     fileLinks: null,

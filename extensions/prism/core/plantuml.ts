@@ -147,7 +147,7 @@ export const drawPlantUml = (el: ElementTable, blocks: Block[], columns: number,
     if (entry.kind === "error") {
       drawn.set(i, { note: entry.note });
     } else {
-      const fit = fitImage(entry, columns, hooks.pictureRows);
+      const fit = fitImage(entry, columns, hooks.pictureRows, "natural");
       drawn.set(i, {
         element: h(el.Image!, {
           key: `b${i}`,
