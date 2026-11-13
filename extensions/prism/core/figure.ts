@@ -1,7 +1,14 @@
-import { h } from "./jsx.ts";
-import { FIGURE_ROLES } from "./markdown.ts";
-import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
-import { asIs, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
+import { type ElementTable, h, type RenderElement } from "./jsx.ts";
+import { type Block, FIGURE_ROLES } from "./markdown.ts";
+import { cells, type DrawnBlock, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
+import { asIs, type Held, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
+import type { Style, Theme } from "./theme.ts";
+
+export type FigureRole = (typeof FIGURE_ROLES)[number];
+export type FigureRun = { text: string; role?: FigureRole };
+export type FigureFinding = { line: number; message: string };
+type ThemeToken = keyof Theme;
+type CodeBlock = Extract<Block, { kind: "code" }>;
 
 const _extends = Object.assign;
 
@@ -27,8 +34,8 @@ const FIGURE_HINT = [
 
 const MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join("|")}):([^{}]*)\\}`, "g");
 const MARKER = /\{([A-Za-z][\w-]*):/g;
-const TEXT_FORMS = { "▶": "►", "◀": "◄" };
-const ROLE_TOKENS = {
+const TEXT_FORMS: Record<string, string> = { "▶": "►", "◀": "◄" };
+const ROLE_TOKENS: Record<FigureRole, ThemeToken> = {
   accent: "diagram",
   warn: "codeFlag",
   ok: "codeString",
@@ -40,14 +47,14 @@ const EMOJI_CAPABLE = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\u20e3/u
 const CONTROL = /[\0-\x08\x0b-\x1f\x7f-\x9f]/;
 const DIRECTION_MARK = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 const INVISIBLE = /[\u00ad\u200b-\u200d\u2028\u2029\ufeff]/;
-const isRole = (name) => FIGURE_ROLES.some((role) => role === name);
+const isRole = (name: string): name is FigureRole => FIGURE_ROLES.some((role) => role === name);
 
-const isFigureLang = (lang) => lang.toLowerCase() === "figure";
+const isFigureLang = (lang: string) => lang.toLowerCase() === "figure";
 
-const textForm = (text) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
+const textForm = (text: string) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
 
-const figureRuns = (line) => {
-  const runs = [];
+const figureRuns = (line: string): FigureRun[] => {
+  const runs: FigureRun[] = [];
   let at = 0;
   for (const match of line.matchAll(MARKUP)) {
     const [whole, role, text = ""] = match;
@@ -59,19 +66,19 @@ const figureRuns = (line) => {
   return runs;
 };
 
-const figureText = (line) =>
+const figureText = (line: string) =>
   figureRuns(line)
     .map((run) => run.text)
     .join("");
 
-const swapsTwoLetters = (name, role) => {
+const swapsTwoLetters = (name: string, role: string) => {
   if (name.length !== role.length) return false;
   const differ = [...name].flatMap((letter, i) => (letter === role[i] ? [] : [i]));
   const [first = -1, second = -1] = differ;
   return differ.length === 2 && second === first + 1 && name[first] === role[second] && name[second] === role[first];
 };
 
-const markupMessage = (marker, drawn, lastClose) => {
+const markupMessage = (marker: RegExpExecArray, drawn: Set<number>, lastClose: number): string | undefined => {
   const [written, name = ""] = marker;
   if (drawn.has(marker.index)) return undefined;
   const lower = name.toLowerCase();
@@ -82,13 +89,13 @@ const markupMessage = (marker, drawn, lastClose) => {
   return `"${written}" holds braces, markup does not nest`;
 };
 
-const markupMessages = (line) => {
+const markupMessages = (line: string) => {
   const drawn = new Set([...line.matchAll(MARKUP)].map((match) => match.index));
   const lastClose = line.lastIndexOf("}");
   return [...line.matchAll(MARKER)].flatMap((marker) => markupMessage(marker, drawn, lastClose) ?? []);
 };
 
-const quoted = (glyphs) => {
+const quoted = (glyphs: string[]) => {
   const distinct = [...new Set(glyphs)];
   const listed = distinct
     .slice(0, LISTED_GLYPHS)
@@ -97,7 +104,7 @@ const quoted = (glyphs) => {
   return distinct.length > LISTED_GLYPHS ? `${listed} and ${distinct.length - LISTED_GLYPHS} more` : listed;
 };
 
-const lineMessages = (line) => {
+const lineMessages = (line: string): string[] => {
   const text = figureText(line);
   const glyphs = graphemes(text);
   const emoji = glyphs.filter((glyph) => EMOJI_CAPABLE.test(glyph));
@@ -113,16 +120,16 @@ const lineMessages = (line) => {
   ];
 };
 
-const withoutTrailingBlanks = (lines) => {
+const withoutTrailingBlanks = (lines: string[]) => {
   let end = lines.length;
   while (end > 0 && !lines[end - 1]?.trim()) end--;
   return lines.slice(0, end);
 };
 
-const checkFigure = (lines, first = 0) =>
+const checkFigure = (lines: string[], first = 0): FigureFinding[] =>
   lines.flatMap((line, index) => lineMessages(line).map((message) => ({ line: first + index + 1, message })));
 
-const leadingBlanks = (lines) => {
+const leadingBlanks = (lines: string[]) => {
   const start = lines.findIndex((line) => line.trim());
   return start < 0 ? lines.length : start;
 };
