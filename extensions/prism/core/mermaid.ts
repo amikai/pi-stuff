@@ -2,7 +2,7 @@ import type { Wake } from "./background.ts";
 import type { ChartArt, Pie, Rgb } from "./charts.ts";
 import { ganttText, pieRgba, pieText, rgbaPng } from "./charts.ts";
 import { drawFigure, isFigureLang } from "./figure.ts";
-import { h } from "./jsx.ts";
+import { type ElementTable, h, type RenderElement } from "./jsx.ts";
 import { fitImage, ratexColor } from "./latex.ts";
 import type { Block } from "./markdown.ts";
 import type { Picture } from "./pele.ts";
@@ -10,7 +10,7 @@ import { pelePicture } from "./pele.ts";
 import type { Drawn, DrawnBlock } from "./render.ts";
 import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
 import { asIs, hasRtl, holdEngine, holdRow, holdVisual, led } from "./rtl.ts";
-import type { Style } from "./theme.ts";
+import type { Style, Theme } from "./theme.ts";
 import { renderMermaidAscii, setChartSize } from "./vendor/mermaid-text.js";
 
 const _extends = Object.assign;
@@ -251,7 +251,7 @@ const LINE = /[─-╿◇▏]/;
 const ARROW = /[►◄▲▼]/;
 const PART = /[▐▏▎▍▌▋▊▉]/;
 
-const barStart = (row, c) => {
+const barStart = (row: string[], c: number): number => {
   const ch = row[c] ?? "";
   const solid = BLOCK.test(ch)
     ? ch
@@ -266,19 +266,23 @@ const barStart = (row, c) => {
   return start;
 };
 
-const diagramPalette = (t) =>
+const diagramPalette = (t: Theme): string[] =>
   [...new Set([t.link, t.number, t.heading, t.emphasis, t.path, t.codeFlag, t.accent])].filter((c) => c !== undefined);
 
-const paint = (art, style, series) => {
+export type Painted = { grid: string[][]; colors: (string | undefined)[][] };
+
+type Rect = { r: number; c: number; r2: number; c2: number };
+
+const paint = (art: string, style: Style, series: number[][] | undefined): Painted => {
   const t = style.theme;
   const grid = art.split("\n").map(cells);
-  const cell = (r, c) => grid[r]?.[c] ?? "";
-  const color = grid.map((row) => row.map(() => undefined));
+  const cell = (r: number, c: number) => grid[r]?.[c] ?? "";
+  const color: (string | undefined)[][] = grid.map((row) => row.map(() => undefined));
   const palette = diagramPalette(t);
-  const next = (i) => palette[i % palette.length];
-  const labels = new Map();
+  const next = (i: number) => palette[i % palette.length];
+  const labels = new Map<string, string>();
 
-  const rects = [];
+  const rects: Rect[] = [];
   for (let r = 0; r < grid.length; r++) {
     for (let c = 0; c < (grid[r]?.length ?? 0); c++) {
       if (!/[┌╭(]/.test(cell(r, c))) continue;
@@ -291,7 +295,7 @@ const paint = (art, style, series) => {
       rects.push({ r, c, r2, c2 });
     }
   }
-  const inside = (a, b) => a !== b && b.r > a.r && b.r2 < a.r2 && b.c > a.c && b.c2 < a.c2;
+  const inside = (a: Rect, b: Rect) => a !== b && b.r > a.r && b.r2 < a.r2 && b.c > a.c && b.c2 < a.c2;
   for (const box of rects.filter((a) => !rects.some((b) => inside(a, b)))) {
     const { r, c, r2, c2 } = box;
     const label = grid
@@ -308,7 +312,7 @@ const paint = (art, style, series) => {
     ...new Set(grid.flatMap((row) => row.flatMap((ch, c) => (BLOCK.test(ch) && row[c - 1] !== ch ? [c] : [])))),
   ].sort((a, b) => a - b);
   const ends = bars.map((x) => {
-    const row = grid.find((row) => BLOCK.test(row[x] ?? ""));
+    const row = grid.find((row) => BLOCK.test(row[x] ?? "")) as string[];
     let end = x;
     while (row[end + 1] === row[x]) end++;
     return end;
@@ -318,7 +322,8 @@ const paint = (art, style, series) => {
     return r * 2 + (grid[r][x] === "▄" ? 1 : 0);
   });
   const single = bars.length > 1 && bars.every((x, i) => i === 0 || x - ends[i - 1] > 2);
-  const barColor = (i) => (single ? (tops[i] === Math.min(...tops) ? (t.emphasis ?? t.accent) : t.quote) : next(i));
+  const barColor = (i: number) =>
+    single ? (tops[i] === Math.min(...tops) ? (t.emphasis ?? t.accent) : t.quote) : next(i);
   series?.forEach((row, r) => {
     row.forEach((owner, c) => {
       if (owner >= 0 && grid[r]?.[c]?.trim()) color[r][c] = next(owner);
@@ -339,19 +344,24 @@ const paint = (art, style, series) => {
   return { grid, colors: color };
 };
 
-const paintPie = (art, slices, style) => {
+const paintPie = (art: string, slices: number[][], style: Style): Painted => {
   const t = style.theme;
   const palette = diagramPalette(t);
   const grid = art.split("\n").map(cells);
-  const hue = (slice) => (slice < 0 ? t.diagramText : palette[slice % palette.length]);
+  const hue = (slice: number) => (slice < 0 ? t.diagramText : palette[slice % palette.length]);
   return { grid, colors: grid.map((row, r) => row.map((_, c) => hue(slices[r]?.[c] ?? -1))) };
 };
 
-const painted = new WeakMap();
+const painted = new WeakMap<Theme, Map<string, Painted>>();
 
-const piePainted = new WeakMap();
+const piePainted = new WeakMap<Theme, WeakMap<number[][], Painted>>();
 
-const painting = (style, art, slices, series) => {
+const painting = (
+  style: Style,
+  art: string,
+  slices: number[][] | undefined,
+  series: number[][] | undefined,
+): Painted => {
   if (!slices) {
     const cache = painted.get(style.theme) ?? new Map();
     painted.set(style.theme, cache);
@@ -364,7 +374,15 @@ const painting = (style, art, slices, series) => {
   return done;
 };
 
-const boxArt = ({ Box, Text }, style, art, key, marks = [], slices, series) => {
+const boxArt = (
+  { Box, Text }: ElementTable,
+  style: Style,
+  art: string,
+  key: string,
+  marks: Marked[] = [],
+  slices?: number[][],
+  series?: number[][],
+): RenderElement => {
   const { grid, colors } = painting(style, art, slices, series);
   const visual = style.reorder && style.shape === "visual" && hasRtl(art);
   return h(
@@ -378,13 +396,13 @@ const boxArt = ({ Box, Text }, style, art, key, marks = [], slices, series) => {
           : visual
             ? holdVisual(row)
             : asIs(row);
-      const marked = row.map(() => undefined);
+      const marked: (Mark | undefined)[] = row.map(() => undefined);
       for (const [phrase, mark] of marks)
         for (let c = 0; c + phrase.length <= row.length; c++)
           if (phrase.every((ch, k) => row[c + k] === ch)) for (let k = 0; k < phrase.length; k++) marked[c + k] = mark;
-      const hueAt = (p) => colors[i]?.[from[p]];
-      const markAt = (p) => marked[from[p]];
-      const parts = [];
+      const hueAt = (p: number) => colors[i]?.[from[p]];
+      const markAt = (p: number) => marked[from[p]];
+      const parts: RenderElement[] = [];
       let at = 0;
       while (at < chars.length) {
         const hue = hueAt(at);
