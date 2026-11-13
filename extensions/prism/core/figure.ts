@@ -8,6 +8,9 @@ export type FigureRole = (typeof FIGURE_ROLES)[number];
 export type FigureRun = { text: string; role?: FigureRole };
 export type FigureFinding = { line: number; message: string };
 type ThemeToken = keyof Theme;
+type HuedRole = Extract<FigureRole, "warn" | "ok" | "note">;
+type RoleColors = Partial<Record<HuedRole, string>>;
+type Channels = [number, number, number];
 type CodeBlock = Extract<Block, { kind: "code" }>;
 
 const _extends = Object.assign;
@@ -134,9 +137,9 @@ const leadingBlanks = (lines: string[]) => {
   return start < 0 ? lines.length : start;
 };
 
-const ROLE_HUES = { warn: 0, ok: 120, note: 45 };
+const ROLE_HUES: Record<HuedRole, number> = { warn: 0, ok: 120, note: 45 };
 
-const INK = [
+const INK: ThemeToken[] = [
   "accent",
   "heading",
   "tableHeader",
@@ -156,7 +159,7 @@ const HEX = /^#(?:[0-9a-f]{3}){1,2}$/i;
 
 const RGB = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i;
 
-const channelsOf = (color) => {
+const channelsOf = (color: string): Channels | undefined => {
   const value = color.trim();
   if (HEX.test(value)) {
     const full = value.length === 4 ? [...value.slice(1)].map((digit) => digit + digit).join("") : value.slice(1);
@@ -167,9 +170,9 @@ const channelsOf = (color) => {
   return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : undefined;
 };
 
-const colorKey = (channels) => channels.join(",");
+const colorKey = (channels: Channels) => channels.join(",");
 
-const hueOf = (channels) => {
+const hueOf = (channels: Channels) => {
   const [r, g, b] = channels.map((channel) => Math.min(channel, 255) / 255);
   const max = Math.max(r, g, b);
   const spread = max - Math.min(r, g, b);
@@ -180,11 +183,11 @@ const hueOf = (channels) => {
   return { hue: (sector * 60 + 360) % 360, saturation };
 };
 
-const hueDistance = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+const hueDistance = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
 
-const pickedRoles = new WeakMap();
+const pickedRoles = new WeakMap<Theme, RoleColors>();
 
-const figureRoleColors = (theme) => {
+const figureRoleColors = (theme: Theme): RoleColors => {
   const known = pickedRoles.get(theme);
   if (known) return known;
   const inks = [...new Set(INK.map((token) => theme[token]).filter((color) => color !== undefined))]
@@ -195,8 +198,8 @@ const figureRoleColors = (theme) => {
     .filter((ink) => ink.saturation > 0.15);
   const frame = theme.diagram === undefined ? undefined : channelsOf(theme.diagram);
   const taken = new Set(frame ? [colorKey(frame)] : []);
-  const picked = {};
-  for (const role of Object.keys(ROLE_HUES)) {
+  const picked: RoleColors = {};
+  for (const role of Object.keys(ROLE_HUES) as HuedRole[]) {
     const [best] = inks
       .filter((ink) => !taken.has(ink.key))
       .sort((a, b) => hueDistance(a.hue, ROLE_HUES[role]) - hueDistance(b.hue, ROLE_HUES[role]));
@@ -208,18 +211,18 @@ const figureRoleColors = (theme) => {
   return picked;
 };
 
-const isHued = (role) => role in ROLE_HUES;
+const isHued = (role: FigureRole): role is HuedRole => role in ROLE_HUES;
 
-const runColor = (style, role) => {
+const runColor = (style: Style, role?: FigureRole): string | undefined => {
   if (!role) return style.theme.diagramText;
   const own = style.theme[ROLE_TOKENS[role]];
   if (!isHued(role) || (own !== undefined && !channelsOf(own))) return own;
   return figureRoleColors(style.theme)[role] ?? own;
 };
 
-const isBold = (style, role) => role === "strong" || (role === "warn" && !runColor(style, "warn"));
+const isBold = (style: Style, role?: FigureRole) => role === "strong" || (role === "warn" && !runColor(style, "warn"));
 
-const heldRuns = (style, runs) => {
+const heldRuns = (style: Style, runs: FigureRun[]): FigureRun[] => {
   const hold = !hasRtl(runs.map((run) => run.text).join(""))
     ? null
     : mirrored(style)
@@ -233,7 +236,7 @@ const heldRuns = (style, runs) => {
   const roles = runs.flatMap((run) => [...run.text].map(() => run.role));
   const base = hold ? hold(chars) : asIs(chars);
   const { cells, from } = mirrored(style) ? led(chars, base) : base;
-  const held = [];
+  const held: FigureRun[] = [];
   cells.forEach((ch, p) => {
     const role = roles[from[p]];
     const last = held.at(-1);
@@ -243,7 +246,7 @@ const heldRuns = (style, runs) => {
   return held;
 };
 
-const figureElement = ({ Box, Text }, style, rows, key) =>
+const figureElement = ({ Box, Text }: ElementTable, style: Style, rows: FigureRun[][], key: string): RenderElement =>
   h(
     Box,
     { key: key, flexDirection: "column", paddingLeft: mirrored(style) ? 0 : 2 },
