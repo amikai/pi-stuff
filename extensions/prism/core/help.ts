@@ -386,26 +386,45 @@ prism --> You : drawn reply
 @enduml
 \`\`\`
 
-A picture's height follows its width. A terminal that speaks the kitty protocol, such as kitty, Ghostty or Rex, draws a tall diagram at its full size. iTerm2 fits it into 20 rows.
+A picture is as wide as the terminal allows, and its height follows its width. This diagram is wider than most terminals, so a terminal that speaks the kitty protocol, such as kitty, Ghostty or Rex, draws it across the full width. iTerm2 fits it into 20 rows.
 
 \`\`\`plantuml
 @startuml
 participant You
+participant Rex
 participant pi
+participant Model
 participant prism
-participant pele
-You -> pi : prompt
-pi -> prism : reply text
+participant "pele worker" as pele
+participant resvg
+participant "PlantUML worker" as PlantUML
+participant "macOS clipboard" as Clipboard
+participant "Quick Look" as QuickLook
+You -> Rex : type a prompt
+Rex -> pi : keys
+pi -> Model : the conversation so far
+Model --> pi : reply as Markdown
+pi -> prism : assistant message
 prism -> prism : parse the Markdown
 prism -> pele : mermaid source
-prism --> pi : source, with a note
-pi --> You : reply, still drawing
+prism -> PlantUML : plantuml source
+prism --> pi : text, tables and code
+pi --> Rex : first frame, diagrams still source
+pele -> resvg : SVG with the bundled fonts
+resvg --> pele : pixels at twice the size
 pele --> prism : PNG
-prism -> prism : fit the picture to the width
-prism --> pi : picture
-pi --> You : drawn reply
-You -> prism : press preview
-prism --> You : Quick Look panel
+PlantUML --> prism : PNG
+prism -> prism : fit each picture to the width
+prism --> pi : pictures
+pi --> Rex : kitty graphics
+Rex --> You : drawn reply
+You -> Rex : click image
+Rex -> pi : mouse event
+pi -> prism : press
+prism -> Clipboard : PNG for Slack or a document
+You -> Rex : click preview
+prism -> QuickLook : PNG file
+QuickLook --> You : panel with zoom buttons
 @enduml
 \`\`\`
 
