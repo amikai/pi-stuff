@@ -1,23 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { registerHooks } from "node:module";
-import { dirname, resolve } from "node:path";
 import { test } from "node:test";
-import { pathToFileURL } from "node:url";
 import type { createBashTool } from "@earendil-works/pi-coding-agent";
-
-const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
-const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
-const parentURL = pathToFileURL(piPkg).href;
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith("@earendil-works/")) {
-      return nextResolve(specifier, { ...context, parentURL });
-    }
-    return nextResolve(specifier, context);
-  },
-});
 
 const { default: uvExtension, getBlockedCommandMessage, interceptedCommandsPath } = await import("../extensions/uv.ts");
 

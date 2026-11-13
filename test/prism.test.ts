@@ -1,27 +1,18 @@
 import assert from "node:assert/strict";
-import childProcess, { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import childProcess from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
 
 import type { Desktop } from "../extensions/prism/desktop.ts";
 
-const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
-const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
-const parentURL = pathToFileURL(piPkg).href;
 const copiedTexts: string[] = [];
 (globalThis as any).__prismCopiedTexts = copiedTexts;
 registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith("@earendil-works/")) {
-      return nextResolve(specifier, { ...context, parentURL });
-    }
-    return nextResolve(specifier, context);
-  },
   // pi's copyToClipboard writes the real pasteboard, so pressing a source button would clobber it. Record the text instead.
   load(url, context, nextLoad) {
     const loaded = nextLoad(url, context);
@@ -40,7 +31,7 @@ const { AssistantMessageComponent, initTheme, SessionManager, UserMessageCompone
   "@earendil-works/pi-coding-agent"
 );
 const { setTheme, theme: activePiGlobalTheme } = await import(
-  pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
+  new URL("./modes/interactive/theme/theme.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
 );
 const {
   Container,
@@ -53,14 +44,7 @@ const {
   Text,
   visibleWidth,
 } = await import("@earendil-works/pi-tui");
-const { renderLayoutFrame } = await import(
-  pathToFileURL(
-    resolve(
-      dirname(realpathSync(fileURLToPath(import.meta.resolve("@earendil-works/pi-tui", parentURL)))),
-      "layout.js",
-    ),
-  ).href
-);
+const { renderLayoutFrame } = await import("@earendil-works/pi-tui/dist/layout.js");
 initTheme("dark");
 
 const { default: prismExtension, themeFromPiTheme } = await import("../extensions/prism/index.ts");
@@ -3791,7 +3775,9 @@ test("89. the wide /prism checkhealth sample fills a 250-column terminal on Kitt
 });
 
 test("90. prism's hints reach the system prompt that pi builds", async () => {
-  const { buildSystemPrompt } = await import(pathToFileURL(join(dirname(piPkg), "dist/core/system-prompt.js")).href);
+  const { buildSystemPrompt } = await import(
+    new URL("./core/system-prompt.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
+  );
   const h = createHarness();
   try {
     await h.emit("session_start");

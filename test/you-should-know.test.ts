@@ -1,34 +1,17 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { pathToFileURL } from "node:url";
-
-// Resolve @earendil-works/* from the installed pi package so the repo needs no local node_modules.
-const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
-const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
-const parentURL = pathToFileURL(piPkg).href;
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith("@earendil-works/")) {
-      return nextResolve(specifier, { ...context, parentURL });
-    }
-    return nextResolve(specifier, context);
-  },
-});
 
 const { initTheme, SessionManager } = await import("@earendil-works/pi-coding-agent");
 initTheme();
