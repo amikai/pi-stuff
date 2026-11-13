@@ -1,8 +1,10 @@
 import { tableHtml, tableText } from "./html.ts";
-import type { RenderElement } from "./jsx.ts";
+import type { ElementTable, RenderElement, RenderNode } from "./jsx.ts";
 import { h } from "./jsx.ts";
 import { mathOf } from "./latex.ts";
+import type { AlertLevel, Block, Inline, ListItem } from "./markdown.ts";
 import { displayText, inlineText, isWebLink, nestedBlocks, texText } from "./markdown.ts";
+import type { Flow } from "./rtl.ts";
 import {
   codeVisual,
   commentTail,
@@ -19,6 +21,7 @@ import {
   terminalLine,
   WALL,
 } from "./rtl.ts";
+import type { Style, Theme } from "./theme.ts";
 
 export type TerminalEnv = Partial<
   Record<
@@ -49,6 +52,19 @@ export type Drawn = Map<number, DrawnBlock>;
 export type PictureButtons = (png: string, b: number) => RenderElement[];
 export type Fold = (id: string, hidden: number, key: string) => { folded: boolean; element: RenderElement } | null;
 export type Tip = (note: number) => (() => void) | undefined;
+export type BlockOf<K extends Block["kind"]> = Extract<Block, { kind: K }>;
+export type InlineOf<K extends Inline["kind"]> = Extract<Inline, { kind: K }>;
+export type Span = [number, number];
+export type Reach = Pick<Style, "httpLinks" | "editorLinks" | "fileLinks" | "pathLinks" | "found" | "home" | "cwd">;
+export type Probe = { key: string; href: string };
+export type Segment = { text: string; color?: string; italic?: boolean };
+export type Look = {
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+  dimColor?: boolean;
+  strikethrough?: boolean;
+};
 
 const _extends = Object.assign;
 
@@ -59,13 +75,14 @@ const WIDE =
   /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}\u20E3]|\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u;
 const segmenter = new Intl.Segmenter();
 
-const graphemes = (s) => [...segmenter.segment(s)].map((g) => g.segment);
+const graphemes = (s: string): string[] => [...segmenter.segment(s)].map((g) => g.segment);
 
-const cells = (s) => (/^[ -~]*$/.test(s) ? [...s] : graphemes(s).flatMap((g) => (WIDE.test(g) ? [g, ""] : [g])));
+const cells = (s: string): string[] =>
+  /^[ -~]*$/.test(s) ? [...s] : graphemes(s).flatMap((g) => (WIDE.test(g) ? [g, ""] : [g]));
 
 const ZERO = /^[\p{M}\p{Default_Ignorable_Code_Point}]+$/u;
 
-const width = (s) =>
+const width = (s: string): number =>
   /^[ -~]*$/.test(s)
     ? s.length
     : s.length === 1
@@ -76,18 +93,18 @@ const width = (s) =>
           : 1
       : graphemes(s).reduce((w, g) => (ZERO.test(g) ? w : w + (WIDE.test(g) ? 2 : 1)), 0);
 
-const widestLine = (text) => Math.max(...text.split("\n").map(width));
+const widestLine = (text: string): number => Math.max(...text.split("\n").map(width));
 
-const wrapRanges = (text, w) => {
+const wrapRanges = (text: string, w: number): Span[] => {
   const br = text.indexOf("\n");
   if (br >= 0)
     return [
       ...wrapRanges(text.slice(0, br), w),
-      ...wrapRanges(text.slice(br + 1), w).map(([a, b]) => [a + br + 1, b + br + 1]),
+      ...wrapRanges(text.slice(br + 1), w).map(([a, b]): Span => [a + br + 1, b + br + 1]),
     ];
   if (width(text) <= w) return [[0, text.length]];
-  const out = [];
-  let line: number[] | undefined;
+  const out: Span[] = [];
+  let line: Span | undefined;
   let used = 0;
   for (const word of text.matchAll(/\S+/g)) {
     let start = word.index;
@@ -126,8 +143,8 @@ const wrapRanges = (text, w) => {
   return out.length ? out : [[0, 0]];
 };
 
-const sliceInline = (nodes, from, to) => {
-  const out = [];
+const sliceInline = (nodes: Inline[], from: number, to: number): Inline[] => {
+  const out: Inline[] = [];
   let at = 0;
   for (const n of nodes) {
     const length = inlineText([n]).length;
@@ -141,41 +158,43 @@ const sliceInline = (nodes, from, to) => {
   return out;
 };
 
-const hasLink = (nodes) => nodes.some((n) => n.kind === "link" || ("children" in n && hasLink(n.children)));
+const hasLink = (nodes: Inline[]): boolean =>
+  nodes.some((n) => n.kind === "link" || ("children" in n && hasLink(n.children)));
 
-const headerRuns = (nodes) =>
+const headerRuns = (nodes: Inline[]): Inline[] =>
   nodes
-    .flatMap((n) =>
+    .flatMap((n): Inline[] =>
       n.kind === "footnote" ? [n] : "children" in n ? headerRuns(n.children) : [{ kind: "text", text: n.text }],
     )
-    .reduce((out, n) => {
+    .reduce<Inline[]>((out, n) => {
       const last = out[out.length - 1];
       return n.kind === "text" && last?.kind === "text"
         ? [...out.slice(0, -1), { kind: "text", text: last.text + n.text }]
         : [...out, n];
     }, []);
 
-const fileRoot = (distro) => (distro ? `file://wsl.localhost/${encodeURIComponent(distro)}` : "file://");
+const fileRoot = (distro?: string): string =>
+  distro ? `file://wsl.localhost/${encodeURIComponent(distro)}` : "file://";
 
 const HYPERLINK_TERMINALS = ["ghostty", "Hyper", "kitty", "alacritty", "iTerm.app", "iTerm2", "WarpTerminal", "Orca"];
 
-const versionOf = (value = "") => {
+const versionOf = (value = ""): number[] => {
   const short = /^(\d{1,2})(\d{2})$/.exec(value);
   return short ? [0, Number(short[1])] : value.split(".").map((n) => Number.parseInt(n, 10));
 };
 
-const atLeast = (value, major, minor) => {
+const atLeast = (value: string | undefined, major: number, minor: number): boolean => {
   const [a = Number.NaN, b = Number.NaN] = versionOf(value);
   return a > major || (a === major && b >= minor);
 };
 
-const programLinks = (program, version) =>
+const programLinks = (program: string, version: string | undefined): boolean =>
   HYPERLINK_TERMINALS.includes(program) ||
   (program === "WezTerm" && atLeast(version, 20200620, 0)) ||
   (program === "vscode" && atLeast(version, 1, 72)) ||
   (program === "tmux" && atLeast(version, 3, 4));
 
-const drawsHyperlinks = (env) => {
+const drawsHyperlinks = (env: TerminalEnv): boolean => {
   if (env.FORCE_HYPERLINK) return Number.parseInt(env.FORCE_HYPERLINK, 10) !== 0;
   const term = env.TERM ?? "";
   const vte = env.VTE_VERSION;
@@ -269,11 +288,12 @@ const LAUNCHERS = new Set([
   "rbw",
 ]);
 
-const unescaped = (text) => text.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+const unescaped = (text: string): string =>
+  text.replace(/%([0-9a-f]{2})/gi, (_: string, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 
-const extensionOf = (name) => /\.([^.]*)$/.exec(name.replace(/[. ]+$/, ""))?.[1] ?? "";
+const extensionOf = (name: string): string => /\.([^.]*)$/.exec(name.replace(/[. ]+$/, ""))?.[1] ?? "";
 
-const launches = (href) => {
+const launches = (href: string): boolean => {
   const path = unescaped(href.replace(/[?#].*$/, ""))
     .toLowerCase()
     .replace(/[/\\]+$/, "");
@@ -281,37 +301,37 @@ const launches = (href) => {
   return /\.app[/\\]/.test(path) || name.split(/[:\u0000-\u001f]/).some((part) => LAUNCHERS.has(extensionOf(part)));
 };
 
-const isHyperlink = (href, reach) =>
+const isHyperlink = (href: string, reach: Reach): boolean =>
   (reach.httpLinks ? /^https?:/i : /^(https:|http:\/\/localhost(:\d+)?([/?#]|$))/i).test(href) ||
   (reach.editorLinks && /^(vscode(-insiders)?|cursor|windsurf|zed):\/\/file\//i.test(href)) ||
   (reach.fileLinks !== null && /^file:/i.test(href) && !launches(href));
 
-const plainLink = (text, href) => {
+const plainLink = (text: string, href: string): string => {
   const target = href.replace(/^mailto:/i, "");
   return text === target || `http://${text}` === target ? target : `${text} (${target})`;
 };
 
 const LINK_MAX = 2048;
 
-const utf8Bytes = (cp) => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
+const utf8Bytes = (cp: number): number => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
 
-const encodedLength = (href) =>
+const encodedLength = (href: string): number =>
   [...href].reduce((length, ch) => {
-    const cp = ch.codePointAt(0);
+    const cp = ch.codePointAt(0) as number;
     return length + (cp > 0x20 && cp < 0x7f ? 1 : 3 * utf8Bytes(cp));
   }, 0);
 
-const fileHref = (root, href) => {
+const fileHref = (root: string, href: string): string => {
   const local = /^file:(?:\/\/(?:localhost)?)?(\/(?![a-z]:|\/)[^?#]*)(.*)$/i.exec(href);
   return local && root !== "file://" ? `${root}${local[1]}${local[2]}` : href;
 };
 
-const slashes = (path) => path.replace(/\\/g, "/").replace(/\/+$/, "");
+const slashes = (path: string): string => path.replace(/\\/g, "/").replace(/\/+$/, "");
 
-const absolutePath = (reach, path) => {
+const absolutePath = (reach: Reach, path: string): string | undefined => {
   const base = path.startsWith("~") ? reach.home : path.startsWith(".") ? reach.cwd : "/";
   if (!base) return undefined;
-  const parts = [];
+  const parts: string[] = [];
   for (const part of `${slashes(base)}/${path.replace(/^~/, "").replace(/(?<=[^/.])\.+$/, "")}`.split("/")) {
     if (part === "..") parts.pop();
     else if (part !== "." && part !== "") parts.push(part);
@@ -319,14 +339,14 @@ const absolutePath = (reach, path) => {
   return `/${parts.join("/")}${path.endsWith("/") ? "/" : ""}`;
 };
 
-const pathHref = (reach, path) => {
+const pathHref = (reach: Reach, path: string): string | undefined => {
   const target = absolutePath(reach, path);
   if (target === undefined || reach.fileLinks === null) return undefined;
   const href = `${reach.fileLinks}${encodeURI(target).replace(/[?#]/g, encodeURIComponent)}`;
   return href.length <= LINK_MAX && !launches(href) ? href : undefined;
 };
 
-const toolHref = (reach, path) => {
+const toolHref = (reach: Reach, path: string): string | undefined => {
   if (!reach.pathLinks || reach.fileLinks === null) return undefined;
   const forward = path.replace(/\\/g, "/");
   if (/^[a-z]:\//i.test(forward)) return pathHref({ ...reach, fileLinks: "file://" }, forward);
@@ -335,9 +355,9 @@ const toolHref = (reach, path) => {
   return href.length <= LINK_MAX && !launches(href) ? href : undefined;
 };
 
-const pieceText = (pieces) => pieces.map((p) => p.text).join("");
+const pieceText = (pieces: Segment[]): string => pieces.map((p) => p.text).join("");
 
-const decoded = (text) => {
+const decoded = (text: string): string | undefined => {
   try {
     return decodeURIComponent(text);
   } catch {
@@ -345,7 +365,7 @@ const decoded = (text) => {
   }
 };
 
-const linkPath = (root, href) => {
+const linkPath = (root: string, href: string): string | undefined => {
   const local =
     root !== "file://" && href.startsWith(`${root}/`)
       ? href.slice(root.length)
@@ -353,16 +373,16 @@ const linkPath = (root, href) => {
   return decoded(local.replace(/[?#].*$/, ""));
 };
 
-const labelPath = (reach, root, label) => {
+const labelPath = (reach: Reach, root: string, label: string): string | undefined => {
   if (/^file:/i.test(label)) return linkPath(root, fileHref(root, label));
   if (/^([a-z]:[\\/]|\\\\)/i.test(label)) return label.replace(/\\/g, "/").replace(/^(?=[a-z]:)/i, "/");
   if (label.startsWith("/")) return label;
   return /^(~|\.{1,2})\//.test(label) ? absolutePath(reach, label) : undefined;
 };
 
-const withoutSlash = (path) => path?.replace(/(?<=.)\/+$/, "");
+const withoutSlash = (path: string | undefined): string | undefined => path?.replace(/(?<=.)\/+$/, "");
 
-const hidesFile = (reach, n, href) => {
+const hidesFile = (reach: Reach, n: InlineOf<"link">, href: string): boolean => {
   const label = n.text.trim().replace(/[.,;:!?]+$/, "");
   if (!/^file:/i.test(n.href) || label === n.href) return false;
   const root = reach.fileLinks ?? "file://";
@@ -370,16 +390,17 @@ const hidesFile = (reach, n, href) => {
   return shown === undefined || shown !== withoutSlash(linkPath(root, href));
 };
 
-const drawnLink = (n, reach) => {
+const drawnLink = (n: InlineOf<"link">, reach: Reach): Inline => {
   const href = reach.fileLinks !== null && /^file:/i.test(n.href) ? fileHref(reach.fileLinks, n.href) : n.href;
   if (!isHyperlink(n.href, reach) || encodedLength(href) > LINK_MAX || hidesFile(reach, n, href))
     return { kind: "text", text: plainLink(n.text, n.href) };
   return href === n.href ? n : { ...n, href };
 };
 
-const linksAsPath = (path) => !path.startsWith("/") || /^\/[^/]+\/+[^/]/.test(path.replace(/\.+$/, ""));
+const linksAsPath = (path: string): boolean =>
+  !path.startsWith("/") || /^\/[^/]+\/+[^/]/.test(path.replace(/\.+$/, ""));
 
-const drawnPath = (n, reach) => {
+const drawnPath = (n: InlineOf<"path">, reach: Reach): Inline => {
   const href = reach.pathLinks && linksAsPath(n.text) ? pathHref(reach, n.text) : undefined;
   return href === undefined ? n : { ...n, href };
 };
@@ -391,7 +412,7 @@ const LOOSE_PATH = new RegExp(
   "gu",
 );
 
-const looseProbe = (reach, spelling) => {
+const looseProbe = (reach: Reach, spelling: string): Probe | undefined => {
   const drive = /^[a-z]:[\\/]/i.test(spelling);
   if (!drive && !reach.cwd) return undefined;
   const href = toolHref(reach, spelling);
@@ -399,15 +420,15 @@ const looseProbe = (reach, spelling) => {
   return href === undefined ? undefined : { key: key.replace(/(?<=[^/:])\/+$/, ""), href };
 };
 
-const looseSpellings = (text) => [...text.matchAll(LOOSE_PATH)];
+const looseSpellings = (text: string): RegExpExecArray[] => [...text.matchAll(LOOSE_PATH)];
 
-const foundProbe = (reach, spelling) => {
+const foundProbe = (reach: Reach, spelling: string): Probe | undefined => {
   const probe = looseProbe(reach, spelling);
   return probe && reach.found?.has(probe.key) ? probe : undefined;
 };
 
-const loosePaths = (n, reach) => {
-  const out = [];
+const loosePaths = (n: InlineOf<"text">, reach: Reach): Inline[] => {
+  const out: Inline[] = [];
   let at = 0;
   for (const m of looseSpellings(n.text)) {
     const probe = foundProbe(reach, m[0]);
@@ -421,38 +442,39 @@ const loosePaths = (n, reach) => {
   return out;
 };
 
-const looseCode = (n, reach) => {
+const looseCode = (n: InlineOf<"code">, reach: Reach): Inline => {
   const probe = isWholePath(n.text) ? foundProbe(reach, n.text) : undefined;
   return probe ? { ...n, href: probe.href } : n;
 };
 
-const isWholePath = (text) => looseSpellings(text).some((m) => m[0] === text);
+const isWholePath = (text: string): boolean => looseSpellings(text).some((m) => m[0] === text);
 
-const looseNode = (n, reach) => {
+const looseNode = (n: Inline, reach: Reach): Inline | Inline[] => {
   if (n.kind === "text") return loosePaths(n, reach);
   return n.kind === "code" ? looseCode(n, reach) : n;
 };
 
-const linked = (node, reach) => {
-  const n = node.kind === "image" && isWebLink(node.src) ? { kind: "link", text: node.text, href: node.src } : node;
+const linked = (node: Inline, reach: Reach): Inline => {
+  const n: Inline =
+    node.kind === "image" && isWebLink(node.src) ? { kind: "link", text: node.text, href: node.src } : node;
   if (n.kind === "link") return drawnLink(n, reach);
   if (n.kind === "path") return drawnPath(n, reach);
   return "children" in n ? { ...n, children: hyperlinks(n.children, reach) } : n;
 };
 
-const hyperlinks = (nodes, reach) =>
+const hyperlinks = (nodes: Inline[], reach: Reach): Inline[] =>
   reach.found?.size
     ? nodes.flatMap((node) => looseNode(linked(node, reach), reach))
     : nodes.map((node) => linked(node, reach));
 
-const spellingsIn = (nodes) =>
+const spellingsIn = (nodes: Inline[]): string[] =>
   nodes.flatMap((n) => {
     if ("children" in n) return spellingsIn(n.children);
     if (n.kind === "code") return isWholePath(n.text) ? [n.text] : [];
     return n.kind === "text" ? looseSpellings(n.text).map((m) => m[0]) : [];
   });
 
-const inlinesOf = (block) => {
+const inlinesOf = (block: Block): Inline[][] => {
   switch (block.kind) {
     case "heading":
     case "paragraph":
@@ -468,9 +490,9 @@ const inlinesOf = (block) => {
   }
 };
 
-const spelled = new WeakMap();
+const spelled = new WeakMap<Block, string[]>();
 
-const pathsToProbe = (blocks, reach) => {
+const pathsToProbe = (blocks: Block[], reach: Reach): string[] => {
   if (!reach.pathLinks || reach.fileLinks === null) return [];
   return nestedBlocks(blocks).flatMap((block) => {
     const spellings = spelled.get(block) ?? inlinesOf(block).flatMap(spellingsIn);
@@ -479,8 +501,8 @@ const pathsToProbe = (blocks, reach) => {
   });
 };
 
-const hyperlinkBlock = (block, reach) => {
-  const drawn = (nodes) => hyperlinks(nodes, reach);
+const hyperlinkBlock = (block: Block, reach: Reach): Block => {
+  const drawn = (nodes: Inline[]) => hyperlinks(nodes, reach);
   switch (block.kind) {
     case "heading":
     case "paragraph":
@@ -496,24 +518,25 @@ const hyperlinkBlock = (block, reach) => {
   }
 };
 
-const hyperlinked = new WeakMap();
+const hyperlinked = new WeakMap<Block, Record<string, Block>>();
 
-const drawable = (block, reach) => {
-  const cached = hyperlinked.get(block) ?? {};
+const drawable = (block: Block, reach: Reach): Block => {
+  const cached: Record<string, Block> = hyperlinked.get(block) ?? {};
   hyperlinked.set(block, cached);
   const key = `${+reach.httpLinks}${+reach.editorLinks}${reach.fileLinks ?? ""}${reach.pathLinks ? `\0${reach.home}\0${reach.cwd}\0${reach.found?.size ?? 0}` : ""}`;
   cached[key] ??= hyperlinkBlock(block, reach);
   return cached[key];
 };
 
-const mostLines = (text, w) => (text.match(/\S+/g)?.length ?? 0) + Math.ceil(width(text) / w);
+const mostLines = (text: string, w: number): number => (text.match(/\S+/g)?.length ?? 0) + Math.ceil(width(text) / w);
 
-const textRows = (text, w) =>
+const textRows = (text: string, w: number): number =>
   text.split("\n").reduce((sum, line) => sum + (width(line) <= w ? 1 : mostLines(line, Math.max(1, w))), 0);
 
-const heightOf = (blocks, w) => blocks.reduce((sum, block, b) => sum + (b ? 1 : 0) + blockHeight(block, w), 0);
+const heightOf = (blocks: Block[], w: number): number =>
+  blocks.reduce((sum, block, b) => sum + (b ? 1 : 0) + blockHeight(block, w), 0);
 
-const blockHeight = (block, w) => {
+const blockHeight = (block: Block, w: number): number => {
   switch (block.kind) {
     case "heading":
       return 2 * textRows(displayText(block.inline), w - 4) + 2;
@@ -534,7 +557,8 @@ const blockHeight = (block, w) => {
     case "table": {
       const { natural, words } = tableSize(block);
       const widths = columnWidths(natural, w - 4, 3, words);
-      const tallest = (cells) => Math.max(1, ...widths.map((cw, c) => textRows(displayText(cells[c] ?? []), cw)));
+      const tallest = (cells: Inline[][]) =>
+        Math.max(1, ...widths.map((cw, c) => textRows(displayText(cells[c] ?? []), cw)));
       return block.rows.reduce((sum, row) => sum + 1 + tallest(row), 4 + tallest(block.header));
     }
     case "quote":
@@ -548,7 +572,7 @@ const blockHeight = (block, w) => {
   }
 };
 
-const wrapInline = (nodes, w) => {
+const wrapInline = (nodes: Inline[], w: number): Inline[][] => {
   const text = inlineText(nodes);
   return width(text) <= w && !text.includes("\n")
     ? [nodes]
