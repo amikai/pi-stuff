@@ -462,19 +462,19 @@ test("4. /prism commands, interactive setup pane, pi theme tracking, and turn du
     messageType: "user",
     prompt: "explain how the queue works",
     systemPrompt: "",
-    systemPromptOptions: { guidelines: [] as string[] },
+    systemPromptOptions: { promptGuidelines: [] as string[] },
   };
   await h.emit("before_agent_start", startEvent);
   assert.ok(
-    startEvent.systemPromptOptions.guidelines.some((g) => g.includes("drawn by prism inside Pi")),
+    startEvent.systemPromptOptions.promptGuidelines.some((g) => g.includes("drawn by prism inside Pi")),
     "injects Pi-native diagram hint into guidelines",
   );
   assert.ok(
-    startEvent.systemPromptOptions.guidelines.every((g) => !g.includes("Claude")),
+    startEvent.systemPromptOptions.promptGuidelines.every((g) => !g.includes("Claude")),
     "system prompt guidelines contain zero Claude references",
   );
   assert.ok(
-    startEvent.systemPromptOptions.guidelines.some((g) => g.includes("```figure")),
+    startEvent.systemPromptOptions.promptGuidelines.some((g) => g.includes("```figure")),
     "injects figure hint into guidelines",
   );
 
@@ -936,11 +936,11 @@ test("15. plantuml detection covers fences and unfenced blocks, and leaves unclo
     messageType: "user",
     prompt: "x",
     systemPrompt: "",
-    systemPromptOptions: { guidelines: [] as string[] },
+    systemPromptOptions: { promptGuidelines: [] as string[] },
   };
   await h.emit("before_agent_start", startEvent);
   assert.ok(
-    startEvent.systemPromptOptions.guidelines.some((g) => g.includes("!include")),
+    startEvent.systemPromptOptions.promptGuidelines.some((g) => g.includes("!include")),
     "hints PlantUML when enabled",
   );
 });
@@ -966,11 +966,11 @@ test("16. plantuml:false renders PlantUML blocks as ordinary code, starts no job
     messageType: "user",
     prompt: "x",
     systemPrompt: "",
-    systemPromptOptions: { guidelines: [] as string[] },
+    systemPromptOptions: { promptGuidelines: [] as string[] },
   };
   await h.emit("before_agent_start", startEvent);
   assert.ok(
-    startEvent.systemPromptOptions.guidelines.every((g) => !g.includes("!include")),
+    startEvent.systemPromptOptions.promptGuidelines.every((g) => !g.includes("!include")),
     "no PlantUML hint",
   );
 
@@ -2117,7 +2117,7 @@ test("40. the pele hint reaches the model only when mermaid, pele, images and a 
     messageType: "user",
     prompt: "x",
     systemPrompt: "",
-    systemPromptOptions: { guidelines: [] as string[] },
+    systemPromptOptions: { promptGuidelines: [] as string[] },
   });
   const hinted = async (
     config: Record<string, unknown>,
@@ -2131,7 +2131,7 @@ test("40. the pele hint reaches the model only when mermaid, pele, images and a 
       await h.emit("session_start");
       const event = startEvent();
       await h.emit("before_agent_start", event);
-      return event.systemPromptOptions.guidelines.some((g) => g.includes("sankey-beta"));
+      return event.systemPromptOptions.promptGuidelines.some((g) => g.includes("sankey-beta"));
     } finally {
       fake.restore();
       h.cleanup();
@@ -3751,6 +3751,38 @@ test("89. the wide /prism checkhealth sample fills a 250-column terminal on Kitt
     assert.ok(columns >= 246, `the picture spans the terminal, got ${columns} columns`);
   } finally {
     terminal.restore();
+    h.cleanup();
+  }
+});
+
+test("90. prism's hints reach the system prompt that pi builds", async () => {
+  const { buildSystemPrompt } = await import(pathToFileURL(join(dirname(piPkg), "dist/core/system-prompt.js")).href);
+  const h = createHarness();
+  try {
+    await h.emit("session_start");
+    const event = {
+      type: "before_agent_start",
+      messageType: "user",
+      prompt: "x",
+      systemPrompt: "",
+      systemPromptOptions: {
+        cwd: "/tmp",
+        selectedTools: [],
+        hiddenTools: [],
+        toolSnippets: {},
+        toolGuidelines: {},
+        promptGuidelines: [] as string[],
+        appendSystemPrompt: "",
+        sections: {},
+        contextFiles: [],
+        skills: [],
+      },
+    };
+    await h.emit("before_agent_start", event);
+    const prompt = String(await buildSystemPrompt(event.systemPromptOptions));
+    assert.ok(prompt.includes("```figure"), "the figure hint is in the prompt pi sends to the model");
+    assert.ok(prompt.includes("drawn by prism inside Pi"), "the diagram hint is in the prompt pi sends to the model");
+  } finally {
     h.cleanup();
   }
 });

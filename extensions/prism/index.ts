@@ -1185,7 +1185,7 @@ export default function prismExtension(
         ]
       : [];
     if (hints.length > 0) {
-      event.systemPromptOptions.guidelines = [...(event.systemPromptOptions.guidelines ?? []), ...hints];
+      event.systemPromptOptions.promptGuidelines = [...event.systemPromptOptions.promptGuidelines, ...hints];
     }
   });
 
