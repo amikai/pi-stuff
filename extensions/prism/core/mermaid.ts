@@ -17,9 +17,9 @@ const _extends = Object.assign;
 
 const MAX_LINES = 80;
 const PAD = "\uFDD0";
-const textCache = new Map();
+const textCache = new Map<string, string | null>();
 
-const chartSize = (columns, source = "") => {
+const chartSize = (columns: number, source = "") => {
   const labels = (/^\s*x-axis\b[^[\n]*\[([^\]\n]*)\]/m.exec(source)?.[1] ?? "")
     .split(",")
     .map((s) => s.trim().replace(/^"|"$/g, ""));
@@ -28,22 +28,23 @@ const chartSize = (columns, source = "") => {
   return { width, height: Math.max(8, Math.min(20, Math.round(width * 0.3))) };
 };
 
-const padWide = (source) =>
+const padWide = (source: string) =>
   /^[\x00-\x7F]*$/.test(source)
     ? source
     : graphemes(source)
         .map((g) => (g.length === 1 && width(g) === 2 ? g + PAD : g))
         .join("");
 
-const unquoteCategories = (source) =>
+const unquoteCategories = (source: string) =>
   source.replace(
     /^(\s*x-axis\b[^[\n]*\[)([^\]\n]*)\]/m,
-    (_, head, items) => `${head}${items.replace(/"([^"]*)"/g, (_q, s) => s.replaceAll(",", " "))}]`,
+    (_: string, head: string, items: string) =>
+      `${head}${items.replace(/"([^"]*)"/g, (_q: string, s: string) => s.replaceAll(",", " "))}]`,
   );
 
 const BLOCK = /[█▀▄]/;
 
-const labelBars = (art, source) => {
+const labelBars = (art: string, source: string): string => {
   const series = source.match(/^\s*(bar|line)\b.*$/gm) ?? [];
   const values = /^\s*bar\b[^[\n]*\[([^\]\n]*)\]/m
     .exec(source)?.[1]
@@ -51,7 +52,7 @@ const labelBars = (art, source) => {
     .map((v) => v.trim());
   if (series.length !== 1 || !values || /^\s*xychart(-beta)?\s+horizontal/m.test(source)) return art;
   const grid = ["", ...art.split("\n")].map((l) => [...l]);
-  const gutter = (r) => /^\s*(-?[\d.]+)[┤┼]/.exec(grid[r]?.join("") ?? "")?.[1];
+  const gutter = (r: number) => /^\s*(-?[\d.]+)[┤┼]/.exec(grid[r]?.join("") ?? "")?.[1];
   const axis = grid.findLastIndex((_, r) => gutter(r) !== undefined);
   const ticks = [...(grid[axis]?.join("") ?? "").matchAll(/┬|▀+/g)].map((m) => m.index + Math.floor(m[0].length / 2));
   if (ticks.length !== values.length) return art;
@@ -86,18 +87,20 @@ const SIDEWAYS = /^(\s*(?:flowchart|graph)[ \t]+)(LR|RL)\b/;
 const SUPPORTED =
   /^(flowchart|graph|statediagram(-v2)?|xychart(-beta)?|sequencediagram|classdiagram|erdiagram|pie|gantt)$/i;
 
-const kindOf = (source) =>
+const kindOf = (source: string): string =>
   source
     .replace(/^(\s*%%[^\n]*\n)+/, "")
     .trim()
     .split(/\s/)[0] ?? "";
 
-const unsupportedKind = (source) => {
+const unsupportedKind = (source: string): string | undefined => {
   const kind = kindOf(source);
   return kind && !SUPPORTED.test(kind) ? kind : undefined;
 };
 
-const OWN = {
+type Own = (source: string, ascii: boolean, columns: number, pieColors: number) => ChartArt | null;
+
+const OWN: Partial<Record<string, Own>> = {
   pie: pieText,
   gantt: (source, ascii, columns) => {
     const text = ganttText(source, ascii, columns);
@@ -107,7 +110,11 @@ const OWN = {
 
 const INLINE_TAG = /<\/?(?:b|i|u|s|em|strong|del|code|small|sub|sup|span|mark)\b[^<>\n]*>/gi;
 
-const TAG_MARK = {
+export type MarkName = "italic" | "bold" | "underline" | "strikethrough";
+export type Mark = Partial<Record<MarkName, true>>;
+export type Marked = [phrase: string[], mark: Mark];
+
+const TAG_MARK: Record<string, MarkName> = {
   i: "italic",
   em: "italic",
   b: "bold",
@@ -117,20 +124,20 @@ const TAG_MARK = {
   del: "strikethrough",
 };
 
-const inlineMarks = (source) =>
+const inlineMarks = (source: string): Marked[] =>
   [...source.matchAll(/<(i|em|b|strong|u|s|del)\b[^<>\n]*>([^<\n]+)<\/\1\s*>/gi)].map((m) => [
     cells(m[2].trim()),
     { [TAG_MARK[m[1].toLowerCase()]]: true },
   ]);
 
-const fitted = new Map();
-const artWidths = new Map();
-const artWidth = (art) => remember(artWidths, art, () => Math.max(...art.split("\n").map(width)));
+const fitted = new Map<string, ChartArt | null>();
+const artWidths = new Map<string, number>();
+const artWidth = (art: string): number => remember(artWidths, art, () => Math.max(...art.split("\n").map(width)));
 
-const mermaidText = (source, ascii, columns, pieColors = 0) =>
+const mermaidText = (source: string, ascii: boolean, columns: number, pieColors = 0): string | null =>
   mermaidArt(source, ascii, columns, pieColors)?.text ?? null;
 
-const mermaidArt = (source, ascii, columns, pieColors) =>
+const mermaidArt = (source: string, ascii: boolean, columns: number, pieColors: number): ChartArt | null =>
   remember(fitted, `${ascii}:${columns}:${pieColors}:${source}`, () => {
     source = source.replace(INLINE_TAG, "");
     if (source.length > 8000 || source.split("\n").length > MAX_LINES) return null;
@@ -144,7 +151,7 @@ const mermaidArt = (source, ascii, columns, pieColors) =>
     return text === null ? null : { text, series: chartSeries(source, ascii, columns) };
   });
 
-const prepared = (padded) =>
+const prepared = (padded: string): string =>
   unquoteCategories(padded.replace(/^(\s*%%[^\n]*\n)+/, "")).replace(/(-->|-\.->|==>|---|-\.-|===)[ \t]+\|/g, "$1|");
 
 const NEUTRAL = "#808080";
@@ -160,12 +167,12 @@ const PROBE = {
 };
 const SGR = /\x1b\[([\d;]*)m/g;
 
-const seriesOf = (colored) => {
+const seriesOf = (colored: string): number[][] => {
   const hues = colored.split("\n").map((line) => {
-    const row = [];
+    const row: (string | undefined)[] = [];
     let hue: string | undefined;
     let at = 0;
-    const take = (text) =>
+    const take = (text: string) =>
       graphemes(text).forEach(() => {
         row.push(hue);
       });
@@ -182,9 +189,9 @@ const seriesOf = (colored) => {
   return hues.map((row) => row.map((h) => (h === undefined ? -1 : order.indexOf(h))));
 };
 
-const seriesCache = new Map();
+const seriesCache = new Map<string, number[][] | null>();
 
-const chartSeries = (source, ascii, columns) => {
+const chartSeries = (source: string, ascii: boolean, columns: number): number[][] | undefined => {
   if (!/^\s*xychart/.test(source) || (source.match(/^\s*(bar|line)\b/gm) ?? []).length < 2) return undefined;
   const padded = padWide(source);
   const size = chartSize(columns, padded);
@@ -208,7 +215,7 @@ const chartSeries = (source, ascii, columns) => {
   );
 };
 
-const draw = (source, ascii, columns) => {
+const draw = (source: string, ascii: boolean, columns: number): string | null => {
   const isChart = /^\s*xychart/.test(source);
   const padded = padWide(source);
   const size = chartSize(columns, isChart ? padded : "");
@@ -216,7 +223,12 @@ const draw = (source, ascii, columns) => {
   return remember(textCache, key, () => {
     try {
       if (isChart) setChartSize(size.width, size.height);
-      const art = renderMermaidAscii(prepared(padded), { useAscii: ascii, colorMode: "none", paddingX: 3, paddingY: 1 })
+      const art: string = renderMermaidAscii(prepared(padded), {
+        useAscii: ascii,
+        colorMode: "none",
+        paddingX: 3,
+        paddingY: 1,
+      })
         .replace(/[ \t]+$/gm, "")
         .trimEnd()
         .replace(/▶/g, "►")
