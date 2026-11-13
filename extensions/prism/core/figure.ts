@@ -1,7 +1,7 @@
 import { type ElementTable, h, type RenderElement } from "./jsx.ts";
 import { type Block, FIGURE_ROLES } from "./markdown.ts";
 import { cells, type DrawnBlock, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
-import { asIs, type Held, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
+import { asIs, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
 import type { Style, Theme } from "./theme.ts";
 
 export type FigureRole = (typeof FIGURE_ROLES)[number];
@@ -11,6 +11,9 @@ type ThemeToken = keyof Theme;
 type HuedRole = Extract<FigureRole, "warn" | "ok" | "note">;
 type RoleColors = Partial<Record<HuedRole, string>>;
 type Channels = [number, number, number];
+type Cell = { glyph: string; role?: FigureRole };
+type Frame = { top: number; left: number; corner: number; edges: number[] };
+type Decision = { note: string } | { rows: FigureRun[][]; texts: string[]; widest: number };
 type CodeBlock = Extract<Block, { kind: "code" }>;
 
 const _extends = Object.assign;
@@ -281,19 +284,20 @@ const SIDE = "│║├┤┼╟╢╠╣";
 const RULE = "─═";
 const MAX_REFRAMES = 200;
 
-const isOf = (set, glyph) => !!glyph && set.includes(glyph);
+const isOf = (set: string, glyph?: string) => !!glyph && set.includes(glyph);
 
-const cellsOf = (runs) => runs.flatMap((run) => cells(run.text).map((glyph) => ({ glyph, role: run.role })));
+const cellsOf = (runs: FigureRun[]): Cell[] =>
+  runs.flatMap((run) => cells(run.text).map((glyph) => ({ glyph, role: run.role })));
 
-const runsOf = (row) =>
-  row.reduce((runs, cell) => {
+const runsOf = (row: Cell[]): FigureRun[] =>
+  row.reduce<FigureRun[]>((runs, cell) => {
     const last = runs.at(-1);
     if (last && last.role === cell.role) last.text += cell.glyph;
     else runs.push(cell.role ? { text: cell.glyph, role: cell.role } : { text: cell.glyph });
     return runs;
   }, []);
 
-const nearest = (row, from, target, set) => {
+const nearest = (row: Cell[], from: number, target: number, set: string) => {
   let best = -1;
   row.forEach((cell, column) => {
     if (column > from && isOf(set, cell.glyph) && (best < 0 || Math.abs(column - target) < Math.abs(best - target)))
@@ -302,7 +306,7 @@ const nearest = (row, from, target, set) => {
   return best;
 };
 
-const frameAt = (grid, top, left) => {
+const frameAt = (grid: Cell[][], top: number, left: number): Frame | undefined => {
   const row = grid[top];
   const corner = row.findIndex(
     (cell, column) => column > left && (isOf(TOP_RIGHT, cell.glyph) || isOf(TOP_LEFT, cell.glyph)),
@@ -324,35 +328,36 @@ const frameAt = (grid, top, left) => {
   return undefined;
 };
 
-const framesOf = (grid) =>
+const framesOf = (grid: Cell[][]): Frame[] =>
   grid
     .flatMap((row, top) => row.flatMap((cell, left) => (isOf(TOP_LEFT, cell.glyph) ? [frameAt(grid, top, left)] : [])))
     .filter((frame) => frame !== undefined)
     .sort((a, b) => a.corner - a.left - (b.corner - b.left));
 
-const fillOf = (row, edge, border) => {
+const fillOf = (row: Cell[], edge: number, border: boolean) => {
   const before = row[edge - 1]?.glyph;
   return before && isOf(RULE, before) ? before : border ? "─" : " ";
 };
 
-const spareBefore = (row, edge, fill) => {
+const spareBefore = (row: Cell[], edge: number, fill: string) => {
   let run = 0;
   while (row[edge - 1 - run]?.glyph === fill) run++;
   return Math.max(0, run - 1);
 };
 
-const blanks = (count, glyph, role) =>
+const blanks = (count: number, glyph: string, role?: FigureRole): Cell[] =>
   Array.from({ length: count }, () => (glyph === " " || !role ? { glyph } : { glyph, role }));
 
-const spacesAfter = (row, edge, most) => {
+const spacesAfter = (row: Cell[], edge: number, most: number) => {
   let run = 0;
   while (run < most && row[edge + 1 + run]?.glyph === " ") run++;
   return run;
 };
 
-const firstAfter = (row, column) => row.findIndex((cell, at) => at > column && cell.glyph !== " " && cell.glyph !== "");
+const firstAfter = (row: Cell[], column: number) =>
+  row.findIndex((cell, at) => at > column && cell.glyph !== " " && cell.glyph !== "");
 
-const place = (row, edge, target, shift, fill) => {
+const place = (row: Cell[], edge: number, target: number, shift: number, fill: string) => {
   if (target < edge) row.splice(target, edge - target);
   if (target > edge) row.splice(edge, 0, ...blanks(target - edge, fill, row[edge]?.role));
   if (shift > 0) row.splice(target + 1, 0, ...blanks(shift, " "));
@@ -360,7 +365,7 @@ const place = (row, edge, target, shift, fill) => {
   return target !== edge || shift !== 0;
 };
 
-const pushRight = (grid, frame, frames, by) => {
+const pushRight = (grid: Cell[][], frame: Frame, frames: Frame[], by: number) => {
   const bottom = frame.top + frame.edges.length - 1;
   const pushed = new Set(Array.from({ length: frame.edges.length }, (_, i) => frame.top + i));
   for (const other of [...frames].sort((a, b) => a.left - b.left)) {
@@ -380,7 +385,7 @@ const pushRight = (grid, frame, frames, by) => {
   }
 };
 
-const fit = (grid, frame, frames) => {
+const fit = (grid: Cell[][], frame: Frame, frames: Frame[]) => {
   const last = frame.edges.length - 1;
   const rows = frame.edges.map((_, i) => grid[frame.top + i]);
   const fills = frame.edges.map((edge, i) => fillOf(rows[i], edge, i === 0 || i === last));
@@ -395,7 +400,7 @@ const fit = (grid, frame, frames) => {
   return moved;
 };
 
-const reframe = (rows) => {
+const reframe = (rows: FigureRun[][]): FigureRun[][] => {
   const grid = rows.map(cellsOf);
   for (let pass = 0; pass < MAX_REFRAMES; pass++) {
     const frames = framesOf(grid);
@@ -404,15 +409,15 @@ const reframe = (rows) => {
   return grid.map(runsOf);
 };
 
-const decisions = new Map();
+const decisions = new Map<string, Decision>();
 
-const drawable = (lines) => {
+const drawable = (lines: string[]) => {
   const rows = reframe(lines.map(figureRuns));
   const texts = rows.map((runs) => runs.map((run) => run.text).join(""));
   return { rows, texts, widest: Math.max(0, ...texts.map(width)) };
 };
 
-const decide = (raw) => {
+const decide = (raw: string[]): Decision => {
   const tooLong = raw.findIndex((line) => line.length > RAW_MAX_LINE);
   if (tooLong >= 0) return { note: `figure line ${tooLong + 1} is ${raw[tooLong].length} characters long` };
   if (raw.length > FIGURE_MAX_LINES * 2) return { note: `figure has ${raw.length} lines, at most ${FIGURE_MAX_LINES}` };
@@ -423,9 +428,15 @@ const decide = (raw) => {
   return finding ? { note: `figure line ${finding.line}: ${finding.message}` } : drawable(lines);
 };
 
-const drawFigure = (el, style, block, columns, key) => {
+const drawFigure = (
+  el: ElementTable,
+  style: Style,
+  block: CodeBlock,
+  columns: number,
+  key: string,
+): DrawnBlock | null => {
   if (block.isOpen) return null;
-  const decision = remember(decisions, block.lines.join("\n"), () => decide(block.lines));
+  const decision: Decision = remember(decisions, block.lines.join("\n"), () => decide(block.lines));
   if ("note" in decision) return decision;
   if (decision.rows.length === 0) return null;
   if (decision.widest > columns - 2) return { note: `figure is ${decision.widest} cols, terminal is ${columns}` };
