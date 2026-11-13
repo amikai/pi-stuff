@@ -13,6 +13,7 @@ export type PlantUmlEntry =
 
 export type PlantUmlHooks = {
   images: boolean
+  pictureRows: number
   requestRender: () => void
   onInvalidate?: () => void
 }
@@ -138,7 +139,7 @@ export const drawPlantUml = (el: ElementTable, blocks: Block[], columns: number,
     if (entry.kind === 'error') {
       drawn.set(i, { note: entry.note })
     } else {
-      const fit = fitImage(entry, columns)
+      const fit = fitImage(entry, columns, hooks.pictureRows)
       drawn.set(i, {
         element: h(el.Image!, { key: `b${i}`, source: { png: entry.png }, columns: fit.columns, rows: fit.rows, alt: 'plantuml diagram' }),
         png: entry.png,

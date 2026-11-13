@@ -61,6 +61,7 @@ import {
 	MAX_IMAGE_BYTES,
 	padFor,
 	pickFormula,
+	pictureRows,
 	pngSize,
 	ratexColor,
 	renderedOf,
@@ -907,9 +908,10 @@ export default function prismExtension(
 		const copy = makeCopyButton();
 		const picture = makePictureButtons();
 		const fold = makeFolder(options?.onInvalidate);
+		const rowLimit = pictureRows(getCapabilities().images);
 		const drawn = drawDiagrams(
 			EL,
-			{ ...activeStyle, images: Boolean(getCapabilities().images) },
+			{ ...activeStyle, images: Boolean(getCapabilities().images), pictureRows: rowLimit },
 			blocks,
 			columns - markerRoom(activeStyle),
 			peleEnabled(activeStyle) && getCapabilities().images && options?.onInvalidate ? { requestRender, onInvalidate: options.onInvalidate } : null,
@@ -917,6 +919,7 @@ export default function prismExtension(
 		if (activeStyle.plantuml) {
 			const plantuml = drawPlantUml(EL, blocks, columns - markerRoom(activeStyle), {
 				images: Boolean(getCapabilities().images),
+				pictureRows: rowLimit,
 				requestRender,
 				onInvalidate: options?.onInvalidate,
 			});
@@ -940,7 +943,7 @@ export default function prismExtension(
 			}
 		}
 		for (const [i, picture] of pictures) {
-			const fit = fitImage(picture, columns);
+			const fit = fitImage(picture, columns, rowLimit);
 			drawn.set(i, {
 				element: h(EL.Image!, {
 					key: `b${i}`,
