@@ -1,5 +1,5 @@
 import { tableHtml, tableText } from "./html.ts";
-import type { ElementTable, RenderElement, RenderNode } from "./jsx.ts";
+import type { ElementTable, RenderElement, RenderNode, TextHoverProps } from "./jsx.ts";
 import { h } from "./jsx.ts";
 import { mathOf } from "./latex.ts";
 import type { AlertLevel, Block, Inline, ListItem } from "./markdown.ts";
@@ -58,6 +58,13 @@ export type Span = [number, number];
 export type Reach = Pick<Style, "httpLinks" | "editorLinks" | "fileLinks" | "pathLinks" | "found" | "home" | "cwd">;
 export type Probe = { key: string; href: string };
 export type Segment = { text: string; color?: string; italic?: boolean };
+export type Mark = { start: number; end: number; text: string; note: number };
+export type PrismToken = {
+  type: string;
+  content: string | PrismToken | (string | PrismToken)[];
+  alias?: string | string[];
+};
+export type Grammar = Record<string, unknown>;
 export type Look = {
   bold?: boolean;
   italic?: boolean;
@@ -579,14 +586,20 @@ const wrapInline = (nodes: Inline[], w: number): Inline[][] => {
     : wrapRanges(text, w).map(([a, b]) => sliceInline(nodes, a, b));
 };
 
-const mirrored = (style) => style.shape === "mirror";
+const mirrored = (style: Style): boolean => style.shape === "mirror";
 
-const heldLtr = (style) => (style.shape === "engine" ? { dir: "ltr" } : {});
+const heldLtr = (style: Style): { dir?: "ltr" } => (style.shape === "engine" ? { dir: "ltr" } : {});
 
-const heldLabel = (style, label, text) => (mirrored(style) && hasRtl(text) ? label.replace(/ $/, LTR_BLANK) : label);
+const heldLabel = (style: Style, label: string, text: string): string =>
+  mirrored(style) && hasRtl(text) ? label.replace(/ $/, LTR_BLANK) : label;
 
-const flows = new Map();
-const flowOf = (style, nodes, columns, mark = !(style.inside && mirrored(style))) =>
+const flows = new Map<string, Flow | null>();
+const flowOf = (
+  style: Style,
+  nodes: Inline[],
+  columns: number,
+  mark = !(style.inside && mirrored(style)),
+): Flow | null =>
   style.reorder && containsRtl(nodes)
     ? remember(
         flows,
@@ -596,17 +609,17 @@ const flowOf = (style, nodes, columns, mark = !(style.inside && mirrored(style))
       )
     : null;
 
-const cellFlow = (style, nodes, held, mark) =>
+const cellFlow = (style: Style, nodes: Inline[], held: boolean, mark: boolean): Flow | null =>
   held && style.reorder && containsRtl(nodes)
     ? remember(flows, `held\0${JSON.stringify(nodes)}`, () => heldCell(nodes), 2000)
     : flowOf(style, nodes, Infinity, mark);
 
-const noteHover = (style, note) =>
+const noteHover = (style: Style, note: number | undefined): { hover?: TextHoverProps } =>
   note === undefined || style.noteKey === undefined
     ? {}
     : { hover: { scope: `fn:${style.noteKey}:${note}`, inverse: true } };
 
-const renderInline = (el, style, nodes, keyBase) => {
+const renderInline = (el: ElementTable, style: Style, nodes: Inline[], keyBase: string): RenderNode[] => {
   const { Text } = el;
   const t = style.theme;
   return nodes.map((n, i) => {
@@ -654,15 +667,21 @@ const renderInline = (el, style, nodes, keyBase) => {
   });
 };
 
-const renderFlow = (el, style, lines, key, props = {}) => {
+const renderFlow = (
+  el: ElementTable,
+  style: Style,
+  lines: Inline[][],
+  key: string,
+  props: Look = {},
+): RenderElement[] => {
   const { Text } = el;
   return lines.map((line, i) =>
     h(Text, _extends({ key: `${key}.${i}` }, props), renderInline(el, style, line, `${key}.${i}`)),
   );
 };
 
-const marksIn = (nodes, at = 0) => {
-  const out = [];
+const marksIn = (nodes: Inline[], at = 0): Mark[] => {
+  const out: Mark[] = [];
   for (const n of nodes) {
     const length = inlineText([n]).length;
     if (n.kind === "footnote" && n.note !== undefined)
@@ -673,9 +692,9 @@ const marksIn = (nodes, at = 0) => {
   return out;
 };
 
-const piecesOf = (text, a, b, columns, marks) => {
+const piecesOf = (text: string, a: number, b: number, columns: number, marks: Mark[]): Span[] => {
   if (width(text.slice(a, b)) <= columns) return [[a, b]];
-  const out = [];
+  const out: Span[] = [];
   let start = a;
   let at = a;
   let taken = 0;
@@ -696,8 +715,17 @@ const piecesOf = (text, a, b, columns, marks) => {
   return out;
 };
 
-const pressInline = (el, style, nodes, columns, key, tip, look = {}, box = {}) => {
-  const marks = tip
+const pressInline = (
+  el: ElementTable,
+  style: Style,
+  nodes: Inline[],
+  columns: number,
+  key: string,
+  tip?: Tip,
+  look: Look = {},
+  box: RenderElement["props"] = {},
+): RenderElement | null => {
+  const marks: (Mark & { press: () => void })[] = tip
     ? marksIn(nodes).flatMap((m) => {
         const press = tip(m.note);
         return press ? [{ ...m, press }] : [];
@@ -705,7 +733,7 @@ const pressInline = (el, style, nodes, columns, key, tip, look = {}, box = {}) =
     : [];
   if (!marks.length) return null;
   const { Box, Text, Button } = el;
-  const run = (a, b) =>
+  const run = (a: number, b: number) =>
     h(Text, _extends({ key: `${key}.t${a}` }, look), renderInline(el, style, sliceInline(nodes, a, b), `${key}.t${a}`));
   const text = inlineText(nodes);
   const words = [...text.matchAll(/\s*\S+\s*/g)].flatMap((m) =>
@@ -717,7 +745,7 @@ const pressInline = (el, style, nodes, columns, key, tip, look = {}, box = {}) =
     words.map(([a, b]) => {
       const inside = marks.filter((m) => m.start >= a && m.end <= b);
       if (!inside.length) return run(a, b);
-      const parts = [];
+      const parts: RenderElement[] = [];
       let at = a;
       for (const m of inside) {
         if (m.start > at) parts.push(run(at, m.start));
@@ -736,7 +764,7 @@ const pressInline = (el, style, nodes, columns, key, tip, look = {}, box = {}) =
   );
 };
 
-const PRISM_COLORS = {
+const PRISM_COLORS: Record<string, keyof Theme> = {
   comment: "codeComment",
   prolog: "codeComment",
   doctype: "codeComment",
@@ -768,10 +796,10 @@ const PRISM_COLORS = {
   regex: "path",
 };
 
-const shownCode = (text, style, room, command = false) =>
+const shownCode = (text: string, style: Style, room?: number, command = false): string =>
   style.reorder ? codeVisual(text, style.shape, room, width, command) : text;
 
-const flatten = (tokens, style, color, italic = false) =>
+const flatten = (tokens: (string | PrismToken)[], style: Style, color?: string, italic = false): Segment[] =>
   tokens.flatMap((token) => {
     if (typeof token === "string") return [{ text: token, color, italic }];
     const names = [token.type, ...(Array.isArray(token.alias) ? token.alias : token.alias ? [token.alias] : [])];
@@ -786,7 +814,7 @@ const flatten = (tokens, style, color, italic = false) =>
     return flatten(inner, style, slot ? style.theme[slot] : color, italic || token.type === "comment");
   });
 
-const remember = (cache, key, make, limit = 200) => {
+const remember = <K, V>(cache: Map<K, V>, key: K, make: () => V, limit = 200): V => {
   const hit = cache.get(key);
   if (hit !== undefined) {
     cache.delete(key);
@@ -795,31 +823,31 @@ const remember = (cache, key, make, limit = 200) => {
   }
   const value = make();
   cache.set(key, value);
-  if (cache.size > limit) cache.delete(cache.keys().next().value);
+  if (cache.size > limit) cache.delete(cache.keys().next().value as K);
   return value;
 };
 
-const highlighted = new WeakMap();
+const highlighted = new WeakMap<Theme, Map<string, Segment[][]>>();
 
-const grammarFor = (lang) => {
+const grammarFor = (lang: string): Grammar | undefined => {
   const name = lang.toLowerCase();
   const grammar = Object.hasOwn(languages, name) ? languages[name] : undefined;
   return grammar !== null && typeof grammar === "object" ? grammar : undefined;
 };
 
-const shownSegment = (seg, piece, style, room) => ({
+const shownSegment = (seg: Segment, piece: string, style: Style, room?: number): Segment => ({
   ...seg,
   text: seg.italic ? piece : shownCode(piece, style, room),
 });
 
-const segmentRows = (style, lines, lang, room) => {
+const segmentRows = (style: Style, lines: string[], lang: string, room?: number): Segment[][] | null => {
   const grammar = grammarFor(lang);
   if (!grammar) return null;
   const code = lines.join("\n");
-  const cache = highlighted.get(style.theme) ?? new Map();
+  const cache = highlighted.get(style.theme) ?? new Map<string, Segment[][]>();
   highlighted.set(style.theme, cache);
   return remember(cache, `${style.reorder ? style.shape : ""}\0${room ?? ""}\0${lang}\0${code}`, () => {
-    const out = [[]];
+    const out: Segment[][] = [[]];
     for (const seg of flatten(tokenize(code, grammar), style)) {
       seg.text.split("\n").forEach((piece, i) => {
         if (i > 0) out.push([]);
@@ -830,7 +858,14 @@ const segmentRows = (style, lines, lang, room) => {
   });
 };
 
-const highlightBlock = ({ Text }, style, lines, lang, key, room) => {
+const highlightBlock = (
+  { Text }: ElementTable,
+  style: Style,
+  lines: string[],
+  lang: string,
+  key: string,
+  room?: number,
+): RenderElement[] | null => {
   const rows = segmentRows(style, lines, lang, room);
   if (!rows) return null;
   return rows.map((row, r) =>
@@ -844,10 +879,10 @@ const highlightBlock = ({ Text }, style, lines, lang, key, room) => {
   );
 };
 
-const gutterOf = (lines, numbered) => (numbered ? String(lines.length).length + 2 : 0);
+const gutterOf = (lines: string[], numbered: boolean): number => (numbered ? String(lines.length).length + 2 : 0);
 
-const merged = (pieces) =>
-  pieces.reduce((acc, p) => {
+const merged = (pieces: Segment[]): Segment[] =>
+  pieces.reduce<Segment[]>((acc, p) => {
     const last = acc[acc.length - 1];
     if (last && last.color === p.color && last.italic === p.italic)
       acc[acc.length - 1] = { ...last, text: last.text + p.text };
@@ -857,7 +892,7 @@ const merged = (pieces) =>
 
 const TAB = 8;
 
-const tabbed = (pieces) => {
+const tabbed = (pieces: Segment[]): Segment[] => {
   if (!pieces.some((p) => p.text.includes("\t"))) return pieces;
   let col = 0;
   return pieces.map((p) => {
@@ -871,9 +906,10 @@ const tabbed = (pieces) => {
   });
 };
 
-const cutAt = (blank, space, from, at) => (blank || space <= from ? at : space);
+const cutAt = (blank: boolean, space: number, from: number, at: number): number =>
+  blank || space <= from ? at : space;
 
-const rowStarts = (text, room) => {
+const rowStarts = (text: string, room: number): number[] => {
   const starts = [0];
   let [used, at, space, seen] = [0, 0, -1, false];
   for (const g of /^[ -~]*$/.test(text) ? text : graphemes(text)) {
@@ -895,8 +931,8 @@ const rowStarts = (text, room) => {
   return starts;
 };
 
-const splitRows = (pieces, starts) => {
-  const rows = starts.map(() => []);
+const splitRows = (pieces: Segment[], starts: number[]): Segment[][] => {
+  const rows = starts.map((): Segment[] => []);
   let [at, r] = [0, 0];
   for (const p of pieces) {
     for (let from = 0; from < p.text.length; ) {
@@ -912,21 +948,27 @@ const splitRows = (pieces, starts) => {
 
 const DIFF_ROOM = 8;
 
-const visualRows = (pieces, room) => {
+const visualRows = (pieces: Segment[], room?: number): Segment[][] => {
   const text = pieces.map((p) => p.text).join("");
   return room === undefined || room < DIFF_ROOM || width(text) <= room
     ? [pieces]
     : splitRows(pieces, rowStarts(text, room));
 };
 
-const drawCode = ({ Text }, pieces, key) => {
+const drawCode = ({ Text }: ElementTable, pieces: Segment[], key: string): RenderNode => {
   if (!pieces.length) return " ";
   return pieces.map((p, j) =>
     !p.color && !p.italic ? p.text : h(Text, { key: `${key}.${j}`, color: p.color, italic: p.italic }, p.text),
   );
 };
 
-const numberedLine = (el, style, label, pieces, key) => [
+const numberedLine = (
+  el: ElementTable,
+  style: Style,
+  label: string,
+  pieces: Segment[],
+  key: string,
+): RenderElement[] => [
   h(
     el.Text,
     { key: `${key}.g`, color: style.theme.codeComment, dimColor: true },
@@ -935,11 +977,20 @@ const numberedLine = (el, style, label, pieces, key) => [
   h(el.Text, { key: `${key}.c`, color: style.theme.codeText }, drawCode(el, pieces, `${key}.c`)),
 ];
 
-const heldSegments = (style, lines, lang) =>
+const heldSegments = (style: Style, lines: string[], lang: string): Segment[][] =>
   (isShellLang(lang) ? lines.map((line) => shellLine(style, line)) : segmentRows(style, lines, lang)) ??
   lines.map((text) => (text ? [{ text, italic: false }] : []));
 
-const heldCode = (el, style, lines, shown, lang, gutter, room, key) =>
+const heldCode = (
+  el: ElementTable,
+  style: Style,
+  lines: string[],
+  shown: number,
+  lang: string,
+  gutter: number,
+  room: number,
+  key: string,
+): RenderElement[] =>
   heldSegments(style, lines, lang)
     .slice(0, shown)
     .flatMap((segs, i) =>
@@ -958,7 +1009,16 @@ const heldCode = (el, style, lines, shown, lang, gutter, room, key) =>
       ),
     );
 
-const codeRows = (el, style, lines, shown, lang, _numbered, room, key) => {
+const codeRows = (
+  el: ElementTable,
+  style: Style,
+  lines: string[],
+  shown: number,
+  lang: string,
+  _numbered: boolean,
+  room: number,
+  key: string,
+): RenderElement[] => {
   const rows =
     (isShellLang(lang) ? null : highlightBlock(el, style, lines, lang, key, room))?.slice(0, shown) ??
     lines.slice(0, shown).map((line, i) => codeLine(el, style, line, lang, `${key}.${i}`, room));
@@ -967,7 +1027,14 @@ const codeRows = (el, style, lines, shown, lang, _numbered, room, key) => {
     : rows;
 };
 
-const codeBody = (el, style, rows, gutter, held, more) => {
+const codeBody = (
+  el: ElementTable,
+  style: Style,
+  rows: RenderElement[],
+  gutter: number,
+  held: boolean,
+  more: RenderElement | null,
+): RenderElement => {
   const { Box, Text } = el;
   return h(
     Box,
@@ -988,13 +1055,21 @@ const codeBody = (el, style, rows, gutter, held, more) => {
   );
 };
 
-const isShellLang = (lang) => lang === "" || /^(sh|bash|zsh|shell|console|fish|powershell|ps1)$/i.test(lang);
+const isShellLang = (lang: string): boolean =>
+  lang === "" || /^(sh|bash|zsh|shell|console|fish|powershell|ps1)$/i.test(lang);
 
 const BOX_DRAWING = /[\u2500-\u257F]/;
 
 const SHELL_COMMENT = /^\s*#/;
 
-const codeLine = (el, style, line, lang, key, room) => {
+const codeLine = (
+  el: ElementTable,
+  style: Style,
+  line: string,
+  lang: string,
+  key: string,
+  room?: number,
+): RenderElement => {
   const { Text } = el;
   const t = style.theme;
   const isShell = isShellLang(lang);
@@ -1017,17 +1092,17 @@ const codeLine = (el, style, line, lang, key, room) => {
   );
 };
 
-const shellLine = (style, line) => {
+const shellLine = (style: Style, line: string): Segment[] => {
   if (!line) return [];
   if (BOX_DRAWING.test(line)) return [{ text: line, color: style.theme.codeText, italic: false }];
   if (SHELL_COMMENT.test(line)) return [{ text: line, color: style.theme.codeComment, italic: false }];
   return shellSegments(style, line);
 };
 
-const shellSegments = (style, line, room) => {
+const shellSegments = (style: Style, line: string, room?: number): Segment[] => {
   const t = style.theme;
   let seenCommand = false;
-  const colorOf = (p) => {
+  const colorOf = (p: string): string | undefined => {
     if (/^\s+$/.test(p)) return undefined;
     if (/^["']/.test(p)) return t.codeString;
     if (/^--?[\w-]/.test(p)) return t.codeFlag;
@@ -1044,9 +1119,9 @@ const shellSegments = (style, line, room) => {
     .map((text) => ({ text, color: colorOf(text), italic: false }));
 };
 
-const longestWord = (text) => Math.max(0, ...text.split(/\s+/).map(width));
+const longestWord = (text: string): number => Math.max(0, ...text.split(/\s+/).map(width));
 
-const columnWidths = (natural, available, gap, words = []) => {
+const columnWidths = (natural: number[], available: number, gap: number, words: number[] = []): number[] => {
   const room = Math.max(natural.length, available - gap * (natural.length - 1));
   const total = natural.reduce((a, b) => a + b, 0);
   if (total <= room) return natural;
@@ -1056,7 +1131,7 @@ const columnWidths = (natural, available, gap, words = []) => {
   let left = room;
   for (let fixed = [-1]; fixed.length; ) {
     const share = Math.floor(left / open.length);
-    const claim = (c) => (natural[c] <= share ? natural[c] : minimum[c]);
+    const claim = (c: number) => (natural[c] <= share ? natural[c] : minimum[c]);
     const minimumsFit = open.reduce((a, c) => a + minimum[c], 0) <= left;
     const needed = open.reduce((a, c) => a + claim(c), 0);
     fixed = open.filter((c) => natural[c] <= share);
@@ -1078,12 +1153,12 @@ const columnWidths = (natural, available, gap, words = []) => {
   return widths;
 };
 
-const tableCells = (block) => [...block.header, ...block.rows.flat()];
+const tableCells = (block: BlockOf<"table">): Inline[][] => [...block.header, ...block.rows.flat()];
 
-const mostlyRtl = (style, lines) =>
+const mostlyRtl = (style: Style, lines: Inline[][]): boolean =>
   lines.filter((line) => flowOf(style, line, Infinity)?.base === "R").length * 2 > lines.length;
 
-const isRtlTable = (style, block) =>
+const isRtlTable = (style: Style, block: BlockOf<"table">): boolean =>
   mostlyRtl(
     style,
     tableCells(block).filter((cell) => displayText(cell).trim() !== ""),
@@ -1091,23 +1166,24 @@ const isRtlTable = (style, block) =>
 
 const ART_WIDTH = 100;
 
-const tableSize = (block) => {
+const tableSize = (block: BlockOf<"table">): { natural: number[]; words: number[] } => {
   const cells = [block.header, ...block.rows].map((r) => block.header.map((_, c) => displayText(r[c] ?? [])));
-  const column = (measure) => block.header.map((_, c) => Math.max(...cells.map((r) => measure(r[c]))));
+  const column = (measure: (text: string) => number) =>
+    block.header.map((_, c) => Math.max(...cells.map((r) => measure(r[c]))));
   return { natural: column(widestLine), words: column(longestWord) };
 };
 
-const tableGrid = (block) => {
+const tableGrid = (block: BlockOf<"table">): string => {
   const cells = [block.header, ...block.rows].map((r) => block.header.map((_, c) => displayText(r[c] ?? [])));
   const { natural, words } = tableSize(block);
   const widths = columnWidths(natural, ART_WIDTH - 4, 3, words);
-  const pad = (text, c, align) => {
+  const pad = (text: string, c: number, align: "left" | "right" | "center") => {
     const room = Math.max(0, widths[c] - width(text));
     const left = align === "right" ? room : align === "center" ? Math.floor(room / 2) : 0;
     return " ".repeat(left) + text + " ".repeat(room - left);
   };
-  const line = (l, m, r) => l + widths.map((w) => "─".repeat(w + 2)).join(m) + r;
-  const row = (r, header) => {
+  const line = (l: string, m: string, r: string) => l + widths.map((w) => "─".repeat(w + 2)).join(m) + r;
+  const row = (r: string[], header: boolean) => {
     const lines = r.map((text, c) => wrapRanges(text, widths[c]).map(([a, b]) => text.slice(a, b)));
     return Array.from(
       { length: Math.max(...lines.map((l) => l.length)) },
@@ -1124,20 +1200,20 @@ const tableGrid = (block) => {
   return art.join("\n");
 };
 
-const tableArt = (block) => ["```", tableGrid(block), "```"].join("\n");
+const tableArt = (block: BlockOf<"table">): string => ["```", tableGrid(block), "```"].join("\n");
 
-const clip = ({ Box }, w, drawn, key) =>
+const clip = ({ Box }: ElementTable, w: number, drawn: RenderNode, key?: string): RenderElement =>
   h(
     Box,
     { key: key, flexDirection: "column", minWidth: w },
     h(Box, { height: 0, flexGrow: 1, overflow: "hidden" }, drawn),
   );
 
-const tableEdges = (style, block, rtl, mirror) => {
+const tableEdges = (style: Style, block: BlockOf<"table">, rtl: boolean, mirror: boolean) => {
   const held = !rtl && mirrored(style) && tableCells(block).some(containsRtl);
   return {
     opening: mirror ? ROW_MARK_TEXT : held ? LTR_BLANK : "",
-    wall: (text) => (mirror ? text.replace("│", WALL) : held ? text.replace(/ $/, LTR_BLANK) : text),
+    wall: (text: string) => (mirror ? text.replace("│", WALL) : held ? text.replace(/ $/, LTR_BLANK) : text),
     held,
     marked: !mirror && !held,
   };
