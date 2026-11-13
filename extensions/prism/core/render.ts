@@ -65,6 +65,8 @@ export type PrismToken = {
   alias?: string | string[];
 };
 export type Grammar = Record<string, unknown>;
+export type Floating = { needs: number; marker: RenderElement; element: RenderElement };
+export type CopyRow = { first: RenderElement | null | undefined; more: (RenderElement | null | undefined)[] };
 export type Look = {
   bold?: boolean;
   italic?: boolean;
@@ -1607,7 +1609,7 @@ const renderAlert = (
   );
 };
 
-const listSide = (style, block) => {
+const listSide = (style: Style, block: BlockOf<"list">): Flow["base"] | undefined => {
   if (!style.reorder || !block.items.some((item) => containsRtl(item.inline))) return undefined;
   return mostlyRtl(
     style,
@@ -1617,7 +1619,18 @@ const listSide = (style, block) => {
     : "L";
 };
 
-const leftItem = (el, style, depth, lead, color, inline, room, k, look, tip) => {
+const leftItem = (
+  el: ElementTable,
+  style: Style,
+  depth: number,
+  lead: string,
+  color: string | undefined,
+  inline: Inline[],
+  room: number,
+  k: string,
+  look: Look,
+  tip?: Tip,
+): RenderElement => {
   const { Box, Text } = el;
   return h(
     Box,
@@ -1627,14 +1640,26 @@ const leftItem = (el, style, depth, lead, color, inline, room, k, look, tip) => 
   );
 };
 
-const leadSide = (style, block, room) =>
+const leadSide = (style: Style, block: Block, room: number): Flow["base"] | undefined =>
   block.kind === "list" ? listSide(style, block) : flowOf(style, leadInline([block]), room)?.base;
 
-const heldItem = (el, style, item, glyph, color, room, k, look) => {
+const heldItem = (
+  el: ElementTable,
+  style: Style,
+  item: ListItem,
+  glyph: string,
+  color: string | undefined,
+  room: number,
+  k: string,
+  look: Look,
+): RenderElement => {
   const { Box, Text } = el;
-  const lines = mirrored(style)
-    ? flowOf(style, item.inline, room - 1, false).lines.map((line) => [{ kind: "text", text: LTR_BLANK }, ...line])
-    : flowOf(style, item.inline, room).lines;
+  const lines: Inline[][] = mirrored(style)
+    ? (flowOf(style, item.inline, room - 1, false) as Flow).lines.map((line) => [
+        { kind: "text", text: LTR_BLANK },
+        ...line,
+      ])
+    : (flowOf(style, item.inline, room) as Flow).lines;
   return h(
     Box,
     { key: k, flexDirection: "row", paddingLeft: item.depth * 2 },
@@ -1643,7 +1668,18 @@ const heldItem = (el, style, item, glyph, color, room, k, look) => {
   );
 };
 
-const listRow = (el, style, item, glyph, glyphColor, side, room, k, look, tip) => {
+const listRow = (
+  el: ElementTable,
+  style: Style,
+  item: ListItem,
+  glyph: string,
+  glyphColor: string | undefined,
+  side: Flow["base"] | undefined,
+  room: number,
+  k: string,
+  look: Look,
+  tip?: Tip,
+): RenderElement => {
   const { Box, Text } = el;
   const rtl = flowOf(style, item.inline, room);
   const right = side ? side === "R" : rtl?.base === "R";
@@ -1691,9 +1727,23 @@ const listRow = (el, style, item, glyph, glyphColor, side, room, k, look, tip) =
           );
 };
 
-const TASK_GLYPHS = { checks: ["[ ]", "[✓]"], ticks: ["○", "✓"], box: ["□", "✓"], progress: ["○", "✓"] };
+const TASK_GLYPHS: Record<Style["taskStyle"], [string, string]> = {
+  checks: ["[ ]", "[✓]"],
+  ticks: ["○", "✓"],
+  box: ["□", "✓"],
+  progress: ["○", "✓"],
+};
 
-const renderList = (el, style, block, columns, key, copy, fold, tip) => {
+const renderList = (
+  el: ElementTable,
+  style: Style,
+  block: BlockOf<"list">,
+  columns: number,
+  key: string,
+  copy?: CopyButton,
+  fold?: Fold,
+  tip?: Tip,
+): RenderElement => {
   const { Box, Text } = el;
   const t = style.theme;
   const tasks = block.items.filter((item) => item.task !== undefined);
@@ -1743,16 +1793,18 @@ const renderList = (el, style, block, columns, key, copy, fold, tip) => {
   );
 };
 
-const instanceKey = (id) => {
+const instanceKey = (id: string): string => {
   let h = 5381;
   for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 };
 
-const noteTip = (blocks, toast) => {
+const noteTip = (blocks: Block[], toast: (text: string) => void): Tip | undefined => {
   const notes = blocks.find((block) => block.kind === "notes");
   if (notes?.kind !== "notes") return undefined;
-  const text = new Map(notes.notes.map((note) => [note.note, `${note.mark} ${inlineText(note.inline)}`]));
+  const text = new Map(
+    notes.notes.map((note): [number, string] => [note.note, `${note.mark} ${inlineText(note.inline)}`]),
+  );
   return (note) => {
     const line = text.get(note);
     return line === undefined ? undefined : () => toast(line);
@@ -1763,7 +1815,7 @@ const NUMBER_AT = 10;
 const FOLD_AT = 30;
 const FOLD_SHOW = 20;
 
-const codeId = (lines) => {
+const codeId = (lines: string[]): string => {
   let h = 5381;
   for (const line of lines) {
     for (let i = 0; i < line.length; i++) h = (h * 33 + line.charCodeAt(i)) | 0;
@@ -1772,7 +1824,7 @@ const codeId = (lines) => {
   return `${lines.length}:${(h >>> 0).toString(36)}`;
 };
 
-const copySource = (style, block) =>
+const copySource = (style: Style, block: Block): string | undefined =>
   block.kind === "code"
     ? block.lines.join("\n")
     : block.kind === "table"
@@ -1788,7 +1840,7 @@ const copySource = (style, block) =>
                 .join("\n")
             : undefined;
 
-const drawMath = (el, style, blocks, drawn = new Map()) => {
+const drawMath = (el: ElementTable, style: Style, blocks: Block[], drawn: Drawn = new Map()): Drawn => {
   for (const [i, block] of blocks.entries()) {
     const tex = drawn.has(i) ? null : mathOf(block);
     const text = tex === null ? null : texText(tex);
@@ -1804,33 +1856,39 @@ const drawMath = (el, style, blocks, drawn = new Map()) => {
   return drawn;
 };
 
-const opensWithCopy = (block) =>
+const opensWithCopy = (block: Block): boolean =>
   block.kind === "quote" &&
   (block.blocks[0]?.kind === "code" ||
     block.blocks[0]?.kind === "table" ||
     (block.blocks[0] !== undefined && opensWithCopy(block.blocks[0])));
 
-const holdsOnlyEmptyCode = (block) =>
+const holdsOnlyEmptyCode = (block: Block): boolean =>
   block.kind === "quote" &&
   block.blocks.length === 1 &&
   ((block.blocks[0].kind === "code" && block.blocks[0].lines.length === 0) || holdsOnlyEmptyCode(block.blocks[0]));
 
 const MARK = 2;
 
-const markerRoom = (style) => (style.copyButtons && style.copyButtonStyle === "hover" ? MARK : 0);
+const markerRoom = (style: Style): number => (style.copyButtons && style.copyButtonStyle === "hover" ? MARK : 0);
 
-const codeLabel = (block) => `── ${block.lang || "code"}`;
+const codeLabel = (block: BlockOf<"code">): string => `── ${block.lang || "code"}`;
 
-const buttonText = (button) =>
+const buttonText = (button: RenderElement | null | undefined): string | undefined =>
   button?.type === "Button"
     ? `[ ${button.props.label} ]`
     : button?.type === "Text"
       ? (button.children ?? []).filter((c) => typeof c === "string").join("")
       : undefined;
 
-const keyOf = (button) => String(("props" in button ? button.props?.key : undefined) ?? "");
+const keyOf = (button: RenderElement): string => String(("props" in button ? button.props?.key : undefined) ?? "");
 
-const markedRow = ({ Box }, key, element, float, start) =>
+const markedRow = (
+  { Box }: ElementTable,
+  key: string,
+  element: RenderElement,
+  float: Floating,
+  start: boolean,
+): RenderElement =>
   h(
     Box,
     _extends({ key: key, flexDirection: "column" }, start ? { alignItems: "flex-end" } : { alignSelf: "flex-start" }),
@@ -1847,22 +1905,32 @@ const markedRow = ({ Box }, key, element, float, start) =>
     ),
   );
 
-const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold, tip, picture) => {
+const renderBlocks = (
+  el: ElementTable,
+  style: Style,
+  blocks: Block[],
+  columns: number,
+  drawn: Drawn = new Map(),
+  copy?: CopyButton,
+  fold?: Fold,
+  tip?: Tip,
+  picture?: PictureButtons,
+): RenderElement[] => {
   const { Box, Text } = el;
   const t = style.theme;
   const hover = style.copyButtonStyle === "hover";
-  const reserved = (buttons) =>
+  const reserved = (buttons: RenderElement[]) =>
     buttons.reduce((w, button) => {
       const shown = buttonText(button);
       return shown === undefined ? w : w + (w ? 1 : 0) + width(shown);
     }, 0);
-  const fitted = (parts) =>
-    parts.reduce(
+  const fitted = (parts: (RenderElement | null | undefined)[]) =>
+    parts.reduce<RenderElement[]>(
       (kept, part) => (part && (!kept.length || reserved([...kept, part]) <= columns) ? [...kept, part] : kept),
       [],
     );
-  const scopeOf = (button) => `copy:${style.noteKey ?? ""}:${keyOf(button)}`;
-  const floating = (kept, low = false, start = false) => {
+  const scopeOf = (button: RenderElement) => `copy:${style.noteKey ?? ""}:${keyOf(button)}`;
+  const floating = (kept: RenderElement[], low = false, start = false): Floating => {
     const scope = scopeOf(kept[0]);
     return {
       needs: reserved(kept),
@@ -1883,7 +1951,7 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
   };
   const shown = blocks.map((block) => drawable(block, style));
   const rtlTables = shown.map((block) => style.reorder && block.kind === "table" && isRtlTable(style, block));
-  const buttons = blocks.map((block, b) => {
+  const buttons = blocks.map((block, b): CopyRow => {
     const text = hover && holdsOnlyEmptyCode(block) ? undefined : copySource(style, block);
     const isPlainCode = block.kind === "code" && !drawn.get(b)?.element;
     const drawnArt = drawn.get(b)?.art;
@@ -1914,13 +1982,13 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
     ].filter(Boolean);
     return { first, more };
   });
-  const codeHead = (label, button) => {
+  const codeHead = (label: string, button: RenderElement | null) => {
     if (!hover || !button) return null;
     const float = floating([button]);
     return { ...float, minWidth: Math.min(columns, width(label) + 1 + float.needs) };
   };
-  const room = (b) => (hover && buttons[b].first ? columns - MARK : columns);
-  const beside = (b) =>
+  const room = (b: number) => (hover && buttons[b].first ? columns - MARK : columns);
+  const beside = (b: number) =>
     !buttons[b].first ? columns : hover ? columns - MARK : columns - reserved([buttons[b].first]) - 2;
   const rendered = shown.map((block, b) => {
     const key = `b${b}`;
@@ -1988,7 +2056,7 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
       default:
         return undefined;
     }
-  });
+  }) as RenderElement[];
   const copied = rendered.map((element, b) => {
     const block = blocks[b];
     const { first, more } = buttons[b];
@@ -2026,8 +2094,8 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
           element,
         );
   });
-  const isFigure = (b) => blocks[b]?.kind === "table" || drawn.get(b)?.art !== undefined;
-  const out = [];
+  const isFigure = (b: number) => blocks[b]?.kind === "table" || drawn.get(b)?.art !== undefined;
+  const out: RenderElement[] = [];
   for (let b = 0; b < rendered.length; b++) {
     if (!isFigure(b) || !isFigure(b + 1)) {
       out.push(copied[b]);
@@ -2046,14 +2114,14 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
   return out;
 };
 
-const formatDuration = (ms) => {
+const formatDuration = (ms: number): string => {
   const s = Math.round(ms / 1000);
   if (s < 60) return `${Math.max(s, 0)}s`;
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 };
 
-const renderTurnDuration = ({ Text }, style, word, durationMs) =>
+const renderTurnDuration = ({ Text }: ElementTable, style: Style, word: string, durationMs: number): RenderElement =>
   h(
     Text,
     { color: style.theme.codeComment },
@@ -2061,11 +2129,12 @@ const renderTurnDuration = ({ Text }, style, word, durationMs) =>
     h(Text, { color: style.theme.number }, formatDuration(durationMs)),
   );
 
-const boxedPrompt = (style) => style.promptStyle === "bubble" || style.promptStyle === "wide";
+const boxedPrompt = (style: Style): boolean => style.promptStyle === "bubble" || style.promptStyle === "wide";
 
-const widePrompt = (style, hebrew) => style.promptStyle === "wide" || (hebrew && mirrored(style));
+const widePrompt = (style: Style, hebrew: boolean): boolean =>
+  style.promptStyle === "wide" || (hebrew && mirrored(style));
 
-const renderUserPrompt = (el, style, typed, columns) => {
+const renderUserPrompt = (el: ElementTable, style: Style, typed: string, columns: number): RenderElement => {
   const { Box, Text } = el;
   const t = style.theme;
   const color = style.promptStyle === "chevron" ? t.accent : t.heading;
