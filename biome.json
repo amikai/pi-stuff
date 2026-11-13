@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.6.2/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.5/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": { "includes": ["**", "!extensions/prism/core/vendor", "!package-lock.json"] },
   "formatter": { "indentStyle": "space", "lineWidth": 120, "indentWidth": 2 },
@@ -18,6 +18,22 @@
       "suspicious": { "noExtraNonNullAssertion": "error" }
     }
   },
+  "overrides": [
+    {
+      "includes": [
+        ".pi/skills/verify/scripts/control-prism.mjs",
+        "extensions/pi-built-in-render/render.ts",
+        "extensions/prism/core/figure.ts",
+        "extensions/prism/core/markdown.ts",
+        "extensions/prism/core/mermaid.ts",
+        "extensions/prism/core/render.ts",
+        "extensions/prism/pane-viewer.mjs",
+        "extensions/prism/renderer.ts",
+        "test/prism.test.ts"
+      ],
+      "linter": { "rules": { "suspicious": { "noControlCharactersInRegex": "off" } } }
+    }
+  ],
   "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
   "markdown": { "formatter": { "enabled": false } }
 }

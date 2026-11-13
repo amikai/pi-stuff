@@ -5,7 +5,7 @@ import { registerHooks } from "node:module";
 import { dirname, resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import type { createBashTool, ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { createBashTool } from "@earendil-works/pi-coding-agent";
 
 const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
 const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));

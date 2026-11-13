@@ -278,7 +278,7 @@ const fineBar = (from: number, to: number, fallback: number) => {
   const start = half ? Math.floor(from) + 1 : Math.round(from);
   const eighths = Math.round(to * 8);
   const whole = Math.floor(eighths / 8) - start;
-  if (whole < 1) return " ".repeat(fallback) + "█";
+  if (whole < 1) return `${" ".repeat(fallback)}█`;
   return (
     " ".repeat(start - (half ? 1 : 0)) +
     (half ? "▐" : "") +

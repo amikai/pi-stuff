@@ -365,17 +365,19 @@ function ensureMessagePrototypesPatched() {
       const baseId = String(message.timestamp ?? "msg");
       let textIdx = 0;
       // Each update rebuilds the children, so the message keeps the image components, one store per text block.
-      const stores: ImageStore[] = (this[IMAGE_STORES] ??= []);
+      this[IMAGE_STORES] ??= [];
+      const stores: ImageStore[] = this[IMAGE_STORES];
       const children: Component[] = this.contentContainer.children;
       for (let i = 0; i < children.length && textIdx < textBlocks.length; i++) {
         if (children[i] instanceof Markdown) {
           const text = textBlocks[textIdx]!.text.trim();
+          stores[textIdx] ??= new Map();
           children[i] = activeHooks.renderAssistantText(
             text,
             textIdx === 0,
             `${baseId}:${textIdx}`,
             this.outputPad ?? 1,
-            (stores[textIdx] ??= new Map()),
+            stores[textIdx],
           );
           textIdx++;
         }

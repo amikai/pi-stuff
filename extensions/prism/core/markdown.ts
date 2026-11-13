@@ -299,7 +299,10 @@ const texUnicode = (tex: string): string => {
   let i = 0;
   const name = () => {
     const m = /^[A-Za-z]+/.exec(tex.slice(i));
-    if (m) return ((i += m[0].length), m[0]);
+    if (m) {
+      i += m[0].length;
+      return m[0];
+    }
     return tex[i++] ?? "";
   };
   const arg = (): string => {
@@ -314,7 +317,10 @@ const texUnicode = (tex: string): string => {
       }
       return tex.slice(start, i++);
     }
-    if (tex[i] === "\\") return (i++, `\\${name()}`);
+    if (tex[i] === "\\") {
+      i++;
+      return `\\${name()}`;
+    }
     return tex[i++] ?? "";
   };
   const out: string[] = [];
@@ -341,7 +347,11 @@ const texUnicode = (tex: string): string => {
             .join(""),
         );
       else if (cmd === "left" || cmd === "right" || cmd === "big" || cmd === "Big" || cmd === "bigg") {
-        const d = tex[i] === "\\" ? (i++, name()) : (tex[i++] ?? "");
+        let d: string;
+        if (tex[i] === "\\") {
+          i++;
+          d = name();
+        } else d = tex[i++] ?? "";
         out.push(d === "." ? "" : d === "{" || d === "}" ? d : Object.hasOwn(TEX, d) ? TEX[d]! : d);
       } else if (FUNCTIONS.has(cmd)) out.push(cmd + FN);
       else out.push(Object.hasOwn(TEX, cmd) ? TEX[cmd]! : `\\${cmd}`);
@@ -452,7 +462,11 @@ const numberNotes = (blocks: Block[], defs: Map<string, string>, hl: Highlight):
           : b.kind === "quote" || b.kind === "alert"
             ? { ...b, blocks: b.blocks.map((c) => mapInlines(c, f)) }
             : b;
-  blocks.forEach((b) => mapInlines(b, (nodes) => (seen(nodes), nodes)));
+  for (const b of blocks)
+    mapInlines(b, (nodes) => {
+      seen(nodes);
+      return nodes;
+    });
   for (const label of defs.keys()) if (!order.has(label)) order.set(label, order.size + 1);
   const out = blocks.map((b) => mapInlines(b, fix));
   const notes = [...defs]

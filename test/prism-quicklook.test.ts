@@ -261,7 +261,9 @@ test("3. The zoom buttons zoom like Preview's: out and in step the scale, Actual
   const scales = (results: (Layout | Scale)[]) => {
     const measured = results.filter((r): r is Scale => r.op === "scale");
     if (measured.some((r) => r.error === "screen capture is not allowed")) return null;
-    measured.forEach((r, i) => assert.equal(r.error, undefined, `zoom reading ${i + 1} failed: ${r.error}`));
+    measured.forEach((r, i) => {
+      assert.equal(r.error, undefined, `zoom reading ${i + 1} failed: ${r.error}`);
+    });
     return measured.map((r) => r.scale!);
   };
 

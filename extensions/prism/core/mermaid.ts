@@ -2,8 +2,7 @@ import type { Wake } from "./background.ts";
 import type { ChartArt, Pie, Rgb } from "./charts.ts";
 import { ganttText, pieRgba, pieText, rgbaPng } from "./charts.ts";
 import { drawFigure, isFigureLang } from "./figure.ts";
-import type { ElementTable, RenderElement } from "./jsx.ts";
-import { Fragment, h } from "./jsx.ts";
+import { h } from "./jsx.ts";
 import { fitImage, ratexColor } from "./latex.ts";
 import type { Block } from "./markdown.ts";
 import type { Picture } from "./pele.ts";
@@ -11,23 +10,10 @@ import { pelePicture } from "./pele.ts";
 import type { Drawn, DrawnBlock } from "./render.ts";
 import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
 import { asIs, hasRtl, holdEngine, holdRow, holdVisual, led } from "./rtl.ts";
-import type { Style, Theme } from "./theme.ts";
+import type { Style } from "./theme.ts";
 import { renderMermaidAscii, setChartSize } from "./vendor/mermaid-text.js";
 
-function _extends() {
-  return (
-    (_extends = Object.assign
-      ? Object.assign.bind()
-      : function (n) {
-          for (var e = 1; e < arguments.length; e++) {
-            var t = arguments[e];
-            for (var r in t) Object.hasOwn(t, r) && (n[r] = t[r]);
-          }
-          return n;
-        }),
-    _extends.apply(null, arguments)
-  );
-}
+const _extends = Object.assign;
 
 const MAX_LINES = 80;
 const PAD = "\uFDD0";
@@ -85,7 +71,9 @@ const labelBars = (art, source) => {
     if (!row) return;
     while (row.length < from + text.length) row.push(" ");
     if (!text.every((_, i) => /[ ·]/.test(row[from + i] ?? " "))) return;
-    text.forEach((ch, i) => (row[from + i] = ch));
+    text.forEach((ch, i) => {
+      row[from + i] = ch;
+    });
   });
   return grid
     .map((row) => row.join("").trimEnd())
@@ -175,9 +163,12 @@ const SGR = /\x1b\[([\d;]*)m/g;
 const seriesOf = (colored) => {
   const hues = colored.split("\n").map((line) => {
     const row = [];
-    let hue;
+    let hue: string | undefined;
     let at = 0;
-    const take = (text) => graphemes(text).forEach(() => row.push(hue));
+    const take = (text) =>
+      graphemes(text).forEach(() => {
+        row.push(hue);
+      });
     for (const m of line.matchAll(SGR)) {
       take(line.slice(at, m.index));
       hue = m[1].startsWith("38;2;") && m[1] !== "38;2;128;128;128" ? m[1] : undefined;
@@ -316,10 +307,12 @@ const paint = (art, style, series) => {
   });
   const single = bars.length > 1 && bars.every((x, i) => i === 0 || x - ends[i - 1] > 2);
   const barColor = (i) => (single ? (tops[i] === Math.min(...tops) ? (t.emphasis ?? t.accent) : t.quote) : next(i));
-  series?.forEach((row, r) =>
-    row.forEach((owner, c) => owner >= 0 && grid[r]?.[c]?.trim() && (color[r][c] = next(owner))),
-  );
-  grid.forEach((row, r) =>
+  series?.forEach((row, r) => {
+    row.forEach((owner, c) => {
+      if (owner >= 0 && grid[r]?.[c]?.trim()) color[r][c] = next(owner);
+    });
+  });
+  grid.forEach((row, r) => {
     row.forEach((ch, c) => {
       if (color[r][c] !== undefined) return;
       const start = barStart(row, c);
@@ -329,8 +322,8 @@ const paint = (art, style, series) => {
       else if (LINE.test(ch)) color[r][c] = t.diagram;
       else if (/^\d+[┤┼]/.test(row.slice(c).join(""))) color[r][c] = t.number;
       else color[r][c] = t.diagramText;
-    }),
-  );
+    });
+  });
   return { grid, colors: color };
 };
 

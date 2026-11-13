@@ -1,24 +1,9 @@
-import type { ElementTable, RenderElement } from "./jsx.ts";
-import { Fragment, h } from "./jsx.ts";
+import { h } from "./jsx.ts";
 import { FIGURE_ROLES } from "./markdown.ts";
 import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
 import { asIs, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
-import type { Style, Theme } from "./theme.ts";
 
-function _extends() {
-  return (
-    (_extends = Object.assign
-      ? Object.assign.bind()
-      : function (n) {
-          for (var e = 1; e < arguments.length; e++) {
-            var t = arguments[e];
-            for (var r in t) Object.hasOwn(t, r) && (n[r] = t[r]);
-          }
-          return n;
-        }),
-    _extends.apply(null, arguments)
-  );
-}
+const _extends = Object.assign;
 
 const FIGURE_MAX_COLUMNS = 100;
 

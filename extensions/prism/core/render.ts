@@ -1,8 +1,7 @@
 import { tableHtml, tableText } from "./html.ts";
-import type { ElementTable, RenderElement } from "./jsx.ts";
+import type { RenderElement } from "./jsx.ts";
 import { h } from "./jsx.ts";
 import { mathOf } from "./latex.ts";
-import type { Block } from "./markdown.ts";
 import { displayText, inlineText, isWebLink, nestedBlocks, texText } from "./markdown.ts";
 import {
   codeVisual,
@@ -51,24 +50,12 @@ export type PictureButtons = (png: string, b: number) => RenderElement[];
 export type Fold = (id: string, hidden: number, key: string) => { folded: boolean; element: RenderElement } | null;
 export type Tip = (note: number) => (() => void) | undefined;
 
-function _extends() {
-  return (
-    (_extends = Object.assign
-      ? Object.assign.bind()
-      : function (n) {
-          for (var e = 1; e < arguments.length; e++) {
-            var t = arguments[e];
-            for (var r in t) Object.hasOwn(t, r) && (n[r] = t[r]);
-          }
-          return n;
-        }),
-    _extends.apply(null, arguments)
-  );
-}
+const _extends = Object.assign;
 
 import { languages, tokenize } from "./vendor/prism.js";
 
 const WIDE =
+  // biome-ignore lint/suspicious/noMisleadingCharacterClass: U+20E3 is listed on purpose, as one wide code point
   /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}\u20E3]|\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u;
 const segmenter = new Intl.Segmenter();
 
@@ -100,7 +87,7 @@ const wrapRanges = (text, w) => {
     ];
   if (width(text) <= w) return [[0, text.length]];
   const out = [];
-  let line;
+  let line: number[] | undefined;
   let used = 0;
   for (const word of text.matchAll(/\S+/g)) {
     let start = word.index;
@@ -515,7 +502,8 @@ const drawable = (block, reach) => {
   const cached = hyperlinked.get(block) ?? {};
   hyperlinked.set(block, cached);
   const key = `${+reach.httpLinks}${+reach.editorLinks}${reach.fileLinks ?? ""}${reach.pathLinks ? `\0${reach.home}\0${reach.cwd}\0${reach.found?.size ?? 0}` : ""}`;
-  return (cached[key] ??= hyperlinkBlock(block, reach));
+  cached[key] ??= hyperlinkBlock(block, reach);
+  return cached[key];
 };
 
 const mostLines = (text, w) => (text.match(/\S+/g)?.length ?? 0) + Math.ceil(width(text) / w);
@@ -636,6 +624,8 @@ const renderInline = (el, style, nodes, keyBase) => {
           : h(Text, { key: key, dimColor: true }, n.text);
       case "footnote":
         return h(Text, _extends({ key: key, color: t.accent }, noteHover(style, n.note)), n.text);
+      default:
+        return undefined;
     }
   });
 };
@@ -1047,10 +1037,15 @@ const columnWidths = (natural, available, gap, words = []) => {
     const needed = open.reduce((a, c) => a + claim(c), 0);
     fixed = open.filter((c) => natural[c] <= share);
     if (minimumsFit && (!fixed.length || needed > left)) fixed = open.filter((c) => minimum[c] > share);
-    fixed.forEach((c) => ((widths[c] = claim(c)), (left -= widths[c])));
+    fixed.forEach((c) => {
+      widths[c] = claim(c);
+      left -= widths[c];
+    });
     open = open.filter((c) => !fixed.includes(c));
   }
-  open.forEach((c, i) => (widths[c] = Math.max(1, Math.floor(left / open.length) + (i < left % open.length ? 1 : 0))));
+  open.forEach((c, i) => {
+    widths[c] = Math.max(1, Math.floor(left / open.length) + (i < left % open.length ? 1 : 0));
+  });
   while (widths.reduce((a, b) => a + b, 0) > room) {
     const widest = widths.indexOf(Math.max(...widths));
     if (widths[widest] <= 1) break;
@@ -1829,6 +1824,8 @@ const renderBlocks = (el, style, blocks, columns, drawn = new Map(), copy, fold,
             ),
           ),
         );
+      default:
+        return undefined;
     }
   });
   const copied = rendered.map((element, b) => {

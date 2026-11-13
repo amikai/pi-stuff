@@ -97,7 +97,10 @@ function recordingDesktop(pictures = true, away: string | null = null) {
   const desktop: Desktop = {
     pictures,
     pasteboard: async () => away,
-    copyPng: async (png) => (did.pngs.push(Buffer.from(png)), null),
+    copyPng: async (png) => {
+      did.pngs.push(Buffer.from(png));
+      return null;
+    },
     previewPng: (png, report) => {
       did.previews.push(Buffer.from(png));
       did.previewReports.push(report);
@@ -2753,7 +2756,6 @@ function recordHelpers(result: { status: number; stderr?: string } = { status: 0
 }
 
 const hasOsascript = existsSync("/usr/bin/osascript");
-const pictureHosts: ClipboardHost[] = ["windows", ...(hasOsascript ? (["macos"] as const) : [])];
 const FIGURE_SOURCE = "```figure\n┌─ box ─┐\n│ ok    │\n└───────┘\n```";
 const TABLE_SOURCE = "| Item | Qty |\n|--|--:|\n| 苹果 | 3 |";
 const FLOWCHART_SOURCE = mermaidFence("flowchart TD\n  A[User] --> B[Gateway]");
@@ -3334,7 +3336,7 @@ test("78. the pane viewer fits the whole picture at zoom 1, zooms around the cen
   const first = decode("\x1b_Gi=7,p=1;O");
   assert.deepEqual(first, { events: [], rest: "\x1b_Gi=7,p=1;O" }, "half a graphics reply waits");
   assert.deepEqual(
-    decode(first.rest + "K\x1b\\q"),
+    decode(`${first.rest}K\x1b\\q`),
     {
       events: [
         { kind: "reply", text: "i=7,p=1;OK" },
@@ -3347,7 +3349,7 @@ test("78. the pane viewer fits the whole picture at zoom 1, zooms around the cen
   const wheel = decode("+\x1b[<64;12");
   assert.deepEqual(wheel, { events: [{ kind: "key", key: "+" }], rest: "\x1b[<64;12" }, "half a wheel report waits");
   assert.deepEqual(
-    decode(wheel.rest + ";5M\x1b[<65;1;1M").events,
+    decode(`${wheel.rest};5M\x1b[<65;1;1M`).events,
     [
       { kind: "wheel", dir: "up" },
       { kind: "wheel", dir: "down" },
@@ -3357,7 +3359,7 @@ test("78. the pane viewer fits the whole picture at zoom 1, zooms around the cen
   const arrow = decode("\x1b");
   assert.deepEqual(arrow, { events: [], rest: "\x1b" }, "a lone Esc waits for the next chunk or a timeout");
   assert.deepEqual(
-    decode(arrow.rest + "[D\x1b[A").events,
+    decode(`${arrow.rest}[D\x1b[A`).events,
     [
       { kind: "key", key: "left" },
       { kind: "key", key: "up" },
@@ -3561,7 +3563,10 @@ test("81. the system desktop reports the pasteboard away only when the Rex app i
 
 test("82. sendCopiesThroughRex turns pi's OSC 52 copies on inside Rex, unless the user already chose", async () => {
   const { sendCopiesThroughRex } = await import("../extensions/prism/rex.ts");
-  const run = (env: NodeJS.ProcessEnv) => (sendCopiesThroughRex(env), env.PI_CLIPBOARD_OSC52);
+  const run = (env: NodeJS.ProcessEnv) => {
+    sendCopiesThroughRex(env);
+    return env.PI_CLIPBOARD_OSC52;
+  };
 
   assert.equal(run({ REX_SESSION: "s1" }), "1", "unset in Rex becomes 1");
   assert.equal(run({ REX_SESSION: "s1", PI_CLIPBOARD_OSC52: "0" }), "0", "an explicit 0 stays");

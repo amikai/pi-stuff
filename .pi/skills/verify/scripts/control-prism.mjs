@@ -24,7 +24,7 @@ registerHooks({
   },
 });
 
-const { AssistantMessageComponent, initTheme, SessionManager, UserMessageComponent, VERSION } = await import(
+const { AssistantMessageComponent, initTheme, SessionManager, VERSION } = await import(
   "@earendil-works/pi-coding-agent"
 );
 const { setTheme, theme: activePiGlobalTheme } = await import(
