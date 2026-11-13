@@ -62,7 +62,7 @@ export const headerWord = (source: string): string =>
 
 type Size = { width: number; height: number };
 
-type Reply = ({ png: Uint8Array } & Size) | { error: string } | { failed: true };
+type Reply = ({ png: Uint8Array; limited: boolean } & Size) | { error: string } | { failed: true };
 
 type Waiting = { settle: (reply: Reply) => void; timer: NodeJS.Timeout };
 
@@ -134,9 +134,14 @@ export const pictureOf = (bytes: Uint8Array, natural: Size): Entry => {
     : DECLINED;
 };
 
+// A render the worker cut to its pixel budget would come back the same at this width, so the entry records it as refused.
 const draw = async (source: string, width: number | null): Promise<Entry> => {
   const reply = await ask(source, width);
-  return "png" in reply ? pictureOf(reply.png, reply) : DECLINED;
+  if (!("png" in reply)) return DECLINED;
+  const entry = pictureOf(reply.png, reply);
+  return entry.state === "drawn" && reply.limited && width !== null
+    ? { ...entry, reach: { kind: "refused", from: width } }
+    : entry;
 };
 
 // A diagram that is far taller than wide can be too big at the terminal's width and small enough at its own size.
