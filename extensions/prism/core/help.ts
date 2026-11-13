@@ -1,10 +1,10 @@
 export const HINT = [
-	"Replies in this session are drawn by prism inside Pi (not a command or tool to call: when asked to show something with prism, write it as markdown in the reply).",
-	"Markdown tables, GitHub alerts (> [!WARNING], > [!NOTE]), fenced code with a language tag, and ```mermaid or ```plantuml blocks render as colored terminal graphics:",
-	'flowcharts, sequence diagrams, xychart-beta bar or line charts (name each series for the legend: line "east" [..]), pie charts and gantt schedules.',
-	"When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
-	"Skip diagrams and pictures for short or simple answers.",
-	"Put any command or snippet the user may run or copy in a fenced block with a language tag, never inline code: fenced blocks get a copy button, inline code does not.",
+  "Replies in this session are drawn by prism inside Pi (not a command or tool to call: when asked to show something with prism, write it as markdown in the reply).",
+  "Markdown tables, GitHub alerts (> [!WARNING], > [!NOTE]), fenced code with a language tag, and ```mermaid or ```plantuml blocks render as colored terminal graphics:",
+  'flowcharts, sequence diagrams, xychart-beta bar or line charts (name each series for the legend: line "east" [..]), pie charts and gantt schedules.',
+  "When a reply carries a numeric series or a flow that is easier to see than read, add a small diagram or chart with short labels, not a second picture of what a figure already shows.",
+  "Skip diagrams and pictures for short or simple answers.",
+  "Put any command or snippet the user may run or copy in a fenced block with a language tag, never inline code: fenced blocks get a copy button, inline code does not.",
 ].join(" ");
 
 export const showcaseText = (): string => `
@@ -557,96 +557,96 @@ flowchart LR
 export const languageShowcase = (lang: string): string => (/^ko/i.test(lang) ? KOREAN_SHOWCASE : "");
 
 export type SetupStep = {
-	name: string;
-	key: "tableStyle" | "taskStyle" | "headingStyle" | "copyButtonStyle" | "promptStyle" | "pieStyle";
-	title: string;
-	note: string;
-	options: readonly string[];
-	sample: string;
+  name: string;
+  key: "tableStyle" | "taskStyle" | "headingStyle" | "copyButtonStyle" | "promptStyle" | "pieStyle";
+  title: string;
+  note: string;
+  options: readonly string[];
+  sample: string;
 };
 
 export const SETUP_STEPS: readonly SetupStep[] = [
-	{
-		name: "tables",
-		key: "tableStyle",
-		title: "Tables",
-		note: "How markdown tables draw.",
-		options: ["box", "rules", "grid", "minimal"],
-		sample: "| Item | Qty |\n|:-----|----:|\n| Apples | 3 |\n| Pears | 5 |",
-	},
-	{
-		name: "tasks",
-		key: "taskStyle",
-		title: "Tasks",
-		note: "How `- [ ]` and `- [x]` items draw.",
-		options: ["checks", "ticks", "box", "progress"],
-		sample: "- [x] Parse the reply\n- [x] Draw it\n- [ ] Ship it",
-	},
-	{
-		name: "headings",
-		key: "headingStyle",
-		title: "Headings",
-		note: "How `#` and `##` headings draw. Terminals have one font size, so headings stand out through style and color.",
-		options: ["banner", "bold", "underline", "uppercase"],
-		sample: "# Release notes\n\n## Fixes\n\nTables keep their width.",
-	},
-	{
-		name: "copy",
-		key: "copyButtonStyle",
-		title: "Copy buttons",
-		note: "Where the copy buttons on tables, code, diagrams and replies sit. `inline` shows them beside or above each block. `hover` puts a dim ⧉ beside each block instead and shows its buttons only while the pointer is on that ⧉, so they take no line. Needs `copyButtons` on.",
-		options: ["inline", "hover"],
-		sample: "",
-	},
-	{
-		name: "prompts",
-		key: "promptStyle",
-		title: "Your prompts",
-		note: "How what you type draws in the transcript. `off` keeps Pi's own look.",
-		options: ["bubble", "wide", "bar", "chevron", "off"],
-		sample: "",
-	},
-	{
-		name: "pies",
-		key: "pieStyle",
-		title: "Pie charts",
-		note: "How mermaid `pie` charts draw. `round` draws a smooth picture in terminals that show images and text elsewhere, and falls back to bars in ascii mode, with more slices than the theme has distinct colors or in a narrow terminal.",
-		options: ["round", "bars"],
-		sample: '```mermaid\npie title Time per reply stage\n    "Draw" : 9\n    "Paint" : 5\n    "Parse" : 3\n```',
-	},
+  {
+    name: "tables",
+    key: "tableStyle",
+    title: "Tables",
+    note: "How markdown tables draw.",
+    options: ["box", "rules", "grid", "minimal"],
+    sample: "| Item | Qty |\n|:-----|----:|\n| Apples | 3 |\n| Pears | 5 |",
+  },
+  {
+    name: "tasks",
+    key: "taskStyle",
+    title: "Tasks",
+    note: "How `- [ ]` and `- [x]` items draw.",
+    options: ["checks", "ticks", "box", "progress"],
+    sample: "- [x] Parse the reply\n- [x] Draw it\n- [ ] Ship it",
+  },
+  {
+    name: "headings",
+    key: "headingStyle",
+    title: "Headings",
+    note: "How `#` and `##` headings draw. Terminals have one font size, so headings stand out through style and color.",
+    options: ["banner", "bold", "underline", "uppercase"],
+    sample: "# Release notes\n\n## Fixes\n\nTables keep their width.",
+  },
+  {
+    name: "copy",
+    key: "copyButtonStyle",
+    title: "Copy buttons",
+    note: "Where the copy buttons on tables, code, diagrams and replies sit. `inline` shows them beside or above each block. `hover` puts a dim ⧉ beside each block instead and shows its buttons only while the pointer is on that ⧉, so they take no line. Needs `copyButtons` on.",
+    options: ["inline", "hover"],
+    sample: "",
+  },
+  {
+    name: "prompts",
+    key: "promptStyle",
+    title: "Your prompts",
+    note: "How what you type draws in the transcript. `off` keeps Pi's own look.",
+    options: ["bubble", "wide", "bar", "chevron", "off"],
+    sample: "",
+  },
+  {
+    name: "pies",
+    key: "pieStyle",
+    title: "Pie charts",
+    note: "How mermaid `pie` charts draw. `round` draws a smooth picture in terminals that show images and text elsewhere, and falls back to bars in ascii mode, with more slices than the theme has distinct colors or in a narrow terminal.",
+    options: ["round", "bars"],
+    sample: '```mermaid\npie title Time per reply stage\n    "Draw" : 9\n    "Paint" : 5\n    "Parse" : 3\n```',
+  },
 ];
 
 export type SetupParts = { head: string; options: { value: string; text: string }[]; tail: string };
 
 export const setupParts = (at: number): SetupParts => {
-	const step = SETUP_STEPS[at]!;
-	const next = SETUP_STEPS[at + 1];
-	return {
-		head: `## Setup ${at + 1}/${SETUP_STEPS.length}: ${step.title}\n\n${step.note}`,
-		options: step.options.map((value, i) => ({
-			value,
-			text: `### ${i + 1}. ${value}${step.sample ? `\n\n${step.sample}` : ""}`,
-		})),
-		tail: `Pick with \`/prism setup ${step.name} <number or name>\`.${next ? ` Skip with \`/prism setup ${next.name}\`.` : ""} Stop any time, \`/prism setup\` starts over.`,
-	};
+  const step = SETUP_STEPS[at]!;
+  const next = SETUP_STEPS[at + 1];
+  return {
+    head: `## Setup ${at + 1}/${SETUP_STEPS.length}: ${step.title}\n\n${step.note}`,
+    options: step.options.map((value, i) => ({
+      value,
+      text: `### ${i + 1}. ${value}${step.sample ? `\n\n${step.sample}` : ""}`,
+    })),
+    tail: `Pick with \`/prism setup ${step.name} <number or name>\`.${next ? ` Skip with \`/prism setup ${next.name}\`.` : ""} Stop any time, \`/prism setup\` starts over.`,
+  };
 };
 
 export const setupText = (parts: SetupParts): string =>
-	[parts.head, ...parts.options.map((o) => o.text), parts.tail].join("\n\n");
+  [parts.head, ...parts.options.map((o) => o.text), parts.tail].join("\n\n");
 
 export const SETUP_PANE_OPENED =
-	"Setup opened in a pane: ↑↓ or Tab moves through the styles with a preview, Enter saves it and shows the next step, Esc closes the pane. `/prism setup tables` walks the steps here instead.";
+  "Setup opened in a pane: ↑↓ or Tab moves through the styles with a preview, Enter saves it and shows the next step, Esc closes the pane. `/prism setup tables` walks the steps here instead.";
 
 export const SETUP_PANE_KEYS = "↑↓ or Tab moves, Enter saves and shows the next step, Esc closes.";
 
 export const SETUP_DONE =
-	"Setup done. Run `/prism setup` again any time, and `~/.pi/agent/prism.json` has every other option.";
+  "Setup done. Run `/prism setup` again any time, and `~/.pi/agent/prism.json` has every other option.";
 
 export const findSetup = (text: string): { at: number; before: string; parts: SetupParts } | undefined => {
-	for (let at = 0; at < SETUP_STEPS.length; at++) {
-		const parts = setupParts(at);
-		const whole = setupText(parts);
-		if (text.endsWith(whole)) return { at, before: text.slice(0, -whole.length).trim(), parts };
-	}
-	return undefined;
+  for (let at = 0; at < SETUP_STEPS.length; at++) {
+    const parts = setupParts(at);
+    const whole = setupText(parts);
+    if (text.endsWith(whole)) return { at, before: text.slice(0, -whole.length).trim(), parts };
+  }
+  return undefined;
 };

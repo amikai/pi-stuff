@@ -1,21 +1,22 @@
-import { Fragment, h } from "./jsx.ts";
-import type { ElementTable, RenderElement } from "./jsx.ts"
-import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts"
-import { FIGURE_ROLES } from "./markdown.ts"
-import { asIs, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts"
-import type { Style, Theme } from "./theme.ts"
-function _extends() {return _extends = Object.assign ? Object.assign.bind() : function (n) {for (var e = 1; e < arguments.length; e++) {var t = arguments[e];for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);}return n;}, _extends.apply(null, arguments);}
+import { type ElementTable, h, type RenderElement } from "./jsx.ts";
+import { type Block, FIGURE_ROLES } from "./markdown.ts";
+import { cells, type DrawnBlock, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
+import { asIs, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
+import type { Style, Theme } from "./theme.ts";
 
+export type FigureRole = (typeof FIGURE_ROLES)[number];
+export type FigureRun = { text: string; role?: FigureRole };
+export type FigureFinding = { line: number; message: string };
+type ThemeToken = keyof Theme;
+type HuedRole = Extract<FigureRole, "warn" | "ok" | "note">;
+type RoleColors = Partial<Record<HuedRole, string>>;
+type Channels = [number, number, number];
+type Cell = { glyph: string; role?: FigureRole };
+type Frame = { top: number; left: number; corner: number; edges: number[] };
+type Decision = { note: string } | { rows: FigureRun[][]; texts: string[]; widest: number };
+type CodeBlock = Extract<Block, { kind: "code" }>;
 
-
-
-
-
-
-
-
-
-
+const _extends = Object.assign;
 
 const FIGURE_MAX_COLUMNS = 100;
 
@@ -27,35 +28,42 @@ const RAW_MAX_LINE = FIGURE_MAX_COLUMNS * 4;
 
 const LISTED_GLYPHS = 8;
 
-const FIGURE_GLYPHS = '─│┌┐└┘├┤┬┴┼═║→←►◄▲▼✓✗●○█▏■□·';
+const FIGURE_GLYPHS = "─│┌┐└┘├┤┬┴┼═║→←►◄▲▼✓✗●○█▏■□·";
 
 const FIGURE_HINT = [
-'A fenced block whose opening line is exactly ```figure is drawn as a text picture, as written.',
-'Prefer one over mermaid when position carries meaning: durations racing on a time axis, a screen layout, phases, before/after; mermaid stays for plain flows and charts; none for short answers, code changes or reports. The prose never retells the picture.',
-'When asked to explain, compare or plan something and pictures would help, build the reply around them, with the core on the first screen as a picture or a sentence.',
-'Figures only: color with {role:text}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.',
-`At most ${FIGURE_SAFE_COLUMNS} columns, glyphs one column wide such as ${FIGURE_GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text and pad box rows to the top border. CJK letters take two columns, count them twice. Draw a time axis with edge ticks like ▏───▏───▏, not ├┼┤: █ fills its cell, ├┼┤ sit mid-cell.`].
-join(' ');
+  "A fenced block whose opening line is exactly ```figure is drawn as a text picture, as written.",
+  "Prefer one over mermaid when position carries meaning: durations racing on a time axis, a screen layout, phases, before/after; mermaid stays for plain flows and charts; none for short answers, code changes or reports. The prose never retells the picture.",
+  "When asked to explain, compare or plan something and pictures would help, build the reply around them, with the core on the first screen as a picture or a sentence.",
+  "Figures only: color with {role:text}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.",
+  `At most ${FIGURE_SAFE_COLUMNS} columns, glyphs one column wide such as ${FIGURE_GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text and pad box rows to the top border. CJK letters take two columns, count them twice. Draw a time axis with edge ticks like ▏───▏───▏, not ├┼┤: █ fills its cell, ├┼┤ sit mid-cell.`,
+].join(" ");
 
-const MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join('|')}):([^{}]*)\\}`, 'g');
+const MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join("|")}):([^{}]*)\\}`, "g");
 const MARKER = /\{([A-Za-z][\w-]*):/g;
-const TEXT_FORMS = { '▶': '►', '◀': '◄' };
-const ROLE_TOKENS = { accent: 'diagram', warn: 'codeFlag', ok: 'codeString', note: 'heading', dim: 'codeComment', strong: 'strong' };
+const TEXT_FORMS: Record<string, string> = { "▶": "►", "◀": "◄" };
+const ROLE_TOKENS: Record<FigureRole, ThemeToken> = {
+  accent: "diagram",
+  warn: "codeFlag",
+  ok: "codeString",
+  note: "heading",
+  dim: "codeComment",
+  strong: "strong",
+};
 const EMOJI_CAPABLE = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\u20e3/u;
 const CONTROL = /[\0-\x08\x0b-\x1f\x7f-\x9f]/;
 const DIRECTION_MARK = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 const INVISIBLE = /[\u00ad\u200b-\u200d\u2028\u2029\ufeff]/;
-const isRole = (name) => FIGURE_ROLES.some((role) => role === name);
+const isRole = (name: string): name is FigureRole => FIGURE_ROLES.some((role) => role === name);
 
-const isFigureLang = (lang) => lang.toLowerCase() === 'figure';
+const isFigureLang = (lang: string) => lang.toLowerCase() === "figure";
 
-const textForm = (text) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
+const textForm = (text: string) => text.replace(/[▶◀]/g, (glyph) => TEXT_FORMS[glyph] ?? glyph);
 
-const figureRuns = (line) => {
-  const runs = [];
+const figureRuns = (line: string): FigureRun[] => {
+  const runs: FigureRun[] = [];
   let at = 0;
   for (const match of line.matchAll(MARKUP)) {
-    const [whole, role, text = ''] = match;
+    const [whole, role, text = ""] = match;
     if (match.index > at) runs.push({ text: textForm(line.slice(at, match.index)) });
     if (text && isRole(role)) runs.push({ text: textForm(text), role });
     at = match.index + whole.length;
@@ -64,82 +72,100 @@ const figureRuns = (line) => {
   return runs;
 };
 
-const figureText = (line) => figureRuns(line).map((run) => run.text).join('');
+const figureText = (line: string) =>
+  figureRuns(line)
+    .map((run) => run.text)
+    .join("");
 
-const swapsTwoLetters = (name, role) => {
+const swapsTwoLetters = (name: string, role: string) => {
   if (name.length !== role.length) return false;
-  const differ = [...name].flatMap((letter, i) => letter === role[i] ? [] : [i]);
+  const differ = [...name].flatMap((letter, i) => (letter === role[i] ? [] : [i]));
   const [first = -1, second = -1] = differ;
   return differ.length === 2 && second === first + 1 && name[first] === role[second] && name[second] === role[first];
 };
 
-const markupMessage = (marker, drawn, lastClose) => {
-  const [written, name = ''] = marker;
+const markupMessage = (marker: RegExpExecArray, drawn: Set<number>, lastClose: number): string | undefined => {
+  const [written, name = ""] = marker;
   if (drawn.has(marker.index)) return undefined;
   const lower = name.toLowerCase();
   const role = FIGURE_ROLES.find((candidate) => candidate === lower || swapsTwoLetters(lower, candidate));
   if (!role) return undefined;
-  if (name !== role) return `"${written}" is not a role, roles are ${FIGURE_ROLES.join(', ')} in lower case`;
+  if (name !== role) return `"${written}" is not a role, roles are ${FIGURE_ROLES.join(", ")} in lower case`;
   if (lastClose < marker.index + written.length) return `"${written}" is not closed, end it with }`;
   return `"${written}" holds braces, markup does not nest`;
 };
 
-const markupMessages = (line) => {
+const markupMessages = (line: string) => {
   const drawn = new Set([...line.matchAll(MARKUP)].map((match) => match.index));
-  const lastClose = line.lastIndexOf('}');
+  const lastClose = line.lastIndexOf("}");
   return [...line.matchAll(MARKER)].flatMap((marker) => markupMessage(marker, drawn, lastClose) ?? []);
 };
 
-const quoted = (glyphs) => {
+const quoted = (glyphs: string[]) => {
   const distinct = [...new Set(glyphs)];
-  const listed = distinct.slice(0, LISTED_GLYPHS).map((glyph) => `"${glyph}"`).join(', ');
+  const listed = distinct
+    .slice(0, LISTED_GLYPHS)
+    .map((glyph) => `"${glyph}"`)
+    .join(", ");
   return distinct.length > LISTED_GLYPHS ? `${listed} and ${distinct.length - LISTED_GLYPHS} more` : listed;
 };
 
-const lineMessages = (line) => {
+const lineMessages = (line: string): string[] => {
   const text = figureText(line);
   const glyphs = graphemes(text);
   const emoji = glyphs.filter((glyph) => EMOJI_CAPABLE.test(glyph));
   const columns = width(text);
   return [
-  ...(columns > FIGURE_MAX_COLUMNS ? [`${columns} columns wide, at most ${FIGURE_MAX_COLUMNS}`] : []),
-  ...(text.includes('\t') ? ['tab, use spaces'] : []),
-  ...(CONTROL.test(text) ? ['control character, use plain text'] : []),
-  ...(DIRECTION_MARK.test(text) ? ['direction mark, use plain text'] : []),
-  ...(INVISIBLE.test(text) ? ['invisible character, use plain text'] : []),
-  ...(emoji.length ? [`${quoted(emoji)} may draw as an emoji, use a text glyph`] : []),
-  ...markupMessages(line)];
-
+    ...(columns > FIGURE_MAX_COLUMNS ? [`${columns} columns wide, at most ${FIGURE_MAX_COLUMNS}`] : []),
+    ...(text.includes("\t") ? ["tab, use spaces"] : []),
+    ...(CONTROL.test(text) ? ["control character, use plain text"] : []),
+    ...(DIRECTION_MARK.test(text) ? ["direction mark, use plain text"] : []),
+    ...(INVISIBLE.test(text) ? ["invisible character, use plain text"] : []),
+    ...(emoji.length ? [`${quoted(emoji)} may draw as an emoji, use a text glyph`] : []),
+    ...markupMessages(line),
+  ];
 };
 
-const withoutTrailingBlanks = (lines) => {
+const withoutTrailingBlanks = (lines: string[]) => {
   let end = lines.length;
   while (end > 0 && !lines[end - 1]?.trim()) end--;
   return lines.slice(0, end);
 };
 
-const checkFigure = (lines, first = 0) =>
-lines.flatMap((line, index) => lineMessages(line).map((message) => ({ line: first + index + 1, message })));
+const checkFigure = (lines: string[], first = 0): FigureFinding[] =>
+  lines.flatMap((line, index) => lineMessages(line).map((message) => ({ line: first + index + 1, message })));
 
-const leadingBlanks = (lines) => {
+const leadingBlanks = (lines: string[]) => {
   const start = lines.findIndex((line) => line.trim());
   return start < 0 ? lines.length : start;
 };
 
-const ROLE_HUES = { warn: 0, ok: 120, note: 45 };
+const ROLE_HUES: Record<HuedRole, number> = { warn: 0, ok: 120, note: 45 };
 
-
-
-const INK = ['accent', 'heading', 'tableHeader', 'emphasis', 'inlineCode', 'codeCommand', 'codeFlag', 'codeString', 'link', 'path', 'number', 'bullet', 'quote'];
+const INK: ThemeToken[] = [
+  "accent",
+  "heading",
+  "tableHeader",
+  "emphasis",
+  "inlineCode",
+  "codeCommand",
+  "codeFlag",
+  "codeString",
+  "link",
+  "path",
+  "number",
+  "bullet",
+  "quote",
+];
 
 const HEX = /^#(?:[0-9a-f]{3}){1,2}$/i;
 
 const RGB = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i;
 
-const channelsOf = (color) => {
+const channelsOf = (color: string): Channels | undefined => {
   const value = color.trim();
   if (HEX.test(value)) {
-    const full = value.length === 4 ? [...value.slice(1)].map((digit) => digit + digit).join('') : value.slice(1);
+    const full = value.length === 4 ? [...value.slice(1)].map((digit) => digit + digit).join("") : value.slice(1);
     const [r = 0, g = 0, b = 0] = [0, 2, 4].map((at) => parseInt(full.slice(at, at + 2), 16));
     return [r, g, b];
   }
@@ -147,36 +173,39 @@ const channelsOf = (color) => {
   return rgb ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])] : undefined;
 };
 
-const colorKey = (channels) => channels.join(',');
+const colorKey = (channels: Channels) => channels.join(",");
 
-const hueOf = (channels) => {
+const hueOf = (channels: Channels) => {
   const [r, g, b] = channels.map((channel) => Math.min(channel, 255) / 255);
   const max = Math.max(r, g, b);
   const spread = max - Math.min(r, g, b);
   const lightness = (max + max - spread) / 2;
   const saturation = spread === 0 ? 0 : spread / (1 - Math.abs(2 * lightness - 1));
-  const sector = spread === 0 ? 0 : max === r ? (g - b) / spread % 6 : max === g ? (b - r) / spread + 2 : (r - g) / spread + 4;
+  const sector =
+    spread === 0 ? 0 : max === r ? ((g - b) / spread) % 6 : max === g ? (b - r) / spread + 2 : (r - g) / spread + 4;
   return { hue: (sector * 60 + 360) % 360, saturation };
 };
 
-const hueDistance = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+const hueDistance = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
 
-const pickedRoles = new WeakMap();
+const pickedRoles = new WeakMap<Theme, RoleColors>();
 
-const figureRoleColors = (theme) => {
+const figureRoleColors = (theme: Theme): RoleColors => {
   const known = pickedRoles.get(theme);
   if (known) return known;
-  const inks = [...new Set(INK.map((token) => theme[token]).filter((color) => color !== undefined))].
-  flatMap((color) => {
-    const channels = channelsOf(color);
-    return channels ? [{ color, key: colorKey(channels), ...hueOf(channels) }] : [];
-  }).
-  filter((ink) => ink.saturation > 0.15);
+  const inks = [...new Set(INK.map((token) => theme[token]).filter((color) => color !== undefined))]
+    .flatMap((color) => {
+      const channels = channelsOf(color);
+      return channels ? [{ color, key: colorKey(channels), ...hueOf(channels) }] : [];
+    })
+    .filter((ink) => ink.saturation > 0.15);
   const frame = theme.diagram === undefined ? undefined : channelsOf(theme.diagram);
   const taken = new Set(frame ? [colorKey(frame)] : []);
-  const picked = {};
-  for (const role of Object.keys(ROLE_HUES)) {
-    const [best] = inks.filter((ink) => !taken.has(ink.key)).sort((a, b) => hueDistance(a.hue, ROLE_HUES[role]) - hueDistance(b.hue, ROLE_HUES[role]));
+  const picked: RoleColors = {};
+  for (const role of Object.keys(ROLE_HUES) as HuedRole[]) {
+    const [best] = inks
+      .filter((ink) => !taken.has(ink.key))
+      .sort((a, b) => hueDistance(a.hue, ROLE_HUES[role]) - hueDistance(b.hue, ROLE_HUES[role]));
     if (!best) continue;
     picked[role] = best.color;
     taken.add(best.key);
@@ -185,87 +214,103 @@ const figureRoleColors = (theme) => {
   return picked;
 };
 
-const isHued = (role) => role in ROLE_HUES;
+const isHued = (role: FigureRole): role is HuedRole => role in ROLE_HUES;
 
-const runColor = (style, role) => {
+const runColor = (style: Style, role?: FigureRole): string | undefined => {
   if (!role) return style.theme.diagramText;
   const own = style.theme[ROLE_TOKENS[role]];
-  if (!isHued(role) || own !== undefined && !channelsOf(own)) return own;
+  if (!isHued(role) || (own !== undefined && !channelsOf(own))) return own;
   return figureRoleColors(style.theme)[role] ?? own;
 };
 
-const isBold = (style, role) => role === 'strong' || role === 'warn' && !runColor(style, 'warn');
+const isBold = (style: Style, role?: FigureRole) => role === "strong" || (role === "warn" && !runColor(style, "warn"));
 
-const heldRuns = (style, runs) => {
-  const hold = !hasRtl(runs.map((run) => run.text).join('')) ? null : mirrored(style) ? holdText : style.shape === 'engine' ? holdEngine : style.reorder && style.shape === 'visual' ? holdVisual : null;
+const heldRuns = (style: Style, runs: FigureRun[]): FigureRun[] => {
+  const hold = !hasRtl(runs.map((run) => run.text).join(""))
+    ? null
+    : mirrored(style)
+      ? holdText
+      : style.shape === "engine"
+        ? holdEngine
+        : style.reorder && style.shape === "visual"
+          ? holdVisual
+          : null;
   const chars = runs.flatMap((run) => [...run.text]);
   const roles = runs.flatMap((run) => [...run.text].map(() => run.role));
   const base = hold ? hold(chars) : asIs(chars);
   const { cells, from } = mirrored(style) ? led(chars, base) : base;
-  const held = [];
+  const held: FigureRun[] = [];
   cells.forEach((ch, p) => {
     const role = roles[from[p]];
     const last = held.at(-1);
-    if (last && last.role === role) last.text += ch;else
-    held.push(role ? { text: ch, role } : { text: ch });
+    if (last && last.role === role) last.text += ch;
+    else held.push(role ? { text: ch, role } : { text: ch });
   });
   return held;
 };
 
-const figureElement = ({ Box, Text }, style, rows, key) =>
-h(Box, { key: key, flexDirection: "column", paddingLeft: mirrored(style) ? 0 : 2 },
-rows.map((row, i) => {
-  const runs = heldRuns(style, row);
-  return (
-    h(Text, _extends({ key: `${key}.${i}` }, heldLtr(style)),
-    runs.length ?
-    runs.map((run, r) =>
-    h(Text, { key: `r${r}`, color: runColor(style, run.role), bold: isBold(style, run.role), dimColor: run.role === 'dim' && !style.theme.codeComment },
-    run.text
-    )
-    ) :
-    ' '
-    ));
+const figureElement = ({ Box, Text }: ElementTable, style: Style, rows: FigureRun[][], key: string): RenderElement =>
+  h(
+    Box,
+    { key: key, flexDirection: "column", paddingLeft: mirrored(style) ? 0 : 2 },
+    rows.map((row, i) => {
+      const runs = heldRuns(style, row);
+      return h(
+        Text,
+        _extends({ key: `${key}.${i}` }, heldLtr(style)),
+        runs.length
+          ? runs.map((run, r) =>
+              h(
+                Text,
+                {
+                  key: `r${r}`,
+                  color: runColor(style, run.role),
+                  bold: isBold(style, run.role),
+                  dimColor: run.role === "dim" && !style.theme.codeComment,
+                },
+                run.text,
+              ),
+            )
+          : " ",
+      );
+    }),
+  );
 
-})
-);
-
-
-
-
-
-
-const TOP_LEFT = '┌╔╭';
-const TOP_RIGHT = '┐╗╮';
-const BOTTOM_LEFT = '└╚╰';
-const BOTTOM_RIGHT = '┘╝╯';
-const SIDE = '│║├┤┼╟╢╠╣';
-const RULE = '─═';
+const TOP_LEFT = "┌╔╭";
+const TOP_RIGHT = "┐╗╮";
+const BOTTOM_LEFT = "└╚╰";
+const BOTTOM_RIGHT = "┘╝╯";
+const SIDE = "│║├┤┼╟╢╠╣";
+const RULE = "─═";
 const MAX_REFRAMES = 200;
 
-const isOf = (set, glyph) => !!glyph && set.includes(glyph);
+const isOf = (set: string, glyph?: string) => !!glyph && set.includes(glyph);
 
-const cellsOf = (runs) => runs.flatMap((run) => cells(run.text).map((glyph) => ({ glyph, role: run.role })));
+const cellsOf = (runs: FigureRun[]): Cell[] =>
+  runs.flatMap((run) => cells(run.text).map((glyph) => ({ glyph, role: run.role })));
 
-const runsOf = (row) =>
-row.reduce((runs, cell) => {
-  const last = runs.at(-1);
-  if (last && last.role === cell.role) last.text += cell.glyph;else
-  runs.push(cell.role ? { text: cell.glyph, role: cell.role } : { text: cell.glyph });
-  return runs;
-}, []);
+const runsOf = (row: Cell[]): FigureRun[] =>
+  row.reduce<FigureRun[]>((runs, cell) => {
+    const last = runs.at(-1);
+    if (last && last.role === cell.role) last.text += cell.glyph;
+    else runs.push(cell.role ? { text: cell.glyph, role: cell.role } : { text: cell.glyph });
+    return runs;
+  }, []);
 
-const nearest = (row, from, target, set) => {
+const nearest = (row: Cell[], from: number, target: number, set: string) => {
   let best = -1;
   row.forEach((cell, column) => {
-    if (column > from && isOf(set, cell.glyph) && (best < 0 || Math.abs(column - target) < Math.abs(best - target))) best = column;
+    if (column > from && isOf(set, cell.glyph) && (best < 0 || Math.abs(column - target) < Math.abs(best - target)))
+      best = column;
   });
   return best;
 };
 
-const frameAt = (grid, top, left) => {
+const frameAt = (grid: Cell[][], top: number, left: number): Frame | undefined => {
   const row = grid[top];
-  const corner = row.findIndex((cell, column) => column > left && (isOf(TOP_RIGHT, cell.glyph) || isOf(TOP_LEFT, cell.glyph)));
+  const corner = row.findIndex(
+    (cell, column) => column > left && (isOf(TOP_RIGHT, cell.glyph) || isOf(TOP_LEFT, cell.glyph)),
+  );
   if (corner < 0 || !isOf(TOP_RIGHT, row[corner]?.glyph)) return undefined;
   const edges = [corner];
   for (let line = top + 1; line < grid.length; line++) {
@@ -283,70 +328,79 @@ const frameAt = (grid, top, left) => {
   return undefined;
 };
 
-const framesOf = (grid) =>
-grid.
-flatMap((row, top) => row.flatMap((cell, left) => isOf(TOP_LEFT, cell.glyph) ? [frameAt(grid, top, left)] : [])).
-filter((frame) => frame !== undefined).
-sort((a, b) => a.corner - a.left - (b.corner - b.left));
+const framesOf = (grid: Cell[][]): Frame[] =>
+  grid
+    .flatMap((row, top) => row.flatMap((cell, left) => (isOf(TOP_LEFT, cell.glyph) ? [frameAt(grid, top, left)] : [])))
+    .filter((frame) => frame !== undefined)
+    .sort((a, b) => a.corner - a.left - (b.corner - b.left));
 
-const fillOf = (row, edge, border) => {
+const fillOf = (row: Cell[], edge: number, border: boolean) => {
   const before = row[edge - 1]?.glyph;
-  return before && isOf(RULE, before) ? before : border ? '─' : ' ';
+  return before && isOf(RULE, before) ? before : border ? "─" : " ";
 };
 
-const spareBefore = (row, edge, fill) => {
+const spareBefore = (row: Cell[], edge: number, fill: string) => {
   let run = 0;
   while (row[edge - 1 - run]?.glyph === fill) run++;
   return Math.max(0, run - 1);
 };
 
-const blanks = (count, glyph, role) => Array.from({ length: count }, () => glyph === ' ' || !role ? { glyph } : { glyph, role });
+const blanks = (count: number, glyph: string, role?: FigureRole): Cell[] =>
+  Array.from({ length: count }, () => (glyph === " " || !role ? { glyph } : { glyph, role }));
 
-const spacesAfter = (row, edge, most) => {
+const spacesAfter = (row: Cell[], edge: number, most: number) => {
   let run = 0;
-  while (run < most && row[edge + 1 + run]?.glyph === ' ') run++;
+  while (run < most && row[edge + 1 + run]?.glyph === " ") run++;
   return run;
 };
 
-const firstAfter = (row, column) => row.findIndex((cell, at) => at > column && cell.glyph !== ' ' && cell.glyph !== '');
+const firstAfter = (row: Cell[], column: number) =>
+  row.findIndex((cell, at) => at > column && cell.glyph !== " " && cell.glyph !== "");
 
-const place = (row, edge, target, shift, fill) => {
+const place = (row: Cell[], edge: number, target: number, shift: number, fill: string) => {
   if (target < edge) row.splice(target, edge - target);
   if (target > edge) row.splice(edge, 0, ...blanks(target - edge, fill, row[edge]?.role));
-  if (shift > 0) row.splice(target + 1, 0, ...blanks(shift, ' '));
+  if (shift > 0) row.splice(target + 1, 0, ...blanks(shift, " "));
   if (shift < 0) row.splice(target + 1, spacesAfter(row, target, -shift));
   return target !== edge || shift !== 0;
 };
 
-const pushRight = (grid, frame, frames, by) => {
+const pushRight = (grid: Cell[][], frame: Frame, frames: Frame[], by: number) => {
   const bottom = frame.top + frame.edges.length - 1;
   const pushed = new Set(Array.from({ length: frame.edges.length }, (_, i) => frame.top + i));
   for (const other of [...frames].sort((a, b) => a.left - b.left)) {
     const rows = Array.from({ length: other.edges.length }, (_, i) => other.top + i);
     if (other.left <= frame.corner || !rows.some((row) => pushed.has(row))) continue;
-    if (other.top <= bottom && other.top + other.edges.length - 1 >= frame.top && rows.every((row) => row >= frame.top && row <= bottom)) continue;
+    if (
+      other.top <= bottom &&
+      other.top + other.edges.length - 1 >= frame.top &&
+      rows.every((row) => row >= frame.top && row <= bottom)
+    )
+      continue;
     for (const row of rows) {
       if (pushed.has(row)) continue;
-      grid[row].splice(other.left, 0, ...blanks(by, ' '));
+      grid[row].splice(other.left, 0, ...blanks(by, " "));
       pushed.add(row);
     }
   }
 };
 
-const fit = (grid, frame, frames) => {
+const fit = (grid: Cell[][], frame: Frame, frames: Frame[]) => {
   const last = frame.edges.length - 1;
   const rows = frame.edges.map((_, i) => grid[frame.top + i]);
   const fills = frame.edges.map((edge, i) => fillOf(rows[i], edge, i === 0 || i === last));
-  const reaches = frame.edges.map((edge, i) => i === 0 ? edge : edge - spareBefore(rows[i], edge, fills[i]));
+  const reaches = frame.edges.map((edge, i) => (i === 0 ? edge : edge - spareBefore(rows[i], edge, fills[i])));
   const target = Math.max(frame.corner, ...reaches);
   const after = firstAfter(rows[0], frame.corner);
-  const shifts = frame.edges.map((edge, i) => after >= 0 && firstAfter(rows[i], edge) === after ? edge - frame.corner : 0);
+  const shifts = frame.edges.map((edge, i) =>
+    after >= 0 && firstAfter(rows[i], edge) === after ? edge - frame.corner : 0,
+  );
   const moved = frame.edges.map((edge, i) => place(rows[i], edge, target, shifts[i], fills[i])).some(Boolean);
   if (target > frame.corner) pushRight(grid, frame, frames, target - frame.corner);
   return moved;
 };
 
-const reframe = (rows) => {
+const reframe = (rows: FigureRun[][]): FigureRun[][] => {
   const grid = rows.map(cellsOf);
   for (let pass = 0; pass < MAX_REFRAMES; pass++) {
     const frames = framesOf(grid);
@@ -355,17 +409,15 @@ const reframe = (rows) => {
   return grid.map(runsOf);
 };
 
+const decisions = new Map<string, Decision>();
 
-
-const decisions = new Map();
-
-const drawable = (lines) => {
+const drawable = (lines: string[]) => {
   const rows = reframe(lines.map(figureRuns));
-  const texts = rows.map((runs) => runs.map((run) => run.text).join(''));
+  const texts = rows.map((runs) => runs.map((run) => run.text).join(""));
   return { rows, texts, widest: Math.max(0, ...texts.map(width)) };
 };
 
-const decide = (raw) => {
+const decide = (raw: string[]): Decision => {
   const tooLong = raw.findIndex((line) => line.length > RAW_MAX_LINE);
   if (tooLong >= 0) return { note: `figure line ${tooLong + 1} is ${raw[tooLong].length} characters long` };
   if (raw.length > FIGURE_MAX_LINES * 2) return { note: `figure has ${raw.length} lines, at most ${FIGURE_MAX_LINES}` };
@@ -376,12 +428,32 @@ const decide = (raw) => {
   return finding ? { note: `figure line ${finding.line}: ${finding.message}` } : drawable(lines);
 };
 
-const drawFigure = (el, style, block, columns, key) => {
+const drawFigure = (
+  el: ElementTable,
+  style: Style,
+  block: CodeBlock,
+  columns: number,
+  key: string,
+): DrawnBlock | null => {
   if (block.isOpen) return null;
-  const decision = remember(decisions, block.lines.join('\n'), () => decide(block.lines));
-  if ('note' in decision) return decision;
+  const decision: Decision = remember(decisions, block.lines.join("\n"), () => decide(block.lines));
+  if ("note" in decision) return decision;
   if (decision.rows.length === 0) return null;
   if (decision.widest > columns - 2) return { note: `figure is ${decision.widest} cols, terminal is ${columns}` };
-  return { element: figureElement(el, style, decision.rows, key), art: decision.texts.join('\n') };
+  return { element: figureElement(el, style, decision.rows, key), art: decision.texts.join("\n") };
 };
-export { FIGURE_MAX_COLUMNS, FIGURE_MAX_LINES, FIGURE_SAFE_COLUMNS, FIGURE_GLYPHS, FIGURE_HINT, isFigureLang, figureRuns, figureText, checkFigure, figureRoleColors, reframe, drawFigure };
+
+export {
+  checkFigure,
+  drawFigure,
+  FIGURE_GLYPHS,
+  FIGURE_HINT,
+  FIGURE_MAX_COLUMNS,
+  FIGURE_MAX_LINES,
+  FIGURE_SAFE_COLUMNS,
+  figureRoleColors,
+  figureRuns,
+  figureText,
+  isFigureLang,
+  reframe,
+};

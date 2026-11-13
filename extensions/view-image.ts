@@ -6,9 +6,9 @@
  * 4fb0c7d68c87c3612af6289f72b5d90a11a726b8).
  */
 
+import { homedir } from "node:os";
 import { createReadToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { homedir } from "node:os";
 
 function shortenPath(path: string): string {
   const home = homedir();
@@ -34,9 +34,7 @@ export default function (pi: ExtensionAPI) {
     renderCall(args, theme, context) {
       const text = context.lastComponent instanceof Text ? context.lastComponent : new Text("", 0, 0);
       const path = typeof args?.path === "string" ? args.path : "";
-      const pathDisplay = path
-        ? theme.fg("accent", shortenPath(path))
-        : theme.fg("toolOutput", "...");
+      const pathDisplay = path ? theme.fg("accent", shortenPath(path)) : theme.fg("toolOutput", "...");
       text.setText(`${theme.fg("toolTitle", theme.bold("view_image"))} ${pathDisplay}`);
       return text;
     },

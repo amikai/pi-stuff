@@ -1,6 +1,6 @@
-import { ratexColor } from './latex.ts'
-import { cells, width } from './render.ts'
-import { holdVisual } from './rtl.ts'
+import { ratexColor } from "./latex.ts";
+import { cells, width } from "./render.ts";
+import { holdVisual } from "./rtl.ts";
 
 export const MAC_TABLE_COPY = `
 ObjC.import('AppKit')
@@ -15,14 +15,14 @@ pasteboard.clearContents
 if (!pasteboard.writeObjects($.NSArray.arrayWithObject(item))) throw new Error('Cannot write clipboard')
 if (ObjC.unwrap(pasteboard.stringForType($.NSPasteboardTypeHTML)) !== payload.html ||
     ObjC.unwrap(pasteboard.stringForType($.NSPasteboardTypeString)) !== payload.text) throw new Error('Clipboard verification failed')
-`
+`;
 
 export const LINUX_TABLE_COPY = `
 var table = JSON.parse(str(arguments[1]))
 copy('text/html', table.html, 'text/plain', table.text)
 if (str(clipboard('text/html')) !== table.html ||
     str(clipboard('text/plain')) !== table.text) throw new Error('Clipboard verification failed')
-`
+`;
 
 export const WIN_TABLE_COPY = `
 $ErrorActionPreference = 'Stop'
@@ -49,7 +49,7 @@ try {
   [Console]::Error.WriteLine($_.Exception.Message)
   exit 1
 }
-`
+`;
 
 export const MAC_IMAGE_COPY = `
 ObjC.import('AppKit')
@@ -99,7 +99,7 @@ pasteboard.clearContents
 if (!pasteboard.setDataForType(png, $.NSPasteboardTypePNG)) throw new Error('Cannot write clipboard')
 var back = pasteboard.dataForType($.NSPasteboardTypePNG)
 if (!back || !back.isEqualToData(png)) throw new Error('Clipboard verification failed')
-`
+`;
 
 export const WIN_IMAGE_COPY = `
 $ErrorActionPreference = 'Stop'
@@ -150,59 +150,95 @@ try {
   [Console]::Error.WriteLine($_.Exception.Message)
   exit 1
 }
-`
+`;
 
-export type ClipboardBackend = 'macos' | 'linux' | 'windows'
+export type ClipboardBackend = "macos" | "linux" | "windows";
 
 const ascii = (json: string): string =>
   Array.from({ length: json.length }, (_, i) => {
-    const unit = json.charCodeAt(i)
-    return unit > 0x7e ? `\\u${unit.toString(16).padStart(4, '0')}` : json[i]
-  }).join('')
+    const unit = json.charCodeAt(i);
+    return unit > 0x7e ? `\\u${unit.toString(16).padStart(4, "0")}` : json[i];
+  }).join("");
 
-const powershell = (systemRoot: string | undefined, script: string) =>
-  [`${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, '-NoProfile', '-NonInteractive', '-STA', '-Command', script]
+const powershell = (systemRoot: string | undefined, script: string) => [
+  `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+  "-NoProfile",
+  "-NonInteractive",
+  "-STA",
+  "-Command",
+  script,
+];
 
-export type HelperCommand = { stdin: string; argv: string[]; failure: string }
+export type HelperCommand = { stdin: string; argv: string[]; failure: string };
 
-export const clipboardCommand = (backend: ClipboardBackend, html: string, text: string, systemRoot?: string): HelperCommand => backend === 'windows'
-  ? {
-    stdin: ascii(JSON.stringify({ html, text: text.replace(/\r?\n/g, '\r\n') })),
-    argv: powershell(systemRoot, WIN_TABLE_COPY),
-    failure: 'Windows clipboard helper failed',
-  }
-  : {
-    stdin: JSON.stringify({ html, text }),
-    ...backend === 'macos'
-      ? { argv: ['/usr/bin/osascript', '-l', 'JavaScript', '-e', MAC_TABLE_COPY], failure: 'macOS clipboard helper failed' }
-      : { argv: ['copyq', 'eval', LINUX_TABLE_COPY, '-'], failure: 'CopyQ failed; install and start CopyQ in the graphical session' },
-  }
+export const clipboardCommand = (
+  backend: ClipboardBackend,
+  html: string,
+  text: string,
+  systemRoot?: string,
+): HelperCommand =>
+  backend === "windows"
+    ? {
+        stdin: ascii(JSON.stringify({ html, text: text.replace(/\r?\n/g, "\r\n") })),
+        argv: powershell(systemRoot, WIN_TABLE_COPY),
+        failure: "Windows clipboard helper failed",
+      }
+    : {
+        stdin: JSON.stringify({ html, text }),
+        ...(backend === "macos"
+          ? {
+              argv: ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_TABLE_COPY],
+              failure: "macOS clipboard helper failed",
+            }
+          : {
+              argv: ["copyq", "eval", LINUX_TABLE_COPY, "-"],
+              failure: "CopyQ failed; install and start CopyQ in the graphical session",
+            }),
+      };
 
-export const drawsImages = (backend: ClipboardBackend | null): boolean => backend === 'macos' || backend === 'windows'
+export const drawsImages = (backend: ClipboardBackend | null): boolean => backend === "macos" || backend === "windows";
 
 const rgbOf = (color: string | undefined, fallback: number[]): number[] => {
-  const c = color === undefined ? '' : ratexColor(color)
-  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c)
-  const hex = short ? `#${short[1]!.repeat(2)}${short[2]!.repeat(2)}${short[3]!.repeat(2)}` : c
-  return /^#[0-9a-f]{6}$/i.test(hex) ? [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)) : fallback
-}
+  const c = color === undefined ? "" : ratexColor(color);
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c);
+  const hex = short ? `#${short[1]!.repeat(2)}${short[2]!.repeat(2)}${short[3]!.repeat(2)}` : c;
+  return /^#[0-9a-f]{6}$/i.test(hex) ? [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) : fallback;
+};
 
 export const imageLines = (text: string): { at: number; text: string }[][] =>
-  text.split('\n').map(line => holdVisual(cells(line)).cells.flatMap((g, at) => (g.trim() ? [{ at, text: g }] : [])))
+  text.split("\n").map((line) => holdVisual(cells(line)).cells.flatMap((g, at) => (g.trim() ? [{ at, text: g }] : [])));
 
-const luma = ([r, g, b]: number[]): number => (0.299 * r! + 0.587 * g! + 0.114 * b!) / 255
+const luma = ([r, g, b]: number[]): number => (0.299 * r! + 0.587 * g! + 0.114 * b!) / 255;
 
 const readable = (foreground: number[], background: number[]): number[] =>
-  Math.abs(luma(foreground) - luma(background)) >= 0.4 ? foreground : luma(background) > 0.5 ? [0, 0, 0] : [255, 255, 255]
+  Math.abs(luma(foreground) - luma(background)) >= 0.4
+    ? foreground
+    : luma(background) > 0.5
+      ? [0, 0, 0]
+      : [255, 255, 255];
 
-export const imageCommand = (backend: ClipboardBackend, text: string, colors: { foreground?: string; background?: string }, systemRoot?: string): HelperCommand => {
-  const lines = imageLines(text)
-  const background = rgbOf(colors.background, [255, 255, 255])
-  const json = JSON.stringify({ lines, columns: Math.max(0, ...text.split('\n').map(width)), foreground: readable(rgbOf(colors.foreground, [0, 0, 0]), background), background })
-  return backend === 'windows'
-    ? { stdin: ascii(json), argv: powershell(systemRoot, WIN_IMAGE_COPY), failure: 'Windows image helper failed' }
-    : { stdin: json, argv: ['/usr/bin/osascript', '-l', 'JavaScript', '-e', MAC_IMAGE_COPY], failure: 'macOS image helper failed' }
-}
+export const imageCommand = (
+  backend: ClipboardBackend,
+  text: string,
+  colors: { foreground?: string; background?: string },
+  systemRoot?: string,
+): HelperCommand => {
+  const lines = imageLines(text);
+  const background = rgbOf(colors.background, [255, 255, 255]);
+  const json = JSON.stringify({
+    lines,
+    columns: Math.max(0, ...text.split("\n").map(width)),
+    foreground: readable(rgbOf(colors.foreground, [0, 0, 0]), background),
+    background,
+  });
+  return backend === "windows"
+    ? { stdin: ascii(json), argv: powershell(systemRoot, WIN_IMAGE_COPY), failure: "Windows image helper failed" }
+    : {
+        stdin: json,
+        argv: ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_IMAGE_COPY],
+        failure: "macOS image helper failed",
+      };
+};
 
 // stdin is the raw PNG bytes. TIFF goes beside PNG because older Cocoa apps paste only TIFF.
 export const MAC_PNG_COPY = `
@@ -220,9 +256,9 @@ pasteboard.clearContents
 if (!pasteboard.writeObjects($.NSArray.arrayWithObject(item))) throw new Error('Cannot write clipboard')
 var back = pasteboard.dataForType($.NSPasteboardTypePNG)
 if (back.isNil() || !back.isEqualToData(data)) throw new Error('Clipboard verification failed')
-`
+`;
 
 export const pngCopyCommand = (osascript: string) => ({
-  argv: [osascript, '-l', 'JavaScript', '-e', MAC_PNG_COPY],
-  failure: 'macOS clipboard helper failed',
-})
+  argv: [osascript, "-l", "JavaScript", "-e", MAC_PNG_COPY],
+  failure: "macOS clipboard helper failed",
+});
