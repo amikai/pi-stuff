@@ -22,4 +22,4 @@ Pi clones the repo to `~/.pi/agent/git/github.com/amikai/pi-stuff` and loads it 
 
 ## Tests
 
-[`test`](test) holds an automated test suite (`npm test`), a faux model provider and launcher scripts (`test/recap.sh`, `test/you-should-know.sh`, `test/prism.sh`, `test/pi-built-in-render.sh`) for interactive TUI testing. They are not in the `pi` manifest, so installing the package never loads them.
+[`test`](test) holds an automated test suite (`npm test`), a faux model provider and launcher scripts (`test/recap.sh`, `test/you-should-know.sh`, `test/prism.sh`, `test/pi-built-in-render.sh`) for interactive TUI testing. They are not in the `pi` manifest, so installing the package never loads them. The tests load pi from the devDependencies, so run `npm ci` before `npm test`. CI (`.github/workflows/ci.yml`) runs `npm run check` and `npm test` on Ubuntu for every push to `main` and every pull request.

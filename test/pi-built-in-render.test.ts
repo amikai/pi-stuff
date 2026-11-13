@@ -1,29 +1,14 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { registerHooks } from "node:module";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
-import { pathToFileURL } from "node:url";
-
-const whichPi = execFileSync("which", ["pi"], { encoding: "utf8" }).trim();
-const piPkg = realpathSync(resolve(dirname(realpathSync(whichPi)), "../@earendil-works/pi-coding-agent/package.json"));
-const parentURL = pathToFileURL(piPkg).href;
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith("@earendil-works/")) {
-      return nextResolve(specifier, { ...context, parentURL });
-    }
-    return nextResolve(specifier, context);
-  },
-});
 
 process.env.FORCE_COLOR ??= "3";
 
 const { AssistantMessageComponent, initTheme, SessionManager } = await import("@earendil-works/pi-coding-agent");
 const { setTheme, theme: activePiGlobalTheme } = await import(
-  pathToFileURL(resolve(dirname(piPkg), "dist/modes/interactive/theme/theme.js")).href
+  new URL("./modes/interactive/theme/theme.js", import.meta.resolve("@earendil-works/pi-coding-agent")).href
 );
 const { matchesKey, resetCapabilitiesCache, setCapabilityOverrides, stripTerminalSequences, visibleWidth } =
   await import("@earendil-works/pi-tui");
