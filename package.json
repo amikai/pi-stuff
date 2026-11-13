@@ -20,11 +20,22 @@
     ]
   },
   "scripts": {
-    "test": "node --test test/recap.test.ts test/you-should-know.test.ts test/prism.test.ts test/prism-quicklook.test.ts test/pi-built-in-render.test.ts test/uv.test.ts"
+    "test": "node --test test/recap.test.ts test/you-should-know.test.ts test/prism.test.ts test/prism-quicklook.test.ts test/pi-built-in-render.test.ts test/uv.test.ts",
+    "check": "biome check . && npm run typecheck",
+    "format": "biome check --write .",
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.5",
+    "@earendil-works/pi-ai": "1.5.2",
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@earendil-works/pi-tui": "1.5.2",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
   }
 }
