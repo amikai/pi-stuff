@@ -2,7 +2,7 @@ import type { Wake } from "./background.ts";
 import type { ChartArt, Pie, Rgb } from "./charts.ts";
 import { ganttText, pieRgba, pieText, rgbaPng } from "./charts.ts";
 import { drawFigure, isFigureLang } from "./figure.ts";
-import { type ElementTable, h, type RenderElement } from "./jsx.ts";
+import { type ElementComponent, type ElementTable, h, type RenderElement } from "./jsx.ts";
 import { fitImage, ratexColor } from "./latex.ts";
 import type { Block } from "./markdown.ts";
 import type { Picture } from "./pele.ts";
@@ -419,7 +419,7 @@ const boxArt = (
 
 const EDGE_LABEL = /(-[-.=]+\s*)"([^"\n]+)"(\s*[-.=]+>)|\|([^|\n]+)\|/g;
 
-const cap = (label, max) => {
+const cap = (label: string, max: number): string => {
   const flat = label
     .replace(/<br\s*\/?>/gi, " ")
     .replace(/\s+/g, " ")
@@ -433,12 +433,19 @@ const cap = (label, max) => {
     : flat;
 };
 
-const shortenEdgeLabels = (source, max) =>
-  source.replace(EDGE_LABEL, (_, open, quoted, close, piped) =>
-    quoted !== undefined ? `${open}"${cap(quoted, max)}"${close}` : `|${cap(piped, max)}|`,
+const shortenEdgeLabels = (source: string, max: number): string =>
+  source.replace(
+    EDGE_LABEL,
+    (
+      _: string,
+      open: string | undefined,
+      quoted: string | undefined,
+      close: string | undefined,
+      piped: string | undefined,
+    ) => (quoted !== undefined ? `${open}"${cap(quoted, max)}"${close}` : `|${cap(piped as string, max)}|`),
   );
 
-const pieColorsOf = (style) => (style.pieStyle === "round" ? diagramPalette(style.theme).length : 0);
+const pieColorsOf = (style: Style): number => (style.pieStyle === "round" ? diagramPalette(style.theme).length : 0);
 
 const PIE_ROW_PX = 40;
 
@@ -454,7 +461,7 @@ const rgbOf = (color: string): Rgb | null => {
 
 const pictures = new Map<string, string>();
 
-const piePicture = ({ Box, Text, Image }, style: Style, pie: Pie, key: string) => {
+const piePicture = ({ Box, Text, Image }: ElementTable, style: Style, pie: Pie, key: string): RenderElement | null => {
   const palette = diagramPalette(style.theme);
   const colors = palette.map(rgbOf);
   if (colors.some((c) => c === null)) return null;
@@ -473,7 +480,12 @@ const piePicture = ({ Box, Text, Image }, style: Style, pie: Pie, key: string) =
     h(
       Box,
       { flexDirection: "row" },
-      h(Image, { source: { png }, columns: 4 * pie.radius, rows: 2 * pie.radius, alt: "pie chart" }),
+      h(Image as ElementComponent, {
+        source: { png },
+        columns: 4 * pie.radius,
+        rows: 2 * pie.radius,
+        alt: "pie chart",
+      }),
       h(
         Box,
         { flexDirection: "column", paddingLeft: 3 },
@@ -492,13 +504,13 @@ const piePicture = ({ Box, Text, Image }, style: Style, pie: Pie, key: string) =
 };
 
 const chartElement = (
-  el,
+  el: ElementTable,
   style: Style,
   art: ChartArt,
   block: Extract<Block, { kind: "code" }>,
   source: string,
   key: string,
-) =>
+): RenderElement =>
   (art.pie && style.images && !block.isOpen && !mirrored(style) && !hasRtl(art.text)
     ? piePicture(el, style, art.pie, key)
     : null) ?? boxArt(el, style, art.text, key, inlineMarks(source), art.slices, art.series);
@@ -553,7 +565,7 @@ const fallback = (
 };
 
 const mermaidBlock = (
-  el,
+  el: ElementTable,
   style: Style,
   block: Extract<Block, { kind: "code" }>,
   i: number,
@@ -573,7 +585,7 @@ const mermaidBlock = (
   if ("note" in out) return out;
   const fit = fitImage(out, columns, style.pictureRows);
   return {
-    element: h(el.Image, {
+    element: h(el.Image as ElementComponent, {
       key: `b${i}`,
       source: { png: out.png },
       columns: fit.columns,
@@ -584,7 +596,7 @@ const mermaidBlock = (
   };
 };
 
-const drawDiagrams = (el, style: Style, blocks: Block[], columns: number, images: Wake | null): Drawn => {
+const drawDiagrams = (el: ElementTable, style: Style, blocks: Block[], columns: number, images: Wake | null): Drawn => {
   const drawn: Drawn = new Map();
   const pieColors = pieColorsOf(style);
   if (style.mermaid) {
