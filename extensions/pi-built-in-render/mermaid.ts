@@ -1,28 +1,21 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getPackageDir, type Theme as PiTheme, type ThemeColor } from "@earendil-works/pi-coding-agent";
 import { getCapabilities, Marked } from "@earendil-works/pi-tui";
+import type { MermaidArt } from "lovely-mermaid";
 
-type Role = "border" | "text" | "edge" | "edgeLabel" | "title" | "none";
-type Span = {
-  readonly role: Role;
-  readonly text: string;
-  readonly href?: string;
-};
-type MermaidArt = {
-  readonly width: number;
-  readonly warnings: readonly string[];
-  readonly plain: readonly string[];
-  readonly styled: readonly (readonly Span[])[];
-};
+// The compiled pi release bundles lovely-mermaid inside its binary and ships no node_modules, and its
+// createRequire cannot resolve a bare specifier from disk, so resolve the path through import.meta first.
+function loadLovelyMermaid(): typeof import("lovely-mermaid") {
+  try {
+    return createRequire(import.meta.url)(fileURLToPath(import.meta.resolve("lovely-mermaid")));
+  } catch {
+    return createRequire(join(getPackageDir(), "package.json"))("lovely-mermaid");
+  }
+}
 
-const {
-  render,
-  toAnsi,
-}: {
-  render: (source: string) => MermaidArt | null;
-  toAnsi: (art: MermaidArt, theme: Partial<Record<Role, string>>) => string[];
-} = createRequire(join(getPackageDir(), "package.json"))("lovely-mermaid");
+const { render, toAnsi } = loadLovelyMermaid();
 const parser = new Marked();
 
 export function diagramCodeSpan(row: string): string {

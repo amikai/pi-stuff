@@ -12,7 +12,7 @@ Any argument produces a notification without appending an entry. Non-interactive
 
 The extension uses `Markdown`, `Text(renderDiff(...))`, and `Image` directly. It does not use assistant-message components, global Markdown transformers, or prism configuration.
 
-Mermaid uses the `lovely-mermaid` dependency resolved from Pi's package directory. The adapter follows Pi's nonstreaming top-level fence behavior and semantic theme colors. Unrecognized diagrams and diagrams wider than the available content width retain their source fences. Syntax warnings retain the source and add Pi's warning text when the diagram fits. Hyperlinks from `click` and `link` statements wrap the node's label text only.
+Mermaid uses this package's `lovely-mermaid` dependency, pinned to `0.3.3`, the version that `@earendil-works/pi-coding-agent@1.5.2` pins. The compiled Pi release bundles `lovely-mermaid` inside its binary and has no `node_modules`, so the extension resolves the dependency from its own location first. If that copy is not installed, the extension falls back to the copy in Pi's package directory, which only the npm install of Pi has. The adapter follows Pi's nonstreaming top-level fence behavior and semantic theme colors. Unrecognized diagrams and diagrams wider than the available content width retain their source fences. Syntax warnings retain the source and add Pi's warning text when the diagram fits. Hyperlinks from `click` and `link` statements wrap the node's label text only.
 
 OSC-8 hyperlinks depend on terminal support. Kitty and iTerm2 image protocols display the bundled PNG inline when available. Other terminals show Pi's text fallback. The extension does not change terminal capabilities.
 

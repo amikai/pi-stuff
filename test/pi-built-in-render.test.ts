@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
@@ -912,6 +913,13 @@ test("4. BuiltInDocumentComponent renders every section within width bounds, for
   );
   assert.ok(mermaidPlain.includes("mermaid@12.2.0"), "includes official Mermaid 12.2.0 baseline version");
   assert.ok(mermaidPlain.includes("lovely-mermaid@0.3.3"), "includes bundled lovely-mermaid 0.3.3 version");
+  const manifest = (path: string | undefined) => JSON.parse(readFileSync(path ?? "", "utf8"));
+  const lovelyMermaid = manifest(
+    findPackageJSON("lovely-mermaid", import.meta.resolve("../extensions/pi-built-in-render/mermaid.ts")),
+  );
+  const pi = manifest(findPackageJSON(import.meta.resolve("@earendil-works/pi-coding-agent")));
+  assert.equal(lovelyMermaid.version, "0.3.3", "the extension resolves the lovely-mermaid version the catalog names");
+  assert.equal(pi.dependencies["lovely-mermaid"], lovelyMermaid.version, "Pi 1.5.2 pins the same lovely-mermaid");
   assert.ok(mermaidPlain.includes("pi-coding-agent@1.5.2"), "includes Pi 1.5.2 version");
   assert.ok(mermaidPlain.includes("subroutine") && mermaidPlain.includes("cylinder"), "renders flowchart box art");
   assert.ok(

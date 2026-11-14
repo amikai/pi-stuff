@@ -25,6 +25,9 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "lovely-mermaid": "0.3.3"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
