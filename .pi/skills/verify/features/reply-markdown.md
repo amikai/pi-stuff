@@ -1,12 +1,12 @@
 # Reply Markdown rendering
 
-Reply Markdown rendering draws assistant replies with styled headings, bordered tables, GitHub alerts, task lists, footnotes, probed local file hyperlinks, and code blocks that fold past 30 lines and unfold on click.
+Reply Markdown rendering draws assistant replies with styled headings, bordered tables (with `tableLayout` fitting and 11 semantic table modes), GitHub alerts, task lists, footnotes, probed local file hyperlinks (including plain `text` logs) and safe `obsidian://open...` note links, and code blocks that fold past 30 lines and unfold on click.
 
 ## Sub-features
 
-- `reply-heading-table` renders banner headings, box tables with `<br>` line breaks, alerts, and task lists within the terminal width.
+- `reply-heading-table` renders banner headings, box tables with `<br>` line breaks (plus `tableLayout` modes `classic`, `auto`, `compact`, `stacked` and the 11 semantic table modes when enabled), alerts, and task lists within the terminal width.
 - `reply-code-fold` folds code blocks longer than 30 lines to 20 lines with a `[ +N more lines ]` button and unfolds all lines on left-click.
-- `reply-path-links` links existing workspace files with `file://` OSC-8 hyperlinks while leaving missing files and executable scripts unlinked.
+- `reply-path-links` links existing workspace files and directories with `file://` OSC-8 hyperlinks (and `obsidian://open...` note links when hyperlinks are supported) while leaving missing files, `obsidian://new...`, and executable scripts unlinked.
 
 ## How to get to it (user POV)
 

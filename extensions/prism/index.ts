@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme as PiTheme, ThemeToken } from "@earendil-works/pi-coding-agent";
 import {
   AssistantMessageComponent,
@@ -28,6 +28,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { clearHover, watchPointerLeave } from "../lib/pointer-hover.ts";
 import {
+  artColors,
   type ClipboardBackend,
   clipboardCommand,
   drawsImages,
@@ -36,12 +37,15 @@ import {
 } from "./core/clipboard.ts";
 import { FIGURE_HINT } from "./core/figure.ts";
 import {
+  ESSENTIAL_STEPS,
   findSetup,
   HINT,
   helpText,
   languageShowcase,
   rtlShowcaseText,
   SETUP_DONE,
+  SETUP_ESSENTIALS_DONE,
+  SETUP_MORE,
   SETUP_PANE_KEYS,
   SETUP_PANE_OPENED,
   SETUP_STEPS,
@@ -62,6 +66,7 @@ import {
   LATEX_FONT_PX,
   MAX_IMAGE_BYTES,
   mathOf,
+  oldestOver,
   padFor,
   pickFormula,
   pictureRows,
@@ -79,6 +84,7 @@ import {
   drawsHyperlinks,
   type Fold,
   fileRoot,
+  type Hues,
   instanceKey,
   MARK,
   markerRoom,
@@ -93,7 +99,27 @@ import {
   type TerminalEnv,
 } from "./core/render.ts";
 import { hasRtl, opensLatin, ROW_MARK_TEXT, TERMINALS, type Terminal } from "./core/rtl.ts";
-import { DEFAULT_THEME, isColor, resolveStyle, type Style, type Theme, TOKENS } from "./core/theme.ts";
+import {
+  type ApiTable,
+  type BenchTable,
+  type CompareTable,
+  DEFAULT_THEME,
+  type GroupTable,
+  type HeatTable,
+  isColor,
+  type KvTable,
+  longHex,
+  type PivotTable,
+  resolveStyle,
+  type SchemaTable,
+  type StatusMatrix,
+  type Style,
+  type TableLayout,
+  type TestMatrix,
+  type Theme,
+  TOKENS,
+  type TreeTable,
+} from "./core/theme.ts";
 import { type Desktop, systemDesktop } from "./desktop.ts";
 import { type ImageStore, PrismComponent, renderNode } from "./renderer.ts";
 
@@ -118,12 +144,53 @@ const LEGACY_OPTION_KEYS = new Set([
 
 export type PrismOptions = Record<string, unknown> & {
   enabled?: boolean;
+  headingStyle?: Style["headingStyle"];
+  tableStyle?: Style["tableStyle"];
+  tableLayout?: TableLayout;
+  statusMatrix?: StatusMatrix;
+  testMatrix?: TestMatrix;
+  benchTable?: BenchTable;
+  schemaTable?: SchemaTable;
+  compareTable?: CompareTable;
+  apiTable?: ApiTable;
+  kvTable?: KvTable;
+  groupTable?: GroupTable;
+  heatTable?: HeatTable;
+  treeTable?: TreeTable;
+  pivotTable?: PivotTable;
+  promptStyle?: Style["promptStyle"];
+  taskStyle?: Style["taskStyle"];
+  pieStyle?: Style["pieStyle"];
+  rtl?: Style["rtl"];
+  highlightNumbers?: boolean;
+  highlightPaths?: boolean;
+  mermaid?: boolean;
+  mermaidAscii?: boolean;
+  copyButtons?: boolean;
+  copyButtonStyle?: Style["copyButtonStyle"];
+  diagramHints?: boolean;
+  latex?: boolean;
+  plantuml?: boolean;
+  pele?: boolean;
+  pictureFill?: boolean;
 };
 
 const DEFAULT_OPTIONS: PrismOptions = {
   enabled: true,
   headingStyle: "banner",
   tableStyle: "box",
+  tableLayout: "classic",
+  statusMatrix: "off",
+  testMatrix: "off",
+  benchTable: "off",
+  schemaTable: "off",
+  compareTable: "off",
+  apiTable: "off",
+  kvTable: "off",
+  groupTable: "off",
+  heatTable: "off",
+  treeTable: "off",
+  pivotTable: "off",
   promptStyle: "bubble",
   taskStyle: "checks",
   pieStyle: "round",
@@ -140,6 +207,56 @@ const DEFAULT_OPTIONS: PrismOptions = {
   pele: true,
   pictureFill: true,
 };
+
+const BOOLEAN_OPTIONS = new Set([
+  "enabled",
+  "highlightNumbers",
+  "highlightPaths",
+  "mermaid",
+  "mermaidAscii",
+  "copyButtons",
+  "diagramHints",
+  "latex",
+  "plantuml",
+  "pele",
+  "pictureFill",
+]);
+
+const ENUM_OPTIONS: Record<string, readonly string[]> = {
+  headingStyle: ["banner", "bold", "underline", "uppercase"],
+  tableStyle: ["box", "rules", "grid", "minimal"],
+  tableLayout: ["classic", "auto", "compact", "stacked"],
+  statusMatrix: ["off", "color", "summary", "group"],
+  testMatrix: ["off", "report"],
+  benchTable: ["off", "color", "trend"],
+  schemaTable: ["off", "types", "keys", "full"],
+  compareTable: ["off", "rank", "pick", "full"],
+  apiTable: ["off", "verbs", "auth", "full"],
+  kvTable: ["off", "sources", "overrides", "full"],
+  groupTable: ["off", "merge", "count", "full"],
+  heatTable: ["off", "color", "bars"],
+  treeTable: ["off", "branch", "full"],
+  pivotTable: ["off", "transpose"],
+  promptStyle: ["bubble", "wide", "bar", "chevron", "off"],
+  taskStyle: ["checks", "ticks", "box", "progress"],
+  pieStyle: ["round", "bars"],
+  copyButtonStyle: ["inline", "hover"],
+  rtl: ["auto", "off", ...(Object.keys(TERMINALS) as Terminal[])],
+};
+
+function sanitizeOptions(raw: Record<string, unknown>): PrismOptions {
+  const out: PrismOptions = { ...DEFAULT_OPTIONS };
+  for (const [key, value] of Object.entries(stripLegacyKeys(raw))) {
+    if (BOOLEAN_OPTIONS.has(key)) {
+      if (typeof value === "boolean") out[key] = value;
+    } else if (key in ENUM_OPTIONS) {
+      if (typeof value === "string" && ENUM_OPTIONS[key]?.includes(value)) out[key] = value;
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
 
 export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
   if (!piTheme || !piTheme.colors) return DEFAULT_THEME;
@@ -170,6 +287,8 @@ export function themeFromPiTheme(piTheme: PiTheme | undefined): Theme {
     bullet: hex("mdListBullet"),
     diagram: hex("border"),
     diagramText: hex("text"),
+    diffAdded: hex("toolDiffAdded") ?? hex("success"),
+    diffRemoved: hex("toolDiffRemoved") ?? hex("error"),
   };
 }
 
@@ -182,7 +301,7 @@ export function backgroundFromPiTheme(piTheme: PiTheme | undefined): string | un
 function resolvePrismTheme(options: PrismOptions, piTheme: PiTheme | undefined): Theme {
   const base = themeFromPiTheme(piTheme);
   const overrides = Object.fromEntries(
-    TOKENS.filter((k) => isColor(options[`${k}Color`])).map((k) => [k, String(options[`${k}Color`]).trim()]),
+    TOKENS.filter((k) => isColor(options[`${k}Color`])).map((k) => [k, longHex(String(options[`${k}Color`]).trim())]),
   );
   return { ...base, ...overrides };
 }
@@ -199,22 +318,26 @@ export function loadOptions(): PrismOptions {
     try {
       const raw = JSON.parse(readFileSync(candidate, "utf8"));
       if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        return { ...DEFAULT_OPTIONS, ...stripLegacyKeys(raw as Record<string, unknown>) };
+        return sanitizeOptions(raw as Record<string, unknown>);
       }
     } catch {}
   }
   return { ...DEFAULT_OPTIONS };
 }
 
-export function saveOptions(options: PrismOptions): boolean {
+function saveOptionsWithError(options: PrismOptions): string | null {
   try {
     const clean = stripLegacyKeys(options);
     mkdirSync(getAgentDir(), { recursive: true });
     writeFileSync(storePath(), `${JSON.stringify(clean, null, 2)}\n`);
-    return true;
-  } catch {
-    return false;
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
+}
+
+export function saveOptions(options: PrismOptions): boolean {
+  return saveOptionsWithError(options) === null;
 }
 
 function detectTerminalFromEnv(env: NodeJS.ProcessEnv = process.env): Terminal | null {
@@ -266,8 +389,10 @@ function applyTerminalCapabilities(style: Style, cwd: string): Terminal | null {
 
   style.overSsh = detectSsh();
   const hyperlinks = getCapabilities().hyperlinks || drawsHyperlinks(detectTerminalEnv());
+  style.hyperlinks = hyperlinks;
   style.httpLinks = hyperlinks;
   style.editorLinks = hyperlinks;
+  style.obsidianLinks = hyperlinks;
   if (hyperlinks && !style.overSsh) {
     const distro = process.env.WSL_DISTRO_NAME;
     const linuxTerm =
@@ -298,7 +423,7 @@ function runHelperSync(backend: ClipboardBackend, build: (systemRoot?: string) =
     const res = spawnSync(bin, args, {
       input: command.stdin,
       encoding: "utf8",
-      timeout: backend === "windows" ? 15000 : 5000,
+      timeout: Math.min(30000, (backend === "windows" ? 15000 : 5000) + Math.ceil(command.stdin.length / 100)),
     });
     if (res.error) return command.failure;
     return res.status === 0 ? null : (res.stderr || "").trim() || command.failure;
@@ -307,15 +432,16 @@ function runHelperSync(backend: ClipboardBackend, build: (systemRoot?: string) =
   }
 }
 
-function richCommand(style: Style, backend: ClipboardBackend, content: string, rich: (() => string) | "png") {
+function richCommand(
+  style: Style,
+  backend: ClipboardBackend,
+  content: string,
+  rich: (() => string) | "png",
+  hues?: Hues,
+) {
   return (systemRoot?: string): HelperCommand =>
     rich === "png"
-      ? imageCommand(
-          backend,
-          content,
-          { foreground: style.theme.diagramText ?? style.theme.codeText, background: style.background },
-          systemRoot,
-        )
+      ? imageCommand(backend, content, artColors(style), systemRoot, hues)
       : clipboardCommand(backend, rich(), content, systemRoot);
 }
 
@@ -468,13 +594,13 @@ export function drawSetupElements(
 }
 
 class SetupPaneComponent implements Component {
-  private stepIndex = 0;
+  private stepIndex: number;
   private focusedValue = "";
   private lastHits: { row: number; from: number; to: number; onPress: () => void }[] = [];
   private readonly tui: TUI;
   private readonly piTheme: PiTheme;
   private readonly getState: () => { style: Style; options: PrismOptions };
-  private readonly onPick: (step: SetupStep, value: string) => void;
+  private readonly onPick: (step: SetupStep, value: string, hasNext: boolean) => boolean;
   private readonly drawMd: (style: Style, blocks: Block[], cols: number) => RenderElement[];
   private readonly close: () => void;
 
@@ -482,9 +608,10 @@ class SetupPaneComponent implements Component {
     tui: TUI,
     piTheme: PiTheme,
     getState: () => { style: Style; options: PrismOptions },
-    onPick: (step: SetupStep, value: string) => void,
+    onPick: (step: SetupStep, value: string, hasNext: boolean) => boolean,
     drawMd: (style: Style, blocks: Block[], cols: number) => RenderElement[],
     close: () => void,
+    startAt = 0,
   ) {
     this.tui = tui;
     this.piTheme = piTheme;
@@ -492,11 +619,16 @@ class SetupPaneComponent implements Component {
     this.onPick = onPick;
     this.drawMd = drawMd;
     this.close = close;
+    this.stepIndex = startAt;
     this.syncFocusToCurrentStep();
   }
 
   private steps(): readonly SetupStep[] {
     return SETUP_STEPS;
+  }
+
+  private tierEnd(): number {
+    return this.stepIndex < ESSENTIAL_STEPS ? ESSENTIAL_STEPS : this.steps().length;
   }
 
   private currentStep(): SetupStep {
@@ -528,11 +660,12 @@ class SetupPaneComponent implements Component {
   }
 
   private confirmCurrent(): void {
-    const steps = this.steps();
     const step = this.currentStep();
     const value = this.focusedValue || this.currentValueOf(step);
-    this.onPick(step, value);
-    if (this.stepIndex + 1 < steps.length) {
+    const hasNext = this.stepIndex + 1 < this.tierEnd();
+    const saved = this.onPick(step, value, hasNext);
+    if (!saved) return;
+    if (hasNext) {
       this.stepIndex++;
       this.syncFocusToCurrentStep();
       this.tui.requestRender();
@@ -603,6 +736,11 @@ class SetupPaneComponent implements Component {
       return this.piTheme.fg("border", `${left}─${text}${"─".repeat(fill)}${right}`);
     };
 
+    const footer =
+      this.stepIndex < ESSENTIAL_STEPS
+        ? `Step ${this.stepIndex + 1}/${ESSENTIAL_STEPS} · Esc close`
+        : `More ${this.stepIndex + 1 - ESSENTIAL_STEPS}/${this.steps().length - ESSENTIAL_STEPS} · Esc close`;
+
     return [
       edge("╭", this.piTheme.bold("prism setup"), "╮"),
       ...bodyLines.map((l) => {
@@ -610,7 +748,7 @@ class SetupPaneComponent implements Component {
         const pad = Math.max(0, innerWidth - visibleWidth(cut));
         return `${this.piTheme.fg("border", "│")} ${cut}${" ".repeat(pad)} ${this.piTheme.fg("border", "│")}`;
       }),
-      edge("╰", this.piTheme.fg("dim", `Step ${this.stepIndex + 1}/${this.steps().length} · Esc close`), "╯"),
+      edge("╰", this.piTheme.fg("dim", footer), "╯"),
     ].map((l) => truncateToWidth(l, width));
   }
 
@@ -639,8 +777,28 @@ class SetupPaneComponent implements Component {
 
 type TypesetFormula = Exclude<Formula, { error: true }> & { tex: string };
 type LoadedPicture = { png: string; width: number; height: number; alt: string };
+type CachedPicture = { picture: Omit<LoadedPicture, "alt"> | null; bytes: number };
 type PathChecks = { asked: Set<string>; found: Set<string> };
 const MAX_FOUND_PATHS = 2000;
+const MAX_BATCH = 200;
+const MAX_ASKED = 5000;
+const READ_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const WRITE_TOOLS = new Set(["write", "edit"]);
+
+function statTarget(candidate: string, isWsl: boolean): string {
+  const drive = isWsl ? /^([a-z]):\/(.*)$/i.exec(candidate) : null;
+  return drive ? `/mnt/${drive[1]?.toLowerCase()}/${drive[2]}` : candidate;
+}
+
+function rememberFoundPath(found: Set<string>, candidate: string): void {
+  found.delete(candidate);
+  found.add(candidate);
+  while (found.size > MAX_FOUND_PATHS) {
+    const oldest = found.values().next().value;
+    if (oldest === undefined) break;
+    found.delete(oldest);
+  }
+}
 
 export default function prismExtension(
   pi: ExtensionAPI,
@@ -659,8 +817,9 @@ export default function prismExtension(
   const parsedCache = new Map<string, ReturnType<typeof parse>>();
   const unfolded = new Set<string>();
   const pathChecks: PathChecks = { asked: new Set<string>(), found: new Set<string>() };
+  const handledToolCalls = new Set<string>();
   let formulasStore: Record<string, Formula> = {};
-  const pictureCache = new Map<string, LoadedPicture | null>();
+  const pictureCache = new Map<string, CachedPicture>();
   const latexSuffix = randomUUID();
 
   const parseCached = (text: string, limit = 200) =>
@@ -742,7 +901,7 @@ export default function prismExtension(
   }
 
   function makeCopyButton(): CopyButton {
-    return (text, key, label = "⧉ copy", rich) => {
+    return (text, key, label = "⧉ copy", rich, hues) => {
       if (!style.copyButtons || !offers(style, rich)) return null;
       return h(EL.Button, {
         key,
@@ -751,7 +910,7 @@ export default function prismExtension(
         onPress: () => {
           const content = typeof text === "function" ? text() : text;
           if (rich && style.htmlCopy) {
-            const failure = runHelperSync(style.htmlCopy, richCommand(style, style.htmlCopy, content, rich));
+            const failure = runHelperSync(style.htmlCopy, richCommand(style, style.htmlCopy, content, rich, hues?.()));
             if (failure === null) {
               toast(rich === "png" ? "Copied as image" : "Copied formatted table", "info");
               return;
@@ -838,6 +997,8 @@ export default function prismExtension(
             if (!rendered.has(idx + 1)) return { error: true };
             const file = join(dir, `${String(idx + 1).padStart(4, "0")}.png`);
             try {
+              const st = statSync(file);
+              if (!st.isFile() || st.size > MAX_IMAGE_BYTES) return { error: true };
               const png = readFileSync(file).toString("base64");
               const size = png ? pngSize(png) : null;
               return size && fitsImage(png) ? { png, ...size } : { error: true };
@@ -876,51 +1037,95 @@ export default function prismExtension(
 
     const out = new Map<number, LoadedPicture>();
     for (const { i, alt, src } of images) {
-      const cached = remember(
+      const entry = remember(
         pictureCache,
         src,
-        () => {
+        (): CachedPicture => {
           const file = imageFile(src, style.home);
-          if (!file) return null;
+          if (!file) return { picture: null, bytes: src.length };
+          let picture: Omit<LoadedPicture, "alt"> | null = null;
           if ("path" in file) {
             try {
               const st = statSync(file.path);
-              if (!st.isFile() || st.size > MAX_IMAGE_BYTES) return null;
-              const png = readFileSync(file.path).toString("base64");
-              const size = png ? pngSize(png) : null;
-              return size && size.width > 0 && size.height > 0 && fitsImage(png) ? { png, ...size, alt } : null;
-            } catch {
-              return null;
+              if (st.isFile() && st.size <= MAX_IMAGE_BYTES) {
+                const png = readFileSync(file.path).toString("base64");
+                const size = png ? pngSize(png) : null;
+                if (size && size.width > 0 && size.height > 0 && fitsImage(png)) {
+                  picture = { png, ...size };
+                }
+              }
+            } catch {}
+          } else {
+            const size = file.png ? pngSize(file.png) : null;
+            if (size && size.width > 0 && size.height > 0 && fitsImage(file.png)) {
+              picture = { png: file.png, ...size };
             }
           }
-          const size = file.png ? pngSize(file.png) : null;
-          return size && size.width > 0 && size.height > 0 && fitsImage(file.png)
-            ? { png: file.png, ...size, alt }
-            : null;
+          return {
+            picture,
+            bytes: src.length + (picture ? (picture.png.length * 3) / 4 : 0),
+          };
         },
-        50,
+        Infinity,
       );
-      if (cached) out.set(i, { ...cached, alt });
+      for (const old of oldestOver(pictureCache, (_, e) => e.bytes)) {
+        pictureCache.delete(old);
+      }
+      if (entry.picture) out.set(i, { ...entry.picture, alt });
     }
     return out;
   }
 
   function withFoundPaths(activeStyle: Style, blocks: Block[]): Style {
+    if (pathChecks.asked.size >= MAX_ASKED) {
+      pathChecks.asked = new Set(pathChecks.found);
+    }
+    const isWsl = process.env.WSL_DISTRO_NAME !== undefined;
+    let probed = 0;
     for (const candidate of pathsToProbe(blocks, activeStyle)) {
       if (pathChecks.asked.has(candidate)) continue;
+      if (probed >= MAX_BATCH) break;
+      probed++;
       pathChecks.asked.add(candidate);
       try {
-        const st = statSync(candidate);
-        if (st.isFile() || st.isDirectory()) {
-          pathChecks.found.add(candidate);
-          if (pathChecks.found.size > MAX_FOUND_PATHS) {
-            const oldest = pathChecks.found.values().next().value;
-            if (oldest !== undefined) pathChecks.found.delete(oldest);
-          }
+        const st = statSync(statTarget(candidate, isWsl));
+        if (st.isDirectory()) {
+          rememberFoundPath(pathChecks.found, candidate);
+          rememberFoundPath(pathChecks.found, `${candidate}/`);
+        } else if (st.isFile()) {
+          rememberFoundPath(pathChecks.found, candidate);
         }
       } catch {}
     }
     return pathChecks.found.size > 0 ? { ...activeStyle, found: pathChecks.found } : activeStyle;
+  }
+
+  function forgetMisses(toolName: string | undefined, input: Record<string, unknown> | undefined, cwd: string): void {
+    if (pathChecks.asked.size < MAX_ASKED && toolName !== undefined && READ_TOOLS.has(toolName)) {
+      return;
+    }
+    if (pathChecks.asked.size < MAX_ASKED && toolName !== undefined && WRITE_TOOLS.has(toolName)) {
+      const rawPath = typeof input?.path === "string" ? input.path : undefined;
+      if (rawPath !== undefined && rawPath.trim() !== "") {
+        const base = cwd || style.cwd || process.cwd();
+        const resolved = (
+          rawPath.startsWith("~/") && style.home
+            ? join(style.home, rawPath.slice(2))
+            : /^[a-z]:[\\/]/i.test(rawPath)
+              ? rawPath
+              : isAbsolute(rawPath)
+                ? resolve(rawPath)
+                : resolve(base, rawPath)
+        )
+          .replace(/\\/g, "/")
+          .replace(/(?<=[^/:])\/+$/, "");
+        for (let at = resolved; at.includes("/"); at = at.slice(0, at.lastIndexOf("/"))) {
+          pathChecks.asked.delete(at);
+        }
+        return;
+      }
+    }
+    pathChecks.asked = new Set(pathChecks.found);
   }
 
   function drawMarkdownElements(
@@ -1136,6 +1341,7 @@ export default function prismExtension(
     uiCtx = ctx;
     pathChecks.asked.clear();
     pathChecks.found.clear();
+    handledToolCalls.clear();
     ensureMessagePrototypesPatched();
     void Promise.resolve().then(() => ensureMessagePrototypesPatched());
     refreshFromDisk(ctx.cwd);
@@ -1164,12 +1370,23 @@ export default function prismExtension(
     clearHover();
   });
 
-  pi.on("tool_result", () => {
-    pathChecks.asked = new Set(pathChecks.found);
+  pi.on("tool_result", (event, ctx) => {
+    if (typeof event?.toolCallId === "string" && event.toolCallId) {
+      handledToolCalls.delete(event.toolCallId);
+      handledToolCalls.add(event.toolCallId);
+      if (handledToolCalls.size > 500) {
+        const oldest = handledToolCalls.values().next().value;
+        if (oldest !== undefined) handledToolCalls.delete(oldest);
+      }
+    }
+    forgetMisses(event?.toolName, event?.input, ctx.cwd);
   });
 
-  pi.on("tool_execution_end", () => {
-    pathChecks.asked = new Set(pathChecks.found);
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (typeof event?.toolCallId === "string" && handledToolCalls.delete(event.toolCallId)) {
+      return;
+    }
+    forgetMisses(event?.toolName, undefined, ctx.cwd);
   });
 
   pi.on("before_agent_start", (event, ctx) => {
@@ -1201,14 +1418,23 @@ export default function prismExtension(
     }
   });
 
-  function saveSetupOption(step: SetupStep, value: string, ctx: ExtensionContext): string {
-    options = { ...loadOptions(), [step.key]: value };
-    if (!saveOptions(options)) {
-      return `Could not save ${step.key}.`;
+  function saveOptionValue(key: string, value: unknown, title: string, ctx: ExtensionContext): string {
+    options = { ...loadOptions(), [key]: value };
+    const err = saveOptionsWithError(options);
+    if (err !== null) {
+      return `Could not save ${key}: ${err}. Set "${key}": ${JSON.stringify(value)} by hand in ${storePath()}.`;
     }
     refreshFromDisk(ctx.cwd);
     requestRender();
-    return `${step.title} set to ${value}.`;
+    return `${title} set to ${String(value)}.`;
+  }
+
+  function saveSetupOption(step: SetupStep, value: string, ctx: ExtensionContext): string {
+    return saveOptionValue(step.key, value, step.title, ctx);
+  }
+
+  function findSetupStepIndex(query: string): number {
+    return SETUP_STEPS.findIndex((s) => s.name === query || s.key === query);
   }
 
   function sendPrismOutput(text: string): void {
@@ -1222,19 +1448,52 @@ export default function prismExtension(
     description: "Pick prism styles from samples, or run checkhealth",
     getArgumentCompletions(prefix: string) {
       const subcommands = ["setup", "checkhealth", "checkhealth-rtl"];
-      const trimmed = prefix.trim();
+      const optionKeys = [
+        ...new Set([...SETUP_STEPS.map((s) => s.key), ...BOOLEAN_OPTIONS, ...Object.keys(ENUM_OPTIONS)]),
+      ];
+      const trimmed = prefix.trimStart();
       if (!trimmed.includes(" ")) {
-        return subcommands.filter((s) => s.startsWith(trimmed)).map((value) => ({ value, label: value }));
+        const base = subcommands.filter((s) => s.startsWith(trimmed)).map((value) => ({ value, label: value }));
+        if (trimmed === "") return base;
+        const opts = optionKeys
+          .filter((k) => k.startsWith(trimmed) && !subcommands.includes(k))
+          .map((value) => ({ value, label: value }));
+        return [...base, ...opts];
       }
-      const [first, second = ""] = trimmed.split(/\s+/);
+      const parts = trimmed.split(/\s+/);
+      const [first, second = "", third = ""] = parts;
       if (first === "setup") {
-        const steps = SETUP_STEPS.map((s) => s.name);
-        return steps
-          .filter((s) => s.startsWith(second))
-          .map((s) => ({
-            value: `setup ${s}`,
-            label: s,
-          }));
+        if (parts.length <= 2) {
+          const steps = [...SETUP_STEPS.map((s) => s.name), SETUP_MORE];
+          return steps
+            .filter((s) => s.startsWith(second))
+            .map((s) => ({
+              value: `setup ${s}`,
+              label: s,
+            }));
+        }
+        if (parts.length === 3) {
+          const stepIdx = findSetupStepIndex(second);
+          const step = stepIdx >= 0 ? SETUP_STEPS[stepIdx] : undefined;
+          if (!step) return null;
+          return step.options
+            .filter((o) => o.startsWith(third))
+            .map((o) => ({ value: `setup ${second} ${o}`, label: o }));
+        }
+        return null;
+      }
+      if (parts.length === 2 && first) {
+        const stepIdx = findSetupStepIndex(first);
+        const choices =
+          stepIdx >= 0
+            ? SETUP_STEPS[stepIdx]?.options
+            : first in ENUM_OPTIONS
+              ? ENUM_OPTIONS[first]
+              : BOOLEAN_OPTIONS.has(first)
+                ? ["true", "false"]
+                : undefined;
+        if (!choices) return null;
+        return choices.filter((o) => o.startsWith(second)).map((o) => ({ value: `${first} ${o}`, label: o }));
       }
       return null;
     },
@@ -1255,7 +1514,8 @@ export default function prismExtension(
       }
 
       if (sub === "setup") {
-        if (!name && ctx.mode === "tui") {
+        const at = name === SETUP_MORE ? ESSENTIAL_STEPS : name ? findSetupStepIndex(name) : 0;
+        if ((!name || name === SETUP_MORE) && !third && ctx.mode === "tui") {
           const overlayOpts = (): OverlayOptions => ({
             anchor: "center",
             width: "85%",
@@ -1270,15 +1530,26 @@ export default function prismExtension(
                 t,
                 piTheme,
                 () => ({ style: syncThemeFromPi(piTheme), options }),
-                (step, value) => {
+                (step, value, hasNext) => {
                   const msg = saveSetupOption(step, value, ctx);
-                  notify(msg, msg.startsWith("Could not") ? "error" : "info");
+                  if (msg.startsWith("Could not")) {
+                    notify(msg, "error");
+                    return false;
+                  }
+                  const suffix = hasNext
+                    ? ""
+                    : step.key === SETUP_STEPS[ESSENTIAL_STEPS - 1]?.key
+                      ? ` ${SETUP_ESSENTIALS_DONE}`
+                      : ` ${SETUP_DONE}`;
+                  notify(`${msg}${suffix}`, "info");
+                  return true;
                 },
                 (s, b, cols) => drawMarkdownElements(s, b, cols),
                 () => {
                   tuiInstance = undefined;
                   done();
                 },
+                at,
               );
             },
             { overlay: true, overlayOptions: overlayOpts },
@@ -1287,7 +1558,6 @@ export default function prismExtension(
           return;
         }
 
-        const at = name ? SETUP_STEPS.findIndex((s) => s.name === name) : 0;
         const step = SETUP_STEPS[at];
         if (!step) {
           sendPrismOutput(`Unknown setup step "${name}". Steps: ${SETUP_STEPS.map((s) => s.name).join(", ")}`);
@@ -1310,7 +1580,50 @@ export default function prismExtension(
           sendPrismOutput(saved);
           return;
         }
-        sendPrismOutput(`${saved}\n\n${at + 1 < SETUP_STEPS.length ? setupText(setupParts(at + 1)) : SETUP_DONE}`);
+        const nextText =
+          at + 1 === ESSENTIAL_STEPS
+            ? SETUP_ESSENTIALS_DONE
+            : at + 1 < SETUP_STEPS.length
+              ? setupText(setupParts(at + 1))
+              : SETUP_DONE;
+        sendPrismOutput(`${saved}\n\n${nextText}`);
+        return;
+      }
+
+      const directAt = sub ? findSetupStepIndex(sub) : -1;
+      const directStep = directAt >= 0 ? SETUP_STEPS[directAt] : undefined;
+      if (directStep) {
+        if (!name) {
+          sendPrismOutput(setupText(setupParts(directAt)));
+          return;
+        }
+        const choices = directStep.options;
+        const value = /^\d+$/.test(name) ? directStep.options[Number(name) - 1] : name;
+        if (!value || !choices.includes(value)) {
+          sendPrismOutput(
+            `Unknown ${directStep.key} pick "${name}". Pick 1-${directStep.options.length} or one of: ${choices.join(", ")}`,
+          );
+          return;
+        }
+        sendPrismOutput(saveSetupOption(directStep, value, ctx));
+        return;
+      }
+
+      const enumChoices = sub ? ENUM_OPTIONS[sub] : undefined;
+      if (sub && (enumChoices !== undefined || BOOLEAN_OPTIONS.has(sub))) {
+        if (enumChoices !== undefined) {
+          if (!name || !enumChoices.includes(name)) {
+            sendPrismOutput(`Unknown ${sub} pick "${name ?? ""}". Pick one of: ${enumChoices.join(", ")}`);
+            return;
+          }
+          sendPrismOutput(saveOptionValue(sub, name, sub, ctx));
+          return;
+        }
+        if (name !== "true" && name !== "false") {
+          sendPrismOutput(`Unknown ${sub} pick "${name ?? ""}". Pick true or false.`);
+          return;
+        }
+        sendPrismOutput(saveOptionValue(sub, name === "true", sub, ctx));
         return;
       }
 

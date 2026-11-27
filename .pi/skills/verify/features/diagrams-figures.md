@@ -1,12 +1,12 @@
 # Diagrams and figures
 
-Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, `xychart-beta` bar/line charts, pie charts, and Gantt schedules) and ` ```figure ` blocks as colored terminal graphics. A mermaid block the text renderer cannot draw goes to the bundled pele instead when the terminal shows images, which the [pele feature](./pele.md) covers.
+Diagrams and figures draw ` ```mermaid ` blocks (flowcharts, sequence diagrams, state diagrams, class diagrams, ER diagrams, `xychart-beta` bar/line charts, pie charts, Gantt schedules, `quadrantChart` grids, `mindmap` trees, `journey` mood lines, `kanban` boards, and `gitGraph` histories) and ` ```figure ` blocks as colored terminal graphics. A mermaid block the text renderer cannot draw goes to the bundled pele instead when the terminal shows images, which the [pele feature](./pele.md) covers.
 
 ## Sub-features
 
 - `mermaid-flowchart` draws node boxes and connectors in distinct palette hues.
 - `mermaid-xychart` draws bar and multi-series line charts with legends.
-- `mermaid-pie-gantt` draws round quadrant pie charts with percentage legends and Gantt schedules.
+- `mermaid-pie-gantt` draws round quadrant pie charts with percentage legends and Gantt schedules (plus `quadrantChart`, `mindmap`, `journey`, `kanban`, and `gitGraph` text diagrams).
 - `figure-block` colors `{role:text}` spans and aligns box borders.
 
 ## How to get to it (user POV)
@@ -24,6 +24,6 @@ Preconditions:
 
 ## Gotchas
 
-- A Mermaid diagram wider than the current terminal width stays as source code with a dim note `diagram is <N> cols, terminal is <M>` above the fence so lines do not wrap and corrupt the box art. With a terminal that shows images, pele draws the block as a picture instead. Every diagram in this drive fits, so it never starts pele.
+- A Mermaid diagram wider than the current terminal width stays as source code with a dim note `diagram too wide to render (<N> cols, <M> fit)` above the fence so lines do not wrap and corrupt the box art. With a terminal that shows images, pele draws the block as a picture instead. Every diagram in this drive fits, so it never starts pele.
 - A Mermaid kind outside the supported set stays as source with the note `<kind> diagrams draw as source for now`, under the same rule.
 - pele can replace either note with `drawing with pele…` while it runs. When it cannot draw the block, the note stays as main wrote it. See [pele diagrams](./pele.md).

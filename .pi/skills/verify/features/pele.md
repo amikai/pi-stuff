@@ -9,7 +9,7 @@ When the text renderer cannot draw a closed top-level ` ```mermaid ` block, and 
 - `pele-rejected` keeps today's note for a header word pele does not know (`notADiagram diagrams draw as source for now`).
 - `pele-off` leaves main's notes and starts no job when the terminal shows no images.
 - `pele-kinds` draws a minimal body for each kind word the model hint names and asserts that each ends as a picture.
-- `pele-demo` renders `/prism checkhealth` and asserts that each of its 14 pele kind samples ends as a kitty image, not a note.
+- `pele-demo` renders `/prism checkhealth` and asserts that each of its 9 pele kind samples (`timeline`, `sankey-beta`, `C4Context`, `architecture-beta`, `block-beta`, `packet-beta`, `radar-beta`, `treemap-beta`, `requirementDiagram`) ends as a kitty image, not a note (`quadrantChart`, `mindmap`, `journey`, `kanban`, and `gitGraph` render natively as text diagrams).
 - `pele-fill` spans the terminal under kitty, draws a PNG at the terminal's pixel width, and draws a wider one when the terminal widens. The drive asserts the span and the PNG width. `test/prism.test.ts` tests 91 to 99 cover the rest, including iTerm2, `pictureFill: false`, PlantUML and Markdown pictures, a declined larger render, and the pixel budget.
 - `pele-setting` leaves main's notes and starts no job when `prism.json` sets `"pele": false`, or when `SSH_CONNECTION` or `SSH_TTY` is set, because pele is off over SSH like prism's image and preview copy. `test/prism.test.ts` test 39 covers both.
 
