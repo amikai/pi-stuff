@@ -14,6 +14,9 @@ export type Inline =
 
 export type Note = { mark: string; inline: Inline[]; note: number };
 
+export type TableAlign = "left" | "right" | "center";
+export type TableCell = Inline[];
+
 export type Block = { raw: string } & (
   | { kind: "heading"; level: number; inline: Inline[] }
   | { kind: "paragraph"; inline: Inline[] }
@@ -22,9 +25,11 @@ export type Block = { raw: string } & (
   | { kind: "quote"; blocks: Block[] }
   | { kind: "alert"; level: AlertLevel; blocks: Block[] }
   | { kind: "rule" }
-  | { kind: "table"; header: Inline[][]; align: ("left" | "right" | "center")[]; rows: Inline[][][] }
+  | { kind: "table"; header: TableCell[]; align: TableAlign[]; rows: TableCell[][] }
   | { kind: "notes"; notes: Note[] }
 );
+
+export type TableBlock = Extract<Block, { kind: "table" }>;
 
 export type ListItem = { marker: string; depth: number; task?: boolean; inline: Inline[]; blocks?: Block[] };
 
