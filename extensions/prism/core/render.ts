@@ -1,6 +1,13 @@
+import { apiLook, apiOf } from "./api-table.ts";
+import { benchLook, benchOf, benchSpark } from "./bench-table.ts";
+import { compareLook, compareOf } from "./compare-table.ts";
+import { figureText, isFigureLang } from "./figure.ts";
+import { type Group, type GroupTable, groupEdge, groupHeavy, groupLook, groupOf, groupRows } from "./group-table.ts";
+import { type Heat, heatLook, heatOf, heatRows } from "./heat-table.ts";
 import { tableHtml, tableText } from "./html.ts";
 import type { ElementTable, RenderElement, RenderNode, TextHoverProps } from "./jsx.ts";
 import { h } from "./jsx.ts";
+import { kvLook, kvOf } from "./kv-table.ts";
 import { mathOf } from "./latex.ts";
 import {
   cells,
@@ -14,14 +21,29 @@ import {
   width,
   wrapRanges,
 } from "./layout.ts";
-import type { AlertLevel, Block, Inline, ListItem } from "./markdown.ts";
-import { displayText, inlineText, isWebLink, nestedBlocks, texText } from "./markdown.ts";
+import type { AlertLevel, Block, CodeLink, Inline, ListItem, TableAlign, TableBlock, TableCell } from "./markdown.ts";
+import {
+  DRIVE_PATH,
+  displayText,
+  inlineText,
+  isPathSpelling,
+  isWebLink,
+  NAME,
+  nestedBlocks,
+  PART,
+  parseInline,
+  pathSpellings,
+  texParses,
+  texText,
+} from "./markdown.ts";
+import { pivotOf } from "./pivot-table.ts";
 import type { Flow } from "./rtl.ts";
 import {
   codeVisual,
   commentTail,
   commentVisual,
   containsRtl,
+  engineProse,
   flow,
   hasRtl,
   heldCell,
@@ -33,7 +55,12 @@ import {
   terminalLine,
   WALL,
 } from "./rtl.ts";
+import { schemaLook, schemaOf } from "./schema-table.ts";
+import { type Bucket, statusEdge, statusFooter, statusHeavy, statusLook, statusOf, statusRows } from "./status.ts";
+import { testReport } from "./test-report.ts";
 import type { Ink, Style, Theme } from "./theme.ts";
+import { type Tree, treeLook, treeOf, treeRows } from "./tree-table.ts";
+import { languages, tokenize } from "./vendor/prism.js";
 
 export type TerminalEnv = Partial<
   Record<
@@ -48,16 +75,18 @@ export type TerminalEnv = Partial<
     string
   >
 >;
+export type Hues = Ink[][];
 export type CopyButton = (
   text: string | (() => string),
   key: string,
   label?: string,
   rich?: (() => string) | "png",
+  hues?: () => Hues,
 ) => RenderElement | null;
 /** `art` and `png` exclude each other: a drawing is text art or a picture of a known PNG (base64). */
 export type DrawnBlock =
   | { note: string; element?: never; art?: never; hues?: never; png?: never }
-  | { element: RenderElement; art?: string; hues?: () => Ink[][]; png?: never; note?: never }
+  | { element: RenderElement; art?: string; hues?: () => Hues; png?: never; note?: never }
   | { element: RenderElement; png: string; art?: never; hues?: never; note?: never };
 export type Drawn = Map<number, DrawnBlock>;
 /** Buttons that act on a drawn picture, in display order. Empty when they are off or cannot reach the user's machine. */
@@ -66,7 +95,10 @@ export type Fold = (id: string, hidden: number, key: string) => { folded: boolea
 export type Tip = (note: number) => (() => void) | undefined;
 export type BlockOf<K extends Block["kind"]> = Extract<Block, { kind: K }>;
 export type InlineOf<K extends Inline["kind"]> = Extract<Inline, { kind: K }>;
-export type Reach = Pick<Style, "httpLinks" | "editorLinks" | "fileLinks" | "pathLinks" | "found" | "home" | "cwd">;
+export type Reach = Pick<
+  Style,
+  "httpLinks" | "editorLinks" | "obsidianLinks" | "fileLinks" | "pathLinks" | "hyperlinks" | "cwd" | "home" | "found"
+>;
 export type Probe = { key: string; href: string };
 export type Segment = { text: string; color?: string; italic?: boolean };
 export type Mark = { start: number; end: number; text: string; note: number };
@@ -88,8 +120,6 @@ export type Look = {
 
 const _extends = Object.assign;
 
-import { languages, tokenize } from "./vendor/prism.js";
-
 const sliceInline = (nodes: Inline[], from: number, to: number): Inline[] => {
   const out: Inline[] = [];
   let at = 0;
@@ -108,17 +138,18 @@ const sliceInline = (nodes: Inline[], from: number, to: number): Inline[] => {
 const hasLink = (nodes: Inline[]): boolean =>
   nodes.some((n) => n.kind === "link" || ("children" in n && hasLink(n.children)));
 
-const headerRuns = (nodes: Inline[]): Inline[] =>
-  nodes
-    .flatMap((n): Inline[] =>
-      n.kind === "footnote" ? [n] : "children" in n ? headerRuns(n.children) : [{ kind: "text", text: n.text }],
-    )
-    .reduce<Inline[]>((out, n) => {
-      const last = out[out.length - 1];
-      return n.kind === "text" && last?.kind === "text"
-        ? [...out.slice(0, -1), { kind: "text", text: last.text + n.text }]
-        : [...out, n];
-    }, []);
+const headerRuns = (nodes: Inline[]): Inline[] => {
+  const flat = nodes.flatMap((n): Inline[] =>
+    n.kind === "footnote" ? [n] : "children" in n ? headerRuns(n.children) : [{ kind: "text", text: n.text }],
+  );
+  const out: Inline[] = [];
+  for (const n of flat) {
+    const last = out[out.length - 1];
+    if (n.kind === "text" && last?.kind === "text") out[out.length - 1] = { kind: "text", text: last.text + n.text };
+    else out.push(n);
+  }
+  return out;
+};
 
 const fileRoot = (distro?: string): string =>
   distro ? `file://wsl.localhost/${encodeURIComponent(distro)}` : "file://";
@@ -248,10 +279,37 @@ const launches = (href: string): boolean => {
   return /\.app[/\\]/.test(path) || name.split(/[:\u0000-\u001f]/).some((part) => LAUNCHERS.has(extensionOf(part)));
 };
 
+const obsidianTargets = (href: string): string[] => [
+  href,
+  ...(/\?([^#]*)/.exec(href)?.[1] ?? "")
+    .split("&")
+    .filter((pair) => /^(file|path)=/i.test(unescaped(pair)))
+    .map((pair) => pair.slice(pair.indexOf("=") + 1).replaceAll("?", "%3F")),
+];
+
+const opensObsidianNote = (href: string): boolean =>
+  /^obsidian:\/\/(open([?#]|$)|\/)/i.test(href) &&
+  !/[?&](append|prepend)([=&]|$)/i.test(unescaped(href)) &&
+  !obsidianTargets(href).some(launches);
+
 const isHyperlink = (href: string, reach: Reach): boolean =>
   (reach.httpLinks ? /^https?:/i : /^(https:|http:\/\/localhost(:\d+)?([/?#]|$))/i).test(href) ||
   (reach.editorLinks && /^(vscode(-insiders)?|cursor|windsurf|zed):\/\/file\//i.test(href)) ||
-  (reach.fileLinks !== null && /^file:/i.test(href) && !launches(href));
+  (reach.obsidianLinks && opensObsidianNote(href)) ||
+  (reach.fileLinks !== null && /^file:/i.test(href) && !launches(href) && opens(reach, href));
+
+const bare = (path: string): boolean => /^\d*$/.test(extensionOf(path.replace(/[/\\]+$/, "").replace(/^.*[/\\]/, "")));
+
+const hrefPath = (reach: Reach, href: string): string =>
+  (linkPath(reach.fileLinks ?? "file://", href) ?? href).replace(/^\/(?=[a-z]:)/i, "").replace(/(?<=.)\/+$/, "");
+
+const opens = (reach: Reach, href: string): boolean => {
+  const path = hrefPath(reach, href);
+  return !bare(path) || reach.found?.has(`${path}/`) === true;
+};
+
+const bareKey = (reach: Reach, href: string | undefined): string[] =>
+  href === undefined || !bare(hrefPath(reach, href)) ? [] : [hrefPath(reach, href)];
 
 const plainLink = (text: string, href: string): string => {
   const target = href.replace(/^mailto:/i, "");
@@ -337,10 +395,88 @@ const hidesFile = (reach: Reach, n: InlineOf<"link">, href: string): boolean => 
   return shown === undefined || shown !== withoutSlash(linkPath(root, href));
 };
 
+const ZERO_WIDTH = /\p{Cf}|\u034f|\u180e/gu;
+
+const WEB_TLDS = new Set([
+  "com",
+  "org",
+  "net",
+  "io",
+  "dev",
+  "app",
+  "ai",
+  "co",
+  "gov",
+  "edu",
+  "info",
+  "biz",
+  "me",
+  "xyz",
+  "example",
+  "test",
+  "uk",
+  "de",
+  "fr",
+  "eu",
+  "ie",
+  "il",
+  "ca",
+  "au",
+  "jp",
+  "cn",
+  "ru",
+  "br",
+  "in",
+]);
+
+const hostOf = (href: string): string | undefined =>
+  /^[a-z][\w+.-]*:\/\/(?:[^@/?#]*@)?([^/?#:]+)/i
+    .exec(href)?.[1]
+    ?.toLowerCase()
+    .replace(/^www\./, "");
+
+const shownHost = (label: string): string =>
+  label
+    .replace(/[*_~`]/g, "")
+    .replace(/[\u3002\uff0e\uff61]/gu, ".")
+    .trim()
+    .replace(/\.$/, "")
+    .replace(/^\/\//, "")
+    .replace(/^([a-z][\w+.-]*:\/\/)?[^@/?#\s]*@/i, "$1");
+
+const labelHost = (label: string): string | undefined => {
+  const m = /^([a-z][\w+.-]*:\/\/)?((?:www\.)?[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+)(?::\d+)?(?:[/?#]\S*)?$/iu.exec(
+    shownHost(label),
+  );
+  const rawHost = m?.[2]?.toLowerCase();
+  const host = rawHost?.replace(/^www\./, "");
+  if (!m || !host || !rawHost) return undefined;
+  return m[1] || host !== rawHost || WEB_TLDS.has(host.slice(host.lastIndexOf(".") + 1)) ? host : undefined;
+};
+
+const labelHosts = (label: string): string[] =>
+  [label, ...label.split(/\s+/).map((word) => word.replace(/^[([<"']+|[)\]>"'.,;:!?]+$/g, ""))].flatMap(
+    (part) => labelHost(part) ?? [],
+  );
+
+const spoofs = (label: string, href: string): boolean => {
+  const clean = label.replace(ZERO_WIDTH, "");
+  const shown = labelHosts(clean);
+  if (shown.length === 0) return false;
+  const real = hostOf(href) ?? "";
+  return clean !== label || shown.some((host) => real !== host && !real.endsWith(`.${host}`));
+};
+
 const drawnLink = (n: InlineOf<"link">, reach: Reach): Inline => {
   const href = reach.fileLinks !== null && /^file:/i.test(n.href) ? fileHref(reach.fileLinks, n.href) : n.href;
-  if (!isHyperlink(n.href, reach) || encodedLength(href) > LINK_MAX || hidesFile(reach, n, href))
-    return { kind: "text", text: plainLink(n.text, n.href) };
+  if (
+    !isHyperlink(n.href, reach) ||
+    encodedLength(href) > LINK_MAX ||
+    hidesFile(reach, n, href) ||
+    spoofs(n.text, n.href)
+  )
+    return { kind: "text", text: plainLink(n.text.replace(ZERO_WIDTH, ""), n.href) };
+  if (!reach.hyperlinks && /^file:/i.test(n.href)) return { kind: "path", text: n.text };
   return href === n.href ? n : { ...n, href };
 };
 
@@ -349,13 +485,16 @@ const linksAsPath = (path: string): boolean =>
 
 const drawnPath = (n: InlineOf<"path">, reach: Reach): Inline => {
   const href = reach.pathLinks && linksAsPath(n.text) ? pathHref(reach, n.text) : undefined;
-  return href === undefined ? n : { ...n, href };
+  return href === undefined || !opens(reach, href) ? n : { ...n, href };
 };
 
-const PART = String.raw`[\p{L}\p{N}_@+-]+`;
-const NAME = String.raw`\.?${PART}(?:\.${PART})*`;
+const drawnCode = (n: InlineOf<"code">, reach: Reach): Inline => {
+  const drawn = isPathSpelling(n.text) ? drawnPath({ kind: "path", text: n.text }, reach) : undefined;
+  return drawn?.kind === "path" && drawn.href !== undefined ? { ...n, href: drawn.href } : n;
+};
+
 const LOOSE_PATH = new RegExp(
-  String.raw`(?<![\p{L}\p{N}_/\\.:~@+-])(?:[A-Za-z]:[\\/](?:${NAME}[\\/])*(?:${NAME})?|${NAME}(?:\/${NAME})*\/(?:${NAME})?|${PART}(?:\.${PART})+)(?![\p{L}\p{N}_/\\@+-]|\.[\p{L}\p{N}])`,
+  String.raw`(?<![\p{L}\p{N}_/\\.:~@+-])(?:${DRIVE_PATH.source}|${NAME}(?:\/${NAME})*\/(?:${NAME})?|${PART}(?:\.${PART})+)(?![\p{L}\p{N}_/\\@+-]|\.[\p{L}\p{N}])`,
   "gu",
 );
 
@@ -371,22 +510,54 @@ const looseSpellings = (text: string): RegExpExecArray[] => [...text.matchAll(LO
 
 const foundProbe = (reach: Reach, spelling: string): Probe | undefined => {
   const probe = looseProbe(reach, spelling);
-  return probe && reach.found?.has(probe.key) ? probe : undefined;
+  return probe && reach.found?.has(probe.key) && opens(reach, probe.href) ? probe : undefined;
 };
 
-const loosePaths = (n: InlineOf<"text">, reach: Reach): Inline[] => {
+type Loose = InlineOf<"text" | "number">;
+
+const runsOf = (nodes: Inline[]): (Inline | Loose[])[] => {
+  const out: (Inline | Loose[])[] = [];
+  for (const n of nodes) {
+    const last = out.at(-1);
+    if (n.kind !== "text" && n.kind !== "number") out.push(n);
+    else if (Array.isArray(last)) last.push(n);
+    else out.push([n]);
+  }
+  return out;
+};
+
+const spans = (run: Loose[]): { n: Loose; start: number; end: number }[] => {
+  let at = 0;
+  return run.map((n) => {
+    const start = at;
+    at += n.text.length;
+    return { n, start, end: at };
+  });
+};
+
+const runSpellings = (run: Loose[]): RegExpExecArray[] => {
+  const numbers = spans(run).filter((s) => s.n.kind === "number");
+  return looseSpellings(run.map((n) => n.text).join("")).filter(
+    (m) => !numbers.some((s) => s.start <= m.index && m.index + m[0].length <= s.end),
+  );
+};
+
+const cut = (run: Loose[], from: number, to: number): Inline[] =>
+  spans(run).flatMap(({ n, start }) => {
+    const text = n.text.slice(Math.max(from - start, 0), Math.max(to - start, 0));
+    return text ? [{ ...n, text }] : [];
+  });
+
+const loosePaths = (run: Loose[], reach: Reach): Inline[] => {
   const out: Inline[] = [];
   let at = 0;
-  for (const m of looseSpellings(n.text)) {
+  for (const m of runSpellings(run)) {
     const probe = foundProbe(reach, m[0]);
     if (!probe) continue;
-    if (m.index > at) out.push({ kind: "text", text: n.text.slice(at, m.index) });
-    out.push({ kind: "path", text: m[0], href: probe.href });
+    out.push(...cut(run, at, m.index), { kind: "path", text: m[0], href: probe.href });
     at = m.index + m[0].length;
   }
-  if (at === 0) return [n];
-  if (at < n.text.length) out.push({ kind: "text", text: n.text.slice(at) });
-  return out;
+  return at === 0 ? run : [...out, ...cut(run, at, Infinity)];
 };
 
 const looseCode = (n: InlineOf<"code">, reach: Reach): Inline => {
@@ -396,8 +567,9 @@ const looseCode = (n: InlineOf<"code">, reach: Reach): Inline => {
 
 const isWholePath = (text: string): boolean => looseSpellings(text).some((m) => m[0] === text);
 
-const looseNode = (n: Inline, reach: Reach): Inline | Inline[] => {
-  if (n.kind === "text") return loosePaths(n, reach);
+const looseNode = (node: Inline, reach: Reach): Inline | Inline[] => {
+  const n = linked(node, reach);
+  if (n.kind === "text") return loosePaths([n], reach);
   return n.kind === "code" ? looseCode(n, reach) : n;
 };
 
@@ -406,23 +578,47 @@ const linked = (node: Inline, reach: Reach): Inline => {
     node.kind === "image" && isWebLink(node.src) ? { kind: "link", text: node.text, href: node.src } : node;
   if (n.kind === "link") return drawnLink(n, reach);
   if (n.kind === "path") return drawnPath(n, reach);
+  if (n.kind === "code") return drawnCode(n, reach);
   return "children" in n ? { ...n, children: hyperlinks(n.children, reach) } : n;
 };
 
 const hyperlinks = (nodes: Inline[], reach: Reach): Inline[] =>
   reach.found?.size
-    ? nodes.flatMap((node) => looseNode(linked(node, reach), reach))
+    ? runsOf(nodes).flatMap((n) => (Array.isArray(n) ? loosePaths(n, reach) : looseNode(n, reach)))
     : nodes.map((node) => linked(node, reach));
 
 const spellingsIn = (nodes: Inline[]): string[] =>
-  nodes.flatMap((n) => {
+  runsOf(nodes).flatMap((n) => {
+    if (Array.isArray(n)) return runSpellings(n).map((m) => m[0]);
     if ("children" in n) return spellingsIn(n.children);
-    if (n.kind === "code") return isWholePath(n.text) ? [n.text] : [];
-    return n.kind === "text" ? looseSpellings(n.text).map((m) => m[0]) : [];
+    return n.kind === "code" && isWholePath(n.text) ? [n.text] : [];
   });
+
+const isPlainText = (lang: string): boolean => ["", "text", "txt", "plain", "plaintext"].includes(lang.toLowerCase());
+
+const codeSpans = (line: string): { start: number; end: number }[] => {
+  const spellings = [...pathSpellings(line), ...looseSpellings(line)]
+    .map((m) => ({ start: m.index, end: m.index + m[0].length }))
+    .sort((a, b) => a.start - b.start || b.end - a.end);
+  let edge = 0;
+  return spellings.filter((s) => {
+    if (s.start < edge) return false;
+    edge = s.end;
+    return true;
+  });
+};
+
+const spanNode = (line: string, span: { start: number; end: number }): Inline => ({
+  kind: "code",
+  text: line.slice(span.start, span.end),
+});
 
 const inlinesOf = (block: Block): Inline[][] => {
   switch (block.kind) {
+    case "code":
+      return isPlainText(block.lang)
+        ? block.lines.map((line) => codeSpans(line).map((span) => spanNode(line, span))).filter((nodes) => nodes.length)
+        : [];
     case "heading":
     case "paragraph":
       return [block.inline];
@@ -439,12 +635,24 @@ const inlinesOf = (block: Block): Inline[][] => {
 
 const spelled = new WeakMap<Block, string[]>();
 
+const pathKey = (reach: Reach, path: string): string[] =>
+  reach.pathLinks && linksAsPath(path) ? bareKey(reach, pathHref(reach, path)) : [];
+
+const bareKeysIn = (nodes: Inline[], reach: Reach): string[] =>
+  nodes.flatMap((n) => {
+    if (n.kind === "path") return pathKey(reach, n.text);
+    if (n.kind === "code") return isPathSpelling(n.text) ? pathKey(reach, n.text) : [];
+    if (n.kind === "link") return /^file:/i.test(n.href) ? bareKey(reach, n.href) : [];
+    return "children" in n ? bareKeysIn(n.children, reach) : [];
+  });
+
 const pathsToProbe = (blocks: Block[], reach: Reach): string[] => {
-  if (!reach.pathLinks || reach.fileLinks === null) return [];
+  if (reach.fileLinks === null) return [];
   return nestedBlocks(blocks).flatMap((block) => {
     const spellings = spelled.get(block) ?? inlinesOf(block).flatMap(spellingsIn);
     spelled.set(block, spellings);
-    return spellings.flatMap((spelling) => looseProbe(reach, spelling)?.key ?? []);
+    const loose = reach.pathLinks ? spellings.flatMap((spelling) => looseProbe(reach, spelling)?.key ?? []) : [];
+    return [...loose, ...inlinesOf(block).flatMap((nodes) => bareKeysIn(nodes, reach))];
   });
 };
 
@@ -460,6 +668,17 @@ const hyperlinkBlock = (block: Block, reach: Reach): Block => {
       return { ...block, header: block.header.map(drawn), rows: block.rows.map((r) => r.map(drawn)) };
     case "notes":
       return { ...block, notes: block.notes.map((note) => ({ ...note, inline: drawn(note.inline) })) };
+    case "code": {
+      if (!isPlainText(block.lang)) return block;
+      const links = block.lines.map((line) => {
+        const found = codeSpans(line).flatMap((span): CodeLink[] => {
+          const node = drawn([spanNode(line, span)])[0];
+          return node?.kind === "code" && node.href ? [{ ...span, href: node.href }] : [];
+        });
+        return found.length ? found : undefined;
+      });
+      return links.some(Boolean) ? { ...block, links } : block;
+    }
     default:
       return block;
   }
@@ -470,15 +689,27 @@ const hyperlinked = new WeakMap<Block, Record<string, Block>>();
 const drawable = (block: Block, reach: Reach): Block => {
   const cached: Record<string, Block> = hyperlinked.get(block) ?? {};
   hyperlinked.set(block, cached);
-  const key = `${+reach.httpLinks}${+reach.editorLinks}${reach.fileLinks ?? ""}${reach.pathLinks ? `\0${reach.home}\0${reach.cwd}\0${reach.found?.size ?? 0}` : ""}`;
+  const key = `${+reach.httpLinks}${+reach.editorLinks}${+reach.obsidianLinks}${+reach.hyperlinks}${reach.fileLinks ?? ""}\0${reach.found?.size ?? 0}${reach.pathLinks ? `\0${reach.home}\0${reach.cwd}` : ""}`;
   cached[key] ??= hyperlinkBlock(block, reach);
   return cached[key];
 };
 
-const heightOf = (blocks: Block[], w: number): number =>
-  blocks.reduce((sum, block, b) => sum + (b ? 1 : 0) + blockHeight(block, w), 0);
+const heightOf = (blocks: Block[], w: number, style: Style): number =>
+  blocks.reduce((sum, block, b) => sum + (b ? 1 : 0) + blockHeight(block, w, style), 0);
 
-const blockHeight = (block: Block, w: number): number => {
+const tableShape = (
+  block: TableBlock,
+  style: Style,
+): { base: TableBlock; block: TableBlock; tree: Tree | undefined; heat: Heat | undefined } => {
+  const base = pivotOf(block, style.pivotTable) ?? block;
+  const tree = treeOf(base, style.treeTable, statusOf(base, style.statusMatrix, false) !== undefined);
+  const heat = heatOf(base, style.heatTable);
+  if (!tree && !heat) return { base, block: base, tree, heat };
+  const rows = heatRows({ ...base, rows: treeRows(base, tree) }, heat, style.heatTable);
+  return { base, block: { ...base, rows }, tree, heat };
+};
+
+const blockHeight = (block: Block, w: number, style: Style): number => {
   switch (block.kind) {
     case "heading":
       return 2 * textRows(displayText(block.inline), w - 4) + 2;
@@ -489,7 +720,9 @@ const blockHeight = (block: Block, w: number): number => {
         (sum, item) => {
           const pad = item.depth * 2 + item.marker.length + 4;
           return (
-            sum + textRows(displayText(item.inline), w - pad) + (item.blocks ? heightOf(item.blocks, w - pad) + 1 : 0)
+            sum +
+            textRows(displayText(item.inline), w - pad) +
+            (item.blocks ? heightOf(item.blocks, w - pad, style) + 1 : 0)
           );
         },
         textRows(`${"━".repeat(20)} ${block.items.length}/${block.items.length} done`, w),
@@ -497,16 +730,21 @@ const blockHeight = (block: Block, w: number): number => {
     case "code":
       return block.lines.reduce((sum, line) => sum + textRows(line, w - 8), 3);
     case "table": {
-      const { natural, words } = tableSize(block);
-      const widths = columnWidths(natural, w - 4, 3, words);
-      const tallest = (cells: Inline[][]) =>
+      const base = pivotOf(block, style.pivotTable) ?? block;
+      if (tablePlan(base, style, w, textsOf(style, base)).stack) return stackedHeight(base, w);
+      const shaped = tableShape(block, style).block;
+      const plan = tablePlan(shaped, style, w, textsOf(style, shaped));
+      if (plan.stack) return stackedHeight(base, w);
+      const classic = style.tableLayout === "classic" && tableSize(shaped);
+      const widths = classic ? columnWidths(classic.natural, w - 4, 3, classic.words) : plan.widths;
+      const tallest = (cells: TableCell[]) =>
         Math.max(1, ...widths.map((cw, c) => textRows(displayText(cells[c] ?? []), cw)));
-      return block.rows.reduce((sum, row) => sum + 1 + tallest(row), 4 + tallest(block.header));
+      return shaped.rows.reduce((sum, row) => sum + 1 + tallest(row), 4 + tallest(shaped.header));
     }
     case "quote":
-      return Math.max(1, heightOf(block.blocks, w - 2));
+      return Math.max(1, heightOf(block.blocks, w - 2, style));
     case "alert":
-      return 3 + heightOf(block.blocks, w - 4);
+      return 3 + heightOf(block.blocks, w - 4, style);
     case "rule":
       return 1;
     case "notes":
@@ -554,7 +792,13 @@ const noteHover = (style: Style, note: number | undefined): { hover?: TextHoverP
     ? {}
     : { hover: { scope: `fn:${style.noteKey}:${note}`, inverse: true } };
 
-const renderInline = (el: ElementTable, style: Style, nodes: Inline[], keyBase: string): RenderNode[] => {
+const renderInline = (
+  el: ElementTable,
+  style: Style,
+  nodes: Inline[],
+  keyBase: string,
+  numberFace: { color?: string } = { color: style.theme.number },
+): RenderNode[] => {
   const { Text } = el;
   const t = style.theme;
   return nodes.map((n, i) => {
@@ -583,7 +827,7 @@ const renderInline = (el: ElementTable, style: Style, nodes: Inline[], keyBase: 
       case "image":
         return h(Text, { key: key, color: t.link }, n.text);
       case "number":
-        return h(Text, { key: key, color: t.number }, n.text);
+        return h(Text, _extends({ key: key }, numberFace), n.text);
       case "path":
         return h(
           Text,
@@ -749,7 +993,18 @@ const flatten = (tokens: (string | PrismToken)[], style: Style, color?: string, 
     return flatten(inner, style, slot ? style.theme[slot] : color, italic || token.type === "comment");
   });
 
-const remember = <K, V>(cache: Map<K, V>, key: K, make: () => V, limit = 200): V => {
+const KEPT_CHARS = 1_000_000;
+const keptTotals = new WeakMap<ReadonlyMap<string, unknown>, { size: number; chars: number }>();
+
+const keptChars = (cache: ReadonlyMap<string, unknown>): number => {
+  const known = keptTotals.get(cache);
+  if (known?.size === cache.size) return known.chars;
+  let chars = 0;
+  for (const key of cache.keys()) chars += key.length;
+  return chars;
+};
+
+const remember = <V>(cache: Map<string, V>, key: string, make: () => V, limit = 200): V => {
   const hit = cache.get(key);
   if (hit !== undefined) {
     cache.delete(key);
@@ -757,12 +1012,18 @@ const remember = <K, V>(cache: Map<K, V>, key: K, make: () => V, limit = 200): V
     return hit;
   }
   const value = make();
+  let chars = keptChars(cache) + (cache.has(key) ? 0 : key.length);
   cache.set(key, value);
-  if (cache.size > limit) cache.delete(cache.keys().next().value as K);
+  for (const old of cache.keys()) {
+    if (cache.size <= limit && (chars <= KEPT_CHARS || old === key)) break;
+    chars -= old.length;
+    cache.delete(old);
+  }
+  keptTotals.set(cache, { size: cache.size, chars });
   return value;
 };
 
-const highlighted = new WeakMap<Theme, Map<string, Segment[][]>>();
+const highlighted = new WeakMap<Theme, Map<string, Segment[][] | null>>();
 
 const grammarFor = (lang: string): Grammar | undefined => {
   const name = lang.toLowerCase();
@@ -775,23 +1036,49 @@ const shownSegment = (seg: Segment, piece: string, style: Style, room?: number):
   text: seg.italic ? piece : shownCode(piece, style, room),
 });
 
-const segmentRows = (style: Style, lines: string[], lang: string, room?: number): Segment[][] | null => {
+const LONG_WORD = 1000;
+
+const hasLongWord = (code: string): boolean => code.split(/[^$\w\xA0-\uFFFF]/).some((word) => word.length > LONG_WORD);
+
+const segmentRows = (
+  style: Style,
+  lines: string[],
+  lang: string,
+  room?: number,
+  shown = lines.length,
+  isOpen = false,
+): Segment[][] | null => {
   const grammar = grammarFor(lang);
   if (!grammar) return null;
-  const code = lines.join("\n");
-  const cache = highlighted.get(style.theme) ?? new Map<string, Segment[][]>();
+  const code = (isOpen ? lines.slice(0, shown) : lines).join("\n");
+  const cache = highlighted.get(style.theme) ?? new Map<string, Segment[][] | null>();
   highlighted.set(style.theme, cache);
-  return remember(cache, `${style.reorder ? style.shape : ""}\0${room ?? ""}\0${lang}\0${code}`, () => {
-    const out: Segment[][] = [[]];
-    for (const seg of flatten(tokenize(code, grammar), style)) {
-      seg.text.split("\n").forEach((piece, i) => {
-        if (i > 0) out.push([]);
-        if (piece) out[out.length - 1].push(shownSegment(seg, piece, style, room));
-      });
-    }
-    return out;
-  });
+  return remember(cache, `${style.reorder ? style.shape : ""}\0${room ?? ""}\0${lang}\0${shown}\0${code}`, () =>
+    hasLongWord(code) ? null : tokenRows(style, code, grammar, shown, room),
+  );
 };
+
+const tokenRows = (style: Style, code: string, grammar: Grammar, shown: number, room?: number): Segment[][] => {
+  const out: Segment[][] = [[]];
+  for (const seg of flatten(tokenize(code, grammar), style)) {
+    for (const [i, piece] of seg.text.split("\n").entries()) {
+      if (i > 0 && out.push([]) > shown) return keptRows(style, out.slice(0, shown));
+      if (piece) out[out.length - 1].push(shownSegment(seg, piece, style, room));
+    }
+  }
+  return keptRows(style, out);
+};
+
+const keptRows = (style: Style, rows: Segment[][]): Segment[][] => (style.reorder ? rows : rows.map(mergeRuns));
+
+const mergeRuns = (row: Segment[]): Segment[] =>
+  row.reduce<Segment[]>((runs, seg) => {
+    const last = runs[runs.length - 1];
+    if (last && last.color === seg.color && last.italic === seg.italic)
+      runs[runs.length - 1] = { ...last, text: last.text + seg.text };
+    else runs.push(seg);
+    return runs;
+  }, []);
 
 const highlightBlock = (
   { Text }: ElementTable,
@@ -800,8 +1087,10 @@ const highlightBlock = (
   lang: string,
   key: string,
   room?: number,
+  shown?: number,
+  isOpen?: boolean,
 ): RenderElement[] | null => {
-  const rows = segmentRows(style, lines, lang, room);
+  const rows = segmentRows(style, lines, lang, room, shown, isOpen);
   if (!rows) return null;
   return rows.map((row, r) =>
     h(
@@ -815,15 +1104,6 @@ const highlightBlock = (
 };
 
 const gutterOf = (lines: string[], numbered: boolean): number => (numbered ? String(lines.length).length + 2 : 0);
-
-const merged = (pieces: Segment[]): Segment[] =>
-  pieces.reduce<Segment[]>((acc, p) => {
-    const last = acc[acc.length - 1];
-    if (last && last.color === p.color && last.italic === p.italic)
-      acc[acc.length - 1] = { ...last, text: last.text + p.text };
-    else acc.push(p);
-    return acc;
-  }, []);
 
 const TAB = 8;
 
@@ -912,9 +1192,15 @@ const numberedLine = (
   h(el.Text, { key: `${key}.c`, color: style.theme.codeText }, drawCode(el, pieces, `${key}.c`)),
 ];
 
-const heldSegments = (style: Style, lines: string[], lang: string): Segment[][] =>
-  (isShellLang(lang) ? lines.map((line) => shellLine(style, line)) : segmentRows(style, lines, lang)) ??
-  lines.map((text) => (text ? [{ text, italic: false }] : []));
+const heldSegments = (style: Style, lines: string[], lang: string, shown: number, isOpen?: boolean): Segment[][] => {
+  const plain = plainBlock(lang, lines);
+  return (
+    (isShellLang(lang)
+      ? lines.slice(0, shown).map((line) => shellLine(style, line, plain))
+      : segmentRows(style, lines, lang, undefined, shown, isOpen)) ??
+    lines.slice(0, shown).map((text) => (text ? [{ text, italic: false }] : []))
+  );
+};
 
 const heldCode = (
   el: ElementTable,
@@ -925,24 +1211,44 @@ const heldCode = (
   gutter: number,
   room: number,
   key: string,
+  isOpen?: boolean,
 ): RenderElement[] =>
-  heldSegments(style, lines, lang)
-    .slice(0, shown)
-    .flatMap((segs, i) =>
-      visualRows(tabbed(merged(segs)), room).map((part, k) =>
-        h(
-          el.Box,
-          { key: `${key}.h${i}.${k}`, flexDirection: "row" },
-          numberedLine(
-            el,
-            style,
-            `  ${gutter ? (k ? " ".repeat(gutter + 2) : `${String(i + 1).padStart(gutter)}  `) : ""}`,
-            part,
-            `${key}.h${i}.${k}`,
-          ),
+  heldSegments(style, lines, lang, shown, isOpen).flatMap((segs, i) =>
+    visualRows(tabbed(mergeRuns(segs)), room).map((part, k) =>
+      h(
+        el.Box,
+        { key: `${key}.h${i}.${k}`, flexDirection: "row" },
+        numberedLine(
+          el,
+          style,
+          `  ${gutter ? (k ? " ".repeat(gutter + 2) : `${String(i + 1).padStart(gutter)}  `) : ""}`,
+          part,
+          `${key}.h${i}.${k}`,
         ),
       ),
-    );
+    ),
+  );
+
+const figureFallbackLines = (block: BlockOf<"code">): string[] =>
+  isFigureLang(block.lang) ? block.lines.map(figureText) : block.lines;
+
+const linkedLine = (
+  { Text, Link }: ElementTable,
+  style: Style,
+  line: string,
+  links: readonly CodeLink[],
+  key: string,
+): RenderElement => {
+  const pieces: RenderNode[] = [];
+  let at = 0;
+  links.forEach(({ start, end, href }, i) => {
+    if (start > at) pieces.push(line.slice(at, start));
+    pieces.push(h(Link, { key: `l${i}`, href, label: line.slice(start, end) }));
+    at = end;
+  });
+  if (at < line.length) pieces.push(line.slice(at));
+  return h(Text, { key: key, color: style.theme.codeText }, pieces);
+};
 
 const codeRows = (
   el: ElementTable,
@@ -953,10 +1259,27 @@ const codeRows = (
   _numbered: boolean,
   room: number,
   key: string,
+  isOpen?: boolean,
+  links?: readonly (readonly CodeLink[] | undefined)[],
 ): RenderElement[] => {
+  const plain = plainBlock(lang, lines);
+  const draw = (line: string, i: number): RenderElement => {
+    const found = links?.[i];
+    return found
+      ? linkedLine(el, style, line, found, `${key}.${i}`)
+      : codeLine(el, style, line, lang, `${key}.${i}`, room, plain);
+  };
+  if (style.shape === "engine" && !plain && !isShellLang(lang) && Object.keys(grammarFor(lang) ?? {}).length === 0) {
+    return lines.slice(0, shown).map((line, i) => {
+      const text = BOX_DRAWING.test(line) ? null : engineProse(line);
+      return text === null
+        ? h(el.Text, _extends({ key: `${key}.ltr${i}` }, heldLtr(style)), draw(line, i))
+        : h(el.Text, { key: `${key}.${i}`, color: style.theme.codeText }, text);
+    });
+  }
   const rows =
-    (isShellLang(lang) ? null : highlightBlock(el, style, lines, lang, key, room))?.slice(0, shown) ??
-    lines.slice(0, shown).map((line, i) => codeLine(el, style, line, lang, `${key}.${i}`, room));
+    (isShellLang(lang) || links ? null : highlightBlock(el, style, lines, lang, key, room, shown, isOpen)) ??
+    lines.slice(0, shown).map(draw);
   return style.shape === "engine"
     ? rows.map((row, i) => h(el.Text, _extends({ key: `${key}.ltr${i}` }, heldLtr(style)), row))
     : rows;
@@ -995,6 +1318,9 @@ const isShellLang = (lang: string): boolean =>
 
 const BOX_DRAWING = /[\u2500-\u257F]/;
 
+const plainBlock = (lang: string, lines: readonly string[]): boolean =>
+  lang === "" && lines.some((line) => BOX_DRAWING.test(line));
+
 const SHELL_COMMENT = /^\s*#/;
 
 const codeLine = (
@@ -1004,11 +1330,12 @@ const codeLine = (
   lang: string,
   key: string,
   room?: number,
+  plain = false,
 ): RenderElement => {
   const { Text } = el;
   const t = style.theme;
   const isShell = isShellLang(lang);
-  if (BOX_DRAWING.test(line)) return h(Text, { key: key, color: t.codeText }, line);
+  if (plain || BOX_DRAWING.test(line)) return h(Text, { key: key, color: t.codeText }, line || " ");
   const comment = style.reorder ? commentTail(line, style.shape) : null;
   if (comment) {
     return h(
@@ -1027,9 +1354,9 @@ const codeLine = (
   );
 };
 
-const shellLine = (style: Style, line: string): Segment[] => {
+const shellLine = (style: Style, line: string, plain = false): Segment[] => {
   if (!line) return [];
-  if (BOX_DRAWING.test(line)) return [{ text: line, color: style.theme.codeText, italic: false }];
+  if (plain || BOX_DRAWING.test(line)) return [{ text: line, color: style.theme.codeText, italic: false }];
   if (SHELL_COMMENT.test(line)) return [{ text: line, color: style.theme.codeComment, italic: false }];
   return shellSegments(style, line);
 };
@@ -1067,41 +1394,252 @@ const isRtlTable = (style: Style, block: BlockOf<"table">): boolean =>
 
 const ART_WIDTH = 100;
 
-const tableSize = (block: BlockOf<"table">): { natural: number[]; words: number[] } => {
-  const cells = [block.header, ...block.rows].map((r) => block.header.map((_, c) => displayText(r[c] ?? [])));
+const cellText = (style: Style) => (style.hyperlinks ? inlineText : displayText);
+
+const tableSize = (block: BlockOf<"table">, shown: (cell: Inline[]) => string = displayText) => {
+  const rows = [block.header, ...block.rows].map((r) => block.header.map((_, c) => shown(r[c] ?? [])));
   const column = (measure: (text: string) => number) =>
-    block.header.map((_, c) => Math.max(...cells.map((r) => measure(r[c]))));
+    block.header.map((_, c) => Math.max(...rows.map((r) => measure(r[c]))));
   return { natural: column(widestLine), words: column(longestWord) };
 };
 
-const tableGrid = (block: BlockOf<"table">): string => {
-  const cells = [block.header, ...block.rows].map((r) => block.header.map((_, c) => displayText(r[c] ?? [])));
-  const { natural, words } = tableSize(block);
-  const widths = columnWidths(natural, ART_WIDTH - 4, 3, words);
-  const pad = (text: string, c: number, align: "left" | "right" | "center") => {
-    const room = Math.max(0, widths[c] - width(text));
-    const left = align === "right" ? room : align === "center" ? Math.floor(room / 2) : 0;
-    return " ".repeat(left) + text + " ".repeat(room - left);
-  };
-  const line = (l: string, m: string, r: string) => l + widths.map((w) => "─".repeat(w + 2)).join(m) + r;
-  const row = (r: string[], header: boolean) => {
-    const lines = r.map((text, c) => wrapRanges(text, widths[c]).map(([a, b]) => text.slice(a, b)));
-    return Array.from(
-      { length: Math.max(...lines.map((l) => l.length)) },
-      (_, i) =>
-        `│ ${lines.map((l, c) => pad(l[i] ?? "", c, header ? "center" : (block.align[c] ?? "left"))).join(" │ ")} │`,
-    );
-  };
-  const art = [
-    line("┌", "┬", "┐"),
-    ...row(cells[0], true),
-    ...cells.slice(1).flatMap((r) => [line("├", "┼", "┤"), ...row(r, false)]),
-    line("└", "┴", "┘"),
-  ];
-  return art.join("\n");
+type Face = Ink;
+
+const own = (face: Face): Face => ({
+  ...(face.color !== undefined ? { color: face.color } : {}),
+  ...(face.bold !== undefined ? { bold: face.bold } : {}),
+  ...(face.italic !== undefined ? { italic: face.italic } : {}),
+  ...(face.dim !== undefined ? { dim: face.dim } : {}),
+});
+
+const numberPaint = (face: Face, header: boolean, t: Theme): { color?: string } =>
+  header || face.color === undefined ? { color: t.number } : {};
+
+const INLINE_FACE: Partial<Record<Inline["kind"], (t: Theme) => Face>> = {
+  strong: (t) => ({ color: t.strong, bold: true }),
+  emphasis: (t) => ({ color: t.emphasis, italic: true }),
+  math: (t) => ({ color: t.emphasis, italic: true }),
+  code: (t) => ({ color: t.inlineCode }),
+  link: (t) => ({ color: t.link }),
+  image: (t) => ({ color: t.link }),
+  number: (t) => ({ color: t.number }),
+  path: (t) => ({ color: t.path }),
+  footnote: (t) => ({ color: t.accent }),
 };
 
+const cellInks = (t: Theme, nodes: Inline[], face: Face): Ink[] =>
+  nodes.flatMap((n) => {
+    const inner: Face = { ...face, ...own(INLINE_FACE[n.kind]?.(t) ?? {}) };
+    return "children" in n
+      ? cellInks(t, n.children, inner)
+      : Array.from({ length: displayText([n]).length }, (): Ink => inner);
+  });
+
+const blank = (n: number): Ink[] => Array.from({ length: n }, (): Ink => ({}));
+
+const glyphInks = (piece: string, from: number, paint: Ink[]): Ink[] => {
+  let at = from;
+  return graphemes(piece).flatMap((g) => {
+    const ink = paint[at] ?? {};
+    at += g.length;
+    return cells(g).map(() => ink);
+  });
+};
+
+const placed = (piece: string, w: number, align: TableAlign) => {
+  const room = Math.max(0, w - width(piece));
+  const left = align === "right" ? room : align === "center" ? Math.floor(room / 2) : 0;
+  return { left, right: room - left };
+};
+
+const tablePicture = (block: BlockOf<"table">, screen: boolean, t: Theme = {}): { text: string; inks: Ink[][] } => {
+  const rows = [block.header, ...block.rows].map((r) => block.header.map((_, c) => r[c] ?? []));
+  const texts = rows.map((r) => r.map(displayText));
+  const { natural, words } = tableSize(block);
+  const widths = columnWidths(natural, ART_WIDTH - 4, 3, words);
+  const rule: Ink = own({ color: t.tableRule, dim: !t.tableRule || undefined });
+  const header: Ink = own({ color: t.tableHeader, bold: screen || undefined });
+  const lines: string[] = [];
+  const inks: Ink[][] = [];
+  const line = (l: string, m: string, r: string, fill = "─") => {
+    const text = l + widths.map((w) => fill.repeat(w + 2)).join(m) + r;
+    lines.push(text);
+    inks.push(cells(text).map(() => rule));
+  };
+  const alignOf = (i: number, c: number): TableAlign => (i === 0 && !screen ? "center" : (block.align[c] ?? "left"));
+  const paintOf = (i: number, c: number): Ink[] =>
+    i === 0 ? Array.from({ length: texts[i][c].length }, (): Ink => header) : cellInks(t, rows[i][c], {});
+  const row = (i: number) => {
+    const paints = texts[i].map((_, c) => paintOf(i, c));
+    const pieces = texts[i].map((text, c) => wrapRanges(text, widths[c]));
+    for (let k = 0; k < Math.max(...pieces.map((p) => p.length)); k++) {
+      const parts = pieces.map((p, c) => {
+        const [a, b] = p[k] ?? [0, 0];
+        const piece = texts[i][c].slice(a, b);
+        const { left, right } = placed(piece, widths[c], alignOf(i, c));
+        return {
+          text: ` ${" ".repeat(left)}${piece}${" ".repeat(right)} │`,
+          ink: [...blank(left + 1), ...glyphInks(piece, a, paints[c]), ...blank(right + 1), rule],
+        };
+      });
+      lines.push(`│${parts.map((part) => part.text).join("")}`);
+      inks.push([rule, ...parts.flatMap((part) => part.ink)]);
+    }
+  };
+  line("┌", "┬", "┐");
+  row(0);
+  for (let i = 1; i < rows.length; i++) {
+    if (i === 1 && screen) line("╞", "╪", "╡", "═");
+    else line("├", "┼", "┤");
+    row(i);
+  }
+  line("└", "┴", "┘");
+  return { text: lines.join("\n"), inks };
+};
+
+const tableGrid = (block: BlockOf<"table">): string => tablePicture(block, false).text;
+
 const tableArt = (block: BlockOf<"table">): string => ["```", tableGrid(block), "```"].join("\n");
+
+const rightToLeft = (block: BlockOf<"table">): BlockOf<"table"> => {
+  const flip = <T>(row: T[], fill: T) => block.header.map((_, c) => row[c] ?? fill).reverse();
+  return {
+    ...block,
+    header: flip(block.header, []),
+    rows: block.rows.map((row) => flip(row, [])),
+    align: flip(block.align, "left"),
+  };
+};
+
+const tableArts = (block: BlockOf<"table">, t: Theme, rtl: boolean) => {
+  let picture: { text: string; inks: Ink[][] } | undefined;
+  const drawn = () => (picture ??= tablePicture(rtl ? rightToLeft(block) : block, true, t));
+  return {
+    art: () => tableArt(rtl ? rightToLeft(block) : block),
+    grid: () => drawn().text,
+    hues: () => drawn().inks,
+  };
+};
+
+const artsOf = (
+  drawn: DrawnBlock | undefined,
+  block: Block,
+  t: Theme,
+  rtl: boolean,
+): { art?: string | (() => string); grid?: string | (() => string); hues?: () => Hues } =>
+  drawn?.art !== undefined
+    ? { art: drawn.art, grid: drawn.art, hues: drawn.hues }
+    : block.kind === "table"
+      ? tableArts(block, t, rtl)
+      : {};
+
+const columnRoom = (box: boolean, columns: number): number => (box ? columns - 4 : columns);
+
+const tableMinimums = (natural: number[], words: number[]): number[] =>
+  natural.map((w, c) => Math.min(w, Math.max(1, words[c] ?? 1)));
+
+const textsOf = (style: Style, block: TableBlock): boolean =>
+  style.reorder && style.shape === "inverse" && isRtlTable(style, block);
+
+const tablePlan = (block: TableBlock, style: Style, columns: number, texts: boolean) => {
+  const box = style.tableStyle === "box";
+  const gap = box ? 0 : style.tableStyle === "grid" ? 3 : 2;
+  const sizingGap = box || style.tableStyle === "grid" ? 3 : 2;
+  const { natural, words } = tableSize(block, cellText(style));
+  const room = columnRoom(box, columns);
+  const minimum = tableMinimums(natural, words);
+  const spread = minimum.reduce((a, b) => a + b, sizingGap * Math.max(0, minimum.length - 1));
+  if (
+    natural.length > 0 &&
+    !texts &&
+    (style.tableLayout === "stacked" || (style.tableLayout === "auto" && spread > room))
+  ) {
+    return { stack: true, box, gap, natural, words, widths: [] as number[] };
+  }
+  const widths =
+    style.tableLayout === "compact"
+      ? columnWidths(natural, Math.min(room, spread), sizingGap, words)
+      : columnWidths(natural, room, sizingGap, words);
+  return { stack: false, box, gap, natural, words, widths };
+};
+
+const stackedPlan = (header: TableCell[], columns: number) => {
+  const widest = header.reduce((a, cell) => Math.max(a, width(displayText(cell))), 0);
+  const labelW = Math.min(Math.max(widest, 1), Math.max(1, Math.floor(columns / 3)));
+  return { labelW, room: Math.max(1, columns - labelW - 1) };
+};
+
+const stackedHeight = (block: TableBlock, columns: number): number => {
+  const { labelW, room } = stackedPlan(block.header, columns);
+  const pair = (cells: TableCell[]) =>
+    Math.max(
+      1,
+      ...block.header.map((hdr, c) =>
+        Math.max(textRows(displayText(hdr), labelW), textRows(displayText(cells[c] ?? []), room)),
+      ),
+    );
+  return Math.max(
+    1,
+    block.rows.reduce((sum, r) => sum + pair(r), Math.max(0, block.rows.length - 1)),
+  );
+};
+
+const padTo = (runs: Inline[], w: number): Inline[] => [
+  ...runs,
+  { kind: "text", text: " ".repeat(Math.max(0, w - width(inlineText(runs)))) },
+];
+
+const stackedTable = (
+  el: ElementTable,
+  style: Style,
+  block: TableBlock,
+  columns: number,
+  key: string,
+  tip?: Tip,
+): RenderElement => {
+  const { Box, Text } = el;
+  const t = style.theme;
+  const { labelW, room } = stackedPlan(block.header, columns);
+  const separators = style.tableStyle !== "minimal" && block.rows.length > 0;
+  const label = (labels: Inline[][], i: number): RenderElement =>
+    h(
+      Text,
+      { bold: true, color: t.tableHeader },
+      labels[i] ? inlineText(padTo(labels[i], labelW)) : " ".repeat(labelW),
+    );
+  const separator = (i: number): RenderElement =>
+    h(Text, { key: `${key}.s${i}`, color: t.tableRule, dimColor: !t.tableRule }, "─".repeat(columns));
+  const pairLine = (labels: Inline[][], values: Inline[][], c: number, i: number, k: string): RenderElement =>
+    h(
+      Box,
+      { key: `${k}.${c}.${i}`, flexDirection: "row" },
+      label(labels, i),
+      h(
+        Text,
+        null,
+        " ",
+        values[i]
+          ? (pressInline(el, style, values[i], room, `${k}.${c}.v${i}`, tip) ??
+              renderInline(el, style, values[i], `${k}.${c}.v${i}`))
+          : "",
+      ),
+    );
+  const record = (cells: TableCell[], i: number): RenderElement[] => {
+    const k = `${key}.r${i}`;
+    return block.header.flatMap((hdr, c) => {
+      const labels = wrapInline(headerRuns(hdr), labelW);
+      const values = wrapInline(cells[c] ?? [], room);
+      return Array.from({ length: Math.max(1, Math.max(labels.length, values.length)) }, (_, l) =>
+        pairLine(labels, values, c, l, k),
+      );
+    });
+  };
+  const lines: RenderElement[] = block.rows.flatMap((r, i) => [
+    ...record(r, i),
+    ...(separators && i < block.rows.length - 1 ? [separator(i)] : []),
+  ]);
+  return h(Box, { key: key, flexDirection: "column" }, lines);
+};
 
 const clip = ({ Box }: ElementTable, w: number, drawn: RenderNode, key?: string): RenderElement =>
   h(
@@ -1120,6 +1658,23 @@ const tableEdges = (style: Style, block: BlockOf<"table">, rtl: boolean, mirror:
   };
 };
 
+const heavyBetween = (
+  style: Style,
+  buckets: (Bucket | undefined)[],
+  group: Group | undefined,
+  groupOption: GroupTable,
+  i: number,
+): boolean => statusHeavy(style.statusMatrix, buckets, i) || groupHeavy(groupOption, group, i);
+
+const treeRuns = (
+  tree: Tree | undefined,
+  style: Style,
+  group: Group | undefined,
+): { option: GroupTable; runs: Group | undefined } => ({
+  option: tree ? (style.treeTable === "full" ? "full" : "merge") : style.groupTable,
+  runs: tree ? { column: 0, starts: tree.starts[0] ?? [], sizes: tree.sizes[0] ?? [] } : group,
+});
+
 const renderTable = (
   el: ElementTable,
   style: Style,
@@ -1131,21 +1686,83 @@ const renderTable = (
 ): RenderElement => {
   const { Box, Text } = el;
   const t = style.theme;
-  const box = style.tableStyle === "box";
-  const gap = box ? 0 : style.tableStyle === "grid" ? 3 : 2;
-  const { natural, words } = tableSize(block);
-  const widths = box ? columnWidths(natural, columns - 4, 3, words) : columnWidths(natural, columns, gap, words);
+  const shape = tableShape(block, style);
+  const base = shape.base;
+  const tree = shape.tree;
+  const heat = shape.heat;
+  const group = groupOf(base, tree ? "off" : style.groupTable, style.statusMatrix === "group");
+  const { option: groupOption, runs } = treeRuns(tree, style, group);
+  if (tablePlan(base, style, columns, textsOf(style, base)).stack)
+    return stackedTable(el, style, base, columns, key, tip);
+  const drawn = group ? { ...shape.block, rows: groupRows(shape.block, group, style.groupTable) } : shape.block;
+  const texts = textsOf(style, drawn);
+  const plan = tablePlan(drawn, style, columns, texts);
+  if (plan.stack) return stackedTable(el, style, base, columns, key, tip);
+  const shown = cellText(style);
+  const status = statusOf(base, style.statusMatrix, false);
+  const layout = statusRows(drawn, status, style.statusMatrix);
+  const { natural, widths, box, gap } = plan;
+  const test = testReport(el, t, base, style.testMatrix, `${key}.t`);
+  const foot = test ? undefined : statusFooter(el, t, status, style.statusMatrix, `${key}.f`);
+  const bench = benchOf(base, style.benchTable);
+  const spark = benchSpark(el, t, base, bench, style.benchTable, `${key}.s`);
+  const schema = schemaOf(base, style.schemaTable);
+  const api = apiOf(base, style.apiTable);
+  const compare = compareOf(base, style.compareTable);
+  const kv = kvOf(base, style.kvTable);
+  const rowAt = compare || kv || group || tree || heat ? new Map(drawn.rows.map((cells, r) => [cells, r])) : undefined;
+  const look =
+    (at: number | undefined) =>
+    (c: number, cell: TableCell, plain: { color?: string } = {}) =>
+      treeLook(
+        t,
+        tree,
+        at,
+        c,
+        groupLook(
+          t,
+          group,
+          at,
+          c,
+          statusLook(
+            t,
+            status,
+            c,
+            cell,
+            benchLook(
+              t,
+              bench,
+              c,
+              cell,
+              schemaLook(
+                t,
+                schema,
+                c,
+                cell,
+                compareLook(
+                  t,
+                  compare,
+                  at,
+                  c,
+                  cell,
+                  apiLook(t, api, c, cell, kvLook(t, kv, at, c, cell, heatLook(t, heat, at, c, plain))),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
   const order = natural.map((_, c) => c);
   const mirror = rtl && mirrored(style);
   const flip = rtl && !mirror;
-  const { opening, wall, held, marked } = tableEdges(style, block, rtl, mirror);
+  const { opening, wall, held, marked } = tableEdges(style, base, rtl, mirror);
   if (flip) order.reverse();
   const lead = (k: string) => (opening ? h(Text, { key: `${k}.m`, color: t.rule }, opening) : null);
   const columnGap = held ? 0 : gap;
   const spacer = (k: string) => (held ? h(Text, { key: k }, LTR_BLANK + " ".repeat(gap - 1)) : null);
   const ruleChar = style.tableStyle === "grid" ? "━" : "─";
   const justify = (c: number) =>
-    block.align[c] === "right" ? "flex-end" : block.align[c] === "center" ? "center" : "flex-start";
+    base.align[c] === "right" ? "flex-end" : base.align[c] === "center" ? "center" : "flex-start";
 
   const rule = (k: string, heavy: boolean) =>
     h(
@@ -1180,7 +1797,7 @@ const renderTable = (
       const cell = flowOf({ ...style, shape: "visual" }, cells[c] ?? [], Infinity);
       const content = cell ? cell.lines[0] : (cells[c] ?? []);
       const pad = Math.max(0, widths[c] - width(inlineText(content)));
-      const side = cell?.base === "R" && block.align[c] !== "center" ? "flex-end" : justify(c);
+      const side = cell?.base === "R" && base.align[c] !== "center" ? "flex-end" : justify(c);
       const before = side === "flex-end" ? pad : side === "center" ? Math.floor(pad / 2) : 0;
       parts.push(
         { kind: "text", text: " ".repeat(before) },
@@ -1192,8 +1809,8 @@ const renderTable = (
     return h(Text, { key: k }, renderInline(el, style, terminalLine(parts), k));
   };
 
-  const row = (cells: Inline[][], k: string, isHeader: boolean, border = bar): RenderElement =>
-    rtl && style.shape === "inverse"
+  const row = (cells: Inline[][], k: string, isHeader: boolean, border = bar, at?: number): RenderElement =>
+    texts
       ? terminalRow(cells, k, isHeader)
       : h(
           Box,
@@ -1205,26 +1822,19 @@ const renderTable = (
             const cell = cellFlow(style, cells[c] ?? [], held, marked);
             const content = cell ? cell.lines[0] : (cells[c] ?? []);
             const side = mirror
-              ? block.align[c] === "center"
+              ? base.align[c] === "center"
                 ? "center"
                 : "flex-start"
-              : cell?.base === "R" && block.align[c] !== "center"
+              : cell?.base === "R" && base.align[c] !== "center"
                 ? "flex-end"
                 : justify(c);
             const runs = isHeader ? headerRuns(content) : content;
+            const face = isHeader ? { bold: true, color: t.tableHeader } : look(at)(c, cells[c] ?? [], {});
+            const numberFace = numberPaint(face, isHeader, t);
             const cellBox = h(
               Box,
               { key: `${k}.${c}`, width: w, flexShrink: 0, justifyContent: side },
-              pressInline(
-                el,
-                style,
-                runs,
-                w,
-                `${k}.${c}.p`,
-                tip,
-                isHeader ? { bold: true, color: t.tableHeader } : {},
-                { justifyContent: side },
-              ) ??
+              pressInline(el, style, runs, w, `${k}.${c}.p`, tip, face, { justifyContent: side }) ??
                 (isHeader
                   ? h(
                       Text,
@@ -1235,7 +1845,7 @@ const renderTable = (
                     )
                   : mirror && inlineText(content).trim() === ""
                     ? h(Text, null, " ".repeat(w))
-                    : h(Text, null, renderInline(el, style, content, `${k}.${c}`))),
+                    : h(Text, face, renderInline(el, style, content, `${k}.${c}`, numberFace))),
             );
 
             return [i > 0 && (box ? border(`${k}.${c}s`, wall(" │ ")) : spacer(`${k}.${c}g`)), cellBox];
@@ -1243,15 +1853,10 @@ const renderTable = (
           box && border(`${k}.r`, wall(" │")),
         );
 
-  const wrappedRow = (cells: Inline[][], k: string, isHeader: boolean): RenderElement[] => {
+  const wrappedRow = (cells: Inline[][], k: string, isHeader: boolean, at?: number): RenderElement[] => {
     if (!isHeader && cells.some(hasLink))
       return [
-        row(
-          cells,
-          k,
-          isHeader,
-          clipped(Math.max(1, ...widths.map((w, c) => mostLines(displayText(cells[c] ?? []), w)))),
-        ),
+        row(cells, k, isHeader, clipped(Math.max(1, ...widths.map((w, c) => mostLines(shown(cells[c] ?? []), w)))), at),
       ];
     const wrapped = widths.map((w, c) => {
       const content = cells[c] ?? [];
@@ -1263,26 +1868,59 @@ const renderTable = (
         wrapped.map((l) => l[i] ?? []),
         `${k}.${i}`,
         isHeader,
+        undefined,
+        at,
       ),
     );
   };
 
   if (box) {
-    const lines = [edge(`${key}.t`, "┌─┬┐"), ...wrappedRow(block.header, `${key}.h`, true), edge(`${key}.hr`, "╞═╪╡")];
-    block.rows.forEach((r, i) => {
-      if (i > 0) lines.push(edge(`${key}.r${i}r`, "├─┼┤"));
-      lines.push(...wrappedRow(r, `${key}.r${i}`, false));
+    const lines: (RenderElement | undefined)[] = [
+      edge(`${key}.t`, "┌─┬┐"),
+      ...wrappedRow(drawn.header, `${key}.h`, true),
+      edge(`${key}.hr`, "╞═╪╡"),
+    ];
+    layout.rows.forEach((r, i) => {
+      if (i > 0)
+        lines.push(
+          edge(
+            `${key}.r${i}r`,
+            groupEdge(
+              groupOption,
+              runs,
+              i,
+              statusEdge(style.statusMatrix, layout.buckets, i - 1, "├─┼┤", "╞═╪╡"),
+              "╞═╪╡",
+            ),
+          ),
+        );
+      lines.push(...wrappedRow(r, `${key}.r${i}`, false, rowAt?.get(r)));
     });
     lines.push(edge(`${key}.b`, "└─┴┘"));
-    return h(Box, _extends({ key: key, flexDirection: "column" }, flip ? { alignSelf: "flex-end" } : {}), lines);
+    return h(
+      Box,
+      _extends({ key: key, flexDirection: "column" }, flip ? { alignSelf: "flex-end" } : {}),
+      lines,
+      foot,
+      test,
+      spark,
+    );
   }
 
-  const body = [row(block.header, `${key}.h`, true), rule(`${key}.hr`, true)];
-  block.rows.forEach((r, i) => {
-    body.push(row(r, `${key}.r${i}`, false));
-    if (style.tableStyle !== "minimal" && i < block.rows.length - 1) body.push(rule(`${key}.r${i}r`, false));
+  const body: (RenderElement | undefined)[] = [row(drawn.header, `${key}.h`, true), rule(`${key}.hr`, true)];
+  layout.rows.forEach((r, i) => {
+    body.push(row(r, `${key}.r${i}`, false, undefined, rowAt?.get(r)));
+    if (style.tableStyle !== "minimal" && i < layout.rows.length - 1)
+      body.push(rule(`${key}.r${i}r`, heavyBetween(style, layout.buckets, runs, groupOption, i)));
   });
-  return h(Box, _extends({ key: key, flexDirection: "column" }, flip ? { alignSelf: "flex-end" } : {}), body);
+  return h(
+    Box,
+    _extends({ key: key, flexDirection: "column" }, flip ? { alignSelf: "flex-end" } : {}),
+    body,
+    foot,
+    test,
+    spark,
+  );
 };
 
 const renderHeading = (el: ElementTable, style: Style, block: BlockOf<"heading">, key: string): RenderElement => {
@@ -1412,7 +2050,7 @@ const renderNested = (
     blocks,
     columns,
     drawMath(el, style, blocks),
-    copy && ((text, id, label, html) => copy(text, `${key}.${id}`, label, html)),
+    copy && ((text, id, label, rich, hues) => copy(text, `${key}.${id}`, label, rich, hues)),
     fold && ((id, hidden, k) => fold(id, hidden, `${key}.${k}`)),
     tip,
   );
@@ -1435,7 +2073,7 @@ const renderQuote = (
   const { Box } = el;
   const t = style.theme;
   const inner = columns - 2;
-  const lines = heightOf(block.blocks, inner);
+  const lines = heightOf(block.blocks, inner, style);
   const body = h(
     Box,
     { flexDirection: "column", rowGap: 1 },
@@ -1480,7 +2118,7 @@ const renderAlert = (
       )
     : null;
   if (hebrew && mirrored(style)) {
-    const lines = 1 + (block.blocks.length ? 1 + heightOf(block.blocks, inner) : 0);
+    const lines = 1 + (block.blocks.length ? 1 + heightOf(block.blocks, inner, style) : 0);
     const edge = (k: string) => h(Text, { key: k, color: color }, WALL + "─".repeat(inner + 2) + WALL);
     return h(
       Box,
@@ -1663,7 +2301,8 @@ const renderList = (
         h(Text, { color: t.bullet, dimColor: true }, "─".repeat(20 - filled)),
         h(Text, { color: t.bullet }, ` ${done}/${tasks.length} done`),
       ),
-    block.items.map((item, i) => {
+    block.items.map((full, i) => {
+      const item = { ...full, depth: Math.min(full.depth, Math.floor(columns / 4)) };
       const k = `${key}.${i}`;
       const glyph =
         item.task !== undefined
@@ -1711,8 +2350,15 @@ const noteTip = (blocks: Block[], toast: (text: string) => void): Tip | undefine
 };
 
 const NUMBER_AT = 10;
+const NUMBER_MAX = 400;
+const CODE_MAX = 400;
 const FOLD_AT = 30;
 const FOLD_SHOW = 20;
+
+const codeRest = ({ Text }: ElementTable, total: number, shown: number, key: string): RenderElement[] =>
+  shown === CODE_MAX && total > shown
+    ? [h(Text, { key: `${key}.rest`, dimColor: true }, `… +${total - shown} lines`)]
+    : [];
 
 const codeId = (lines: string[]): string => {
   let h = 5381;
@@ -1721,6 +2367,11 @@ const codeId = (lines: string[]): string => {
     h = (h * 33 + 10) | 0;
   }
   return `${lines.length}:${(h >>> 0).toString(36)}`;
+};
+
+const unquoted = (block: BlockOf<"quote" | "alert">): string[] => {
+  const lines = block.raw.split("\n").map((line) => line.replace(/^\s*>\s?/, ""));
+  return block.kind === "alert" ? lines.filter((line, i) => i > 0 || !/^\s*\[![A-Za-z]+\]\s*$/.test(line)) : lines;
 };
 
 const copySource = (style: Style, block: Block): string | undefined =>
@@ -1733,24 +2384,23 @@ const copySource = (style: Style, block: Block): string | undefined =>
         : block.kind === "list"
           ? block.raw
           : block.kind === "quote" || block.kind === "alert"
-            ? block.raw
-                .split("\n")
-                .map((line) => line.replace(/^\s*>\s?/, ""))
-                .join("\n")
+            ? unquoted(block).join("\n")
             : undefined;
 
 const drawMath = (el: ElementTable, style: Style, blocks: Block[], drawn: Drawn = new Map()): Drawn => {
   for (const [i, block] of blocks.entries()) {
     const tex = drawn.has(i) ? null : mathOf(block);
-    const text = tex === null ? null : texText(tex);
-    if (text && !text.includes("\\"))
-      drawn.set(i, {
-        element: h(
-          el.Box,
-          { key: `b${i}`, paddingLeft: 2 },
-          h(el.Text, { italic: true, color: style.theme.emphasis }, text),
-        ),
-      });
+    const text = tex === null || !texParses(tex) ? null : texText(tex);
+    if (!text || text.includes("\\")) continue;
+    const look = { italic: true, color: style.theme.emphasis };
+    const rtl = flowOf(style, [{ kind: "text", text }], Infinity);
+    drawn.set(i, {
+      element: h(
+        el.Box,
+        { key: `b${i}`, paddingLeft: 2 },
+        rtl ? renderFlow(el, style, rtl.lines, `b${i}.m`, look) : h(el.Text, look, text),
+      ),
+    });
   }
   return drawn;
 };
@@ -1823,11 +2473,13 @@ const renderBlocks = (
       const shown = buttonText(button);
       return shown === undefined ? w : w + (w ? 1 : 0) + width(shown);
     }, 0);
-  const fitted = (parts: (RenderElement | null | undefined)[]) =>
-    parts.reduce<RenderElement[]>(
-      (kept, part) => (part && (!kept.length || reserved([...kept, part]) <= columns) ? [...kept, part] : kept),
-      [],
-    );
+  const fitted = (parts: (RenderElement | null | undefined)[]): RenderElement[] => {
+    const kept: RenderElement[] = [];
+    for (const part of parts) {
+      if (part && (!kept.length || reserved([...kept, part]) <= columns)) kept.push(part);
+    }
+    return kept;
+  };
   const scopeOf = (button: RenderElement) => `copy:${style.noteKey ?? ""}:${keyOf(button)}`;
   const floating = (kept: RenderElement[], low = false, start = false): Floating => {
     const scope = scopeOf(kept[0]);
@@ -1853,10 +2505,8 @@ const renderBlocks = (
   const buttons = blocks.map((block, b): CopyRow => {
     const text = hover && holdsOnlyEmptyCode(block) ? undefined : copySource(style, block);
     const isPlainCode = block.kind === "code" && !drawn.get(b)?.element;
-    const drawnArt = drawn.get(b)?.art;
-    const art = drawnArt ?? (block.kind === "table" ? () => tableArt(block) : undefined);
-    const grid = drawnArt ?? (block.kind === "table" ? () => tableGrid(block) : undefined);
     const bitmap = drawn.get(b)?.png;
+    const { art, grid, hues } = bitmap === undefined ? artsOf(drawn.get(b), block, style.theme, rtlTables[b]) : {};
     const first =
       text === undefined || isPlainCode
         ? null
@@ -1868,15 +2518,15 @@ const renderBlocks = (
     if (!first) return { first, more: [] };
     const more = [
       art !== undefined ? copy?.(art, `art${b}`, "⧉ art") : null,
-      block.kind === "table"
+      block.kind === "table" && bitmap === undefined
         ? copy?.(
             () => tableText(block),
             `html${b}`,
             "⧉ html",
-            () => tableHtml(block),
+            () => tableHtml(block, rtlTables[b]),
           )
         : null,
-      grid !== undefined ? copy?.(grid, `png${b}`, "▣ png", "png") : null,
+      grid !== undefined ? copy?.(grid, `png${b}`, "▣ png", "png", hues) : null,
       ...(bitmap === undefined ? [] : (picture?.(bitmap, b) ?? [])),
     ].filter(Boolean);
     return { first, more };
@@ -1906,16 +2556,19 @@ const renderBlocks = (
         const done = drawn.get(b)?.element;
         if (done) return done;
         const note = drawn.get(b)?.note;
-        const lines = block.lines;
+        const lines = figureFallbackLines(block);
         const toggle = lines.length > FOLD_AT ? fold?.(codeId(lines), lines.length - FOLD_SHOW, `fold${b}`) : null;
-        const shown = toggle?.folded ? FOLD_SHOW : lines.length;
-        const numbered = lines.length >= NUMBER_AT;
+        const shownCount = toggle?.folded ? FOLD_SHOW : Math.min(lines.length, CODE_MAX);
+        const numbered = lines.length >= NUMBER_AT && lines.length <= NUMBER_MAX;
         const room = columns - 2 - gutterOf(lines, numbered);
         const gutter = numbered ? String(lines.length).length : 0;
         const held = mirrored(style) && lines.some((line) => hasRtl(line) && (!opensLatin(line) || width(line) > room));
-        const rows = held
-          ? heldCode(el, style, lines, shown, block.lang, gutter, room, key)
-          : codeRows(el, style, lines, shown, block.lang, numbered, room, key);
+        const rows = [
+          ...(held
+            ? heldCode(el, style, lines, shownCount, block.lang, gutter, room, key, block.isOpen)
+            : codeRows(el, style, lines, shownCount, block.lang, numbered, room, key, block.isOpen, block.links)),
+          ...codeRest(el, lines.length, shownCount, key),
+        ];
         const button = copy?.(lines.join("\n"), `copy${b}`) ?? null;
         const label = codeLabel(block);
         const head = codeHead(label, button);
@@ -1993,9 +2646,10 @@ const renderBlocks = (
           element,
         );
   });
-  const isFigure = (b: number) => blocks[b]?.kind === "table" || drawn.get(b)?.art !== undefined;
+  const cut = budgetCut(copied);
+  const isFigure = (b: number) => b < cut && (blocks[b]?.kind === "table" || drawn.get(b)?.art !== undefined);
   const out: RenderElement[] = [];
-  for (let b = 0; b < rendered.length; b++) {
+  for (let b = 0; b < cut; b++) {
     if (!isFigure(b) || !isFigure(b + 1)) {
       out.push(copied[b]);
       continue;
@@ -2010,7 +2664,67 @@ const renderBlocks = (
       ),
     );
   }
-  return out;
+  return [...out, ...restSource(el, blocks.slice(cut), REST_ROOM - textIn(out))];
+};
+
+const NODE_BUDGET = 19800;
+
+const nodesIn = (n: unknown): number => {
+  if (Array.isArray(n)) return n.reduce<number>((sum, c) => sum + nodesIn(c), 0);
+  if (n !== null && typeof n === "object") return 1 + ("children" in n ? nodesIn(n.children) : 0);
+  return typeof n === "string" ? 1 : 0;
+};
+
+const REST_ROOM = 59000;
+
+const TEXT_BUDGET = 90000;
+
+const textIn = (n: unknown): number => {
+  if (Array.isArray(n)) return n.reduce<number>((sum, c) => sum + textIn(c), 0);
+  if (typeof n === "string") return n.length;
+  return n !== null && typeof n === "object" && "children" in n ? textIn(n.children) : 0;
+};
+
+const budgetCut = (elements: RenderElement[]): number => {
+  let left = NODE_BUDGET;
+  let room = TEXT_BUDGET;
+  const cut = elements.findIndex((element) => {
+    left -= nodesIn(element);
+    room -= textIn(element);
+    return left < 0 || room < 0;
+  });
+  return cut < 0 ? elements.length : cut;
+};
+
+const REST_CHUNK = 8000;
+
+const chunks = (text: string): string[] =>
+  text.split("\n").reduce<string[]>((out, line) => {
+    for (let at = 0; at < Math.max(line.length, 1); at += REST_CHUNK) {
+      const piece = line.slice(at, at + REST_CHUNK);
+      const last = out.length - 1;
+      if (at === 0 && last >= 0 && out[last].length + piece.length + 1 <= REST_CHUNK) out[last] += `\n${piece}`;
+      else out.push(piece);
+    }
+    return out;
+  }, []);
+
+const restSource = ({ Text }: ElementTable, rest: Block[], room: number): RenderElement[] => {
+  if (!rest.length) return [];
+  let left = room;
+  const lines = rest
+    .map((block) => block.raw)
+    .join("\n\n")
+    .split("\n");
+  const fit = lines.findIndex((line) => {
+    left -= line.length + 1;
+    return left < 0;
+  });
+  const kept = fit < 0 ? lines : lines.slice(0, fit);
+  const text = kept.length
+    ? chunks(kept.join("\n").trimEnd()).map((chunk, i) => h(Text, { key: `rest${i}`, dimColor: true }, chunk))
+    : [];
+  return fit < 0 ? text : [...text, h(Text, { key: "restMore", dimColor: true }, `… +${lines.length - fit} lines`)];
 };
 
 const formatDuration = (ms: number): string => {
@@ -2033,22 +2747,36 @@ const boxedPrompt = (style: Style): boolean => style.promptStyle === "bubble" ||
 const widePrompt = (style: Style, hebrew: boolean): boolean =>
   style.promptStyle === "wide" || (hebrew && mirrored(style));
 
+const promptMark = (el: ElementTable, style: Style, rtl: boolean, tall: number): RenderElement => {
+  const glyph = style.promptStyle === "bar" ? (rtl ? " ▐" : "▌ ") : rtl ? " ‹" : "› ";
+  return style.promptStyle === "bar" && tall > 1
+    ? quoteBar(el, glyph, style.theme.accent, tall)
+    : h(el.Text, { color: style.theme.accent, bold: true }, glyph);
+};
+
 const renderUserPrompt = (el: ElementTable, style: Style, typed: string, columns: number): RenderElement => {
   const { Box, Text } = el;
   const t = style.theme;
   const color = style.promptStyle === "chevron" ? t.accent : t.heading;
   const rows = typed.split("\n");
-  const lines = rows.map((line) => flowOf(style, [{ kind: "text", text: line }], columns - 4));
+  const marked = rows.map((line) => hyperlinks(parseInline(line, { numbers: false, paths: false }), style));
+  const lines = rows.map((_, i) => flowOf(style, marked[i], columns - 4));
   const hebrew = lines.some((l) => l?.base === "R");
   const rtl = hebrew && !mirrored(style);
   const body = h(
     Box,
     _extends({ flexDirection: "column" }, rtl ? { alignItems: "flex-end" } : {}),
-    rows.map((line, i) => {
+    rows.map((_, i) => {
       const flow = lines[i];
       return flow
         ? renderFlow(el, style, flow.lines, `p${i}`, { color, bold: style.promptStyle === "chevron" })
-        : h(Text, { key: `p${i}`, color: color, bold: style.promptStyle === "chevron" }, line);
+        : h(
+            Text,
+            { key: `p${i}`, color: color, bold: style.promptStyle === "chevron" },
+            marked[i].every((n) => n.kind === "text")
+              ? inlineText(marked[i]) || " "
+              : renderInline(el, style, marked[i], `p${i}`),
+          );
     }),
   );
 
@@ -2062,14 +2790,12 @@ const renderUserPrompt = (el: ElementTable, style: Style, typed: string, columns
       body,
     );
   }
-  const mark = h(
-    Text,
-    { color: t.accent, bold: true },
-    style.promptStyle === "bar" ? (rtl ? " ▐" : "▌ ") : rtl ? " ‹" : "› ",
-  );
+  const room = columns - 2;
+  const tall = marked.reduce((sum, nodes) => sum + textRows(inlineText(nodes), room), 0);
+  const mark = promptMark(el, style, rtl, tall);
   return h(
     Box,
-    _extends({ flexDirection: "row" }, rtl ? { justifyContent: "flex-end" } : {}),
+    _extends({ flexDirection: "row", alignItems: "stretch" }, rtl ? { justifyContent: "flex-end" } : {}),
     rtl ? body : mark,
     rtl ? mark : body,
   );
