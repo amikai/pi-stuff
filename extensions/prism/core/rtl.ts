@@ -11,7 +11,7 @@ export const TERMINALS = {
   vscode: "visual",
   alacritty: "visual",
   "windows-terminal": "engine",
-  "apple-terminal": "logical",
+  "apple-terminal": "inverse",
   kitty: "words",
   iterm: "mirror",
   gnome: "logical",
@@ -27,7 +27,7 @@ type Fmt = {
 };
 type Unit = { ch: string; fmt: Fmt };
 
-const R = /[֐-׿؀-ٟ٪-ۯۺ-ݿࢠ-ࣿיִ-﷿ﹰ-﻿]/;
+const R = /[֐-׿؀-ٟ٪-ۯۺ-ݿࢠ-ࣿיִ-﷿ﹰ-\uFEFF]/;
 const L = /[A-Za-z0-9À-ɏ٠-٩۰-۹]/;
 const LATIN = /[A-Za-zÀ-ɏ]/;
 const MARK = /\p{M}/u;
@@ -357,6 +357,16 @@ const ordered = (line: Unit[], shape: Shape, base: Dir, lead: boolean): Unit[] =
           ? terminalBidi(reorder(line, base))
           : reorder(line, base);
 
+const breakLines = (all: Unit[]): Unit[][] =>
+  all.reduce<Unit[][]>(
+    (rows, u) => {
+      if (u.ch === "\n") rows.push([]);
+      else rows.at(-1)!.push(u);
+      return rows;
+    },
+    [[]],
+  );
+
 export const flow = (
   nodes: Inline[],
   columns: number,
@@ -368,7 +378,10 @@ export const flow = (
   const all = flatten(nodes);
   const base = shape === "mirror" ? "R" : baseOf(all);
   const marked = mark && asWritten(shape) && base === "R" && all.some((u) => bidiClass(u.ch) === "L");
-  const logical = base === "R" ? wrapUnits(all, columns - (marked ? measure(ROW_MARK_TEXT) : 0), measure) : [all];
+  const logical =
+    base === "R"
+      ? breakLines(all).flatMap((line) => wrapUnits(line, columns - (marked ? measure(ROW_MARK_TEXT) : 0), measure))
+      : [all];
   const lines = logical.map((line) => {
     const lead = marked && startsLatin(line);
     const built = rebuild(ordered(line, shape, base, lead));
@@ -562,4 +575,13 @@ export const holdRow = (chars: string[]): Held => (chars.some((ch) => R.test(ch)
 export const led = (chars: string[], held: Held): Held => {
   const blank = chars.some((ch) => R.test(ch)) ? LTR_BLANK : " ";
   return { cells: [blank, blank, ...held.cells], from: [-1, -1, ...held.from] };
+};
+
+export const engineProse = (text: string): string | null => {
+  const line = units(text, { wrap: [], leaf: "text" });
+  return startsLatin(line) || !R.test(text)
+    ? null
+    : forEngine(line, false)
+        .map((u) => u.ch)
+        .join("");
 };

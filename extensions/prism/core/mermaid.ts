@@ -2,20 +2,29 @@ import type { Wake } from "./background.ts";
 import type { ChartArt, Pie, Rgb } from "./charts.ts";
 import { ganttText, pieRgba, pieText, rgbaPng } from "./charts.ts";
 import { drawFigure, isFigureLang } from "./figure.ts";
+import { gitGraphText } from "./gitgraph.ts";
+import { journeyText } from "./journey.ts";
 import { type ElementComponent, type ElementTable, h, type RenderElement } from "./jsx.ts";
+import { kanbanText } from "./kanban.ts";
 import { fillColumns, fitImage, ratexColor } from "./latex.ts";
+import { cells, graphemes, width } from "./layout.ts";
 import type { Block } from "./markdown.ts";
+import { decodeEntities } from "./markdown.ts";
+import { mindmapText } from "./mindmap.ts";
 import type { Picture } from "./pele.ts";
 import { pelePicture } from "./pele.ts";
+import { quadrantText } from "./quadrant.ts";
 import type { Drawn, DrawnBlock } from "./render.ts";
-import { cells, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
+import { heldLtr, mirrored, remember } from "./render.ts";
 import { asIs, hasRtl, holdEngine, holdRow, holdVisual, led } from "./rtl.ts";
-import type { Style, Theme } from "./theme.ts";
+import { ARROW_HUE, BAD_HUE, GOOD_HUE, LINE_HUE, oneLine } from "./textart.ts";
+import type { Ink, Style, Theme } from "./theme.ts";
 import { renderMermaidAscii, setChartSize } from "./vendor/mermaid-text.js";
 
 const _extends = Object.assign;
 
 const MAX_LINES = 80;
+const MAX_CHARS = 8000;
 const PAD = "\uFDD0";
 const textCache = new Map<string, string | null>();
 
@@ -62,7 +71,7 @@ const labelBars = (art: string, source: string): string => {
   ticks.forEach((x, k) => {
     const filled = grid.flatMap((row, r) => (BLOCK.test(row[x] ?? "") ? [r] : []));
     const y = Number(values[k]) < 0 ? (filled.at(-1) ?? base) + 1 : (filled[0] ?? base) - 1;
-    const text = [...values[k]];
+    const text = [...values[k]!];
     const bar = grid[filled[0] ?? -1] ?? [];
     let [left, right] = [x, x];
     while (BLOCK.test(bar[left - 1] ?? "")) left--;
@@ -83,22 +92,25 @@ const labelBars = (art: string, source: string): string => {
 };
 
 const SIDEWAYS = /^(\s*(?:flowchart|graph)[ \t]+)(LR|RL)\b/;
+const LABELED_EDGE = /\|[^|\n]+\||(?<![-.=])(?:--|==|-\.)[ \t]*[^-.=>\s]/;
+const rowsBetween = (source: string) =>
+  /^\s*(?:flowchart|graph)\b/.test(source) && !SIDEWAYS.test(source) && LABELED_EDGE.test(source) ? 3 : 1;
 
 const SUPPORTED =
-  /^(flowchart|graph|statediagram(-v2)?|xychart(-beta)?|sequencediagram|classdiagram|erdiagram|pie|gantt)$/i;
+  /^(flowchart|graph|statediagram(-v2)?|xychart(-beta)?|sequencediagram|classdiagram|erdiagram|pie|gantt|quadrantchart|mindmap|journey|kanban|gitgraph)$/i;
 
 const kindOf = (source: string): string =>
   source
     .replace(/^(\s*%%[^\n]*\n)+/, "")
     .trim()
-    .split(/\s/)[0] ?? "";
+    .split(/[\s:]/)[0] ?? "";
 
 const unsupportedKind = (source: string): string | undefined => {
   const kind = kindOf(source);
   return kind && !SUPPORTED.test(kind) ? kind : undefined;
 };
 
-type Own = (source: string, ascii: boolean, columns: number, pieColors: number) => ChartArt | null;
+type Own = (source: string, ascii: boolean, columns: number, pieColors: number, aspect: number) => ChartArt | null;
 
 const OWN: Partial<Record<string, Own>> = {
   pie: pieText,
@@ -106,6 +118,11 @@ const OWN: Partial<Record<string, Own>> = {
     const text = ganttText(source, ascii, columns);
     return text === null ? null : { text };
   },
+  quadrantchart: quadrantText,
+  mindmap: mindmapText,
+  journey: journeyText,
+  kanban: kanbanText,
+  gitgraph: gitGraphText,
 };
 
 const INLINE_TAG = /<\/?(?:b|i|u|s|em|strong|del|code|small|sub|sup|span|mark)\b[^<>\n]*>/gi;
@@ -126,8 +143,8 @@ const TAG_MARK: Record<string, MarkName> = {
 
 const inlineMarks = (source: string): Marked[] =>
   [...source.matchAll(/<(i|em|b|strong|u|s|del)\b[^<>\n]*>([^<\n]+)<\/\1\s*>/gi)].map((m) => [
-    cells(m[2].trim()),
-    { [TAG_MARK[m[1].toLowerCase()]]: true },
+    cells(m[2]!.trim()),
+    { [TAG_MARK[m[1]!.toLowerCase()]!]: true },
   ]);
 
 const fitted = new Map<string, ChartArt | null>();
@@ -137,22 +154,47 @@ const artWidth = (art: string): number => remember(artWidths, art, () => Math.ma
 const mermaidText = (source: string, ascii: boolean, columns: number, pieColors = 0): string | null =>
   mermaidArt(source, ascii, columns, pieColors)?.text ?? null;
 
-const mermaidArt = (source: string, ascii: boolean, columns: number, pieColors: number): ChartArt | null =>
-  remember(fitted, `${ascii}:${columns}:${pieColors}:${source}`, () => {
+const mermaidArt = (source: string, ascii: boolean, columns: number, pieColors: number, aspect = 2): ChartArt | null =>
+  remember(fitted, `${ascii}:${columns}:${pieColors}:${aspect}:${source}`, () => {
     source = source.replace(INLINE_TAG, "");
-    if (source.length > 8000 || source.split("\n").length > MAX_LINES) return null;
+    if (source.length > MAX_CHARS || source.split("\n").length > MAX_LINES) return null;
     const own = OWN[kindOf(source).toLowerCase()];
-    if (own) return own(source, ascii, columns, pieColors);
-    const art = draw(source, ascii, columns);
+    if (own) return own(labelEntities(source, false), ascii, columns, pieColors, aspect);
+    const fits = (art: string | null) => art === null || artWidth(art) <= columns - 2;
+    const wide = draw(source, ascii, columns);
+    const art = fits(wide) ? wide : (draw(source, ascii, columns, 1) ?? wide);
     const text =
-      art === null || artWidth(art) <= columns - 2 || !SIDEWAYS.test(source)
-        ? art
-        : (draw(source.replace(SIDEWAYS, "$1TD"), ascii, columns) ?? art);
+      fits(art) || !SIDEWAYS.test(source) ? art : (draw(source.replace(SIDEWAYS, "$1TD"), ascii, columns) ?? art);
     return text === null ? null : { text, series: chartSeries(source, ascii, columns) };
   });
 
+const MERMAID_ENTITY = /#(\d{1,7}|[A-Za-z][A-Za-z\d]{1,31});/g;
+const SHIELD = '[]{}()|<>"';
+const SHIELDED = /[\uf100-\uf109]/g;
+const STYLE_LINE = /^\s*(?:style|classDef|linkStyle)\b/;
+const shielded = (ch: string) =>
+  [...ch].map((c) => (SHIELD.includes(c) ? String.fromCharCode(0xf100 + SHIELD.indexOf(c)) : c)).join("");
+const entityChar = (m: string, e: string, shield: boolean): string => {
+  const ch = decodeEntities(/^\d/.test(e) ? `&#${e};` : `&${e};`);
+  if (ch === `&${e};` || ch.includes("\n")) return m;
+  return shield ? shielded(ch) : ch;
+};
+const labelEntities = (source: string, shield: boolean): string =>
+  !source.includes("#")
+    ? source
+    : source
+        .split("\n")
+        .map((line) =>
+          STYLE_LINE.test(line) ? line : line.replace(MERMAID_ENTITY, (m, e: string) => entityChar(m, e, shield)),
+        )
+        .join("\n");
+const unshield = (text: string) => text.replace(SHIELDED, (c) => SHIELD[c.charCodeAt(0) - 0xf100]!);
+
 const prepared = (padded: string): string =>
-  unquoteCategories(padded.replace(/^(\s*%%[^\n]*\n)+/, "")).replace(/(-->|-\.->|==>|---|-\.-|===)[ \t]+\|/g, "$1|");
+  labelEntities(
+    unquoteCategories(padded.replace(/^(\s*%%[^\n]*\n)+/, "")).replace(/(-->|-\.->|==>|---|-\.-|===)[ \t]+\|/g, "$1|"),
+    true,
+  );
 
 const NEUTRAL = "#808080";
 const PROBE = {
@@ -178,14 +220,14 @@ const seriesOf = (colored: string): number[][] => {
       });
     for (const m of line.matchAll(SGR)) {
       take(line.slice(at, m.index));
-      hue = m[1].startsWith("38;2;") && m[1] !== "38;2;128;128;128" ? m[1] : undefined;
+      hue = m[1]!.startsWith("38;2;") && m[1] !== "38;2;128;128;128" ? m[1] : undefined;
       at = m.index + m[0].length;
     }
     take(line.slice(at));
     return row;
   });
   const legend = hues.find((row) => row.some(Boolean)) ?? [];
-  const order = [...new Set(legend.filter((h) => h !== undefined))];
+  const order = [...new Set(legend.filter((h): h is string => h !== undefined))];
   return hues.map((row) => row.map((h) => (h === undefined ? -1 : order.indexOf(h))));
 };
 
@@ -215,32 +257,33 @@ const chartSeries = (source: string, ascii: boolean, columns: number): number[][
   );
 };
 
-const draw = (source: string, ascii: boolean, columns: number): string | null => {
+const draw = (source: string, ascii: boolean, columns: number, gap = 3): string | null => {
   const isChart = /^\s*xychart/.test(source);
   const padded = padWide(source);
   const size = chartSize(columns, isChart ? padded : "");
-  const key = `${ascii}:${isChart ? size.width : 0}:${source}`;
+  const key = `${ascii}:${isChart ? size.width : 0}:${gap}:${source}`;
   return remember(textCache, key, () => {
     try {
       if (isChart) setChartSize(size.width, size.height);
       const art: string = renderMermaidAscii(prepared(padded), {
         useAscii: ascii,
         colorMode: "none",
-        paddingX: 3,
-        paddingY: 1,
+        paddingX: gap,
+        paddingY: rowsBetween(padded),
       })
         .replace(/[ \t]+$/gm, "")
         .trimEnd()
         .replace(/▶/g, "►")
         .replace(/◀/g, "◄");
-      return (
-        isChart
+      return unshield(
+        (isChart
           ? labelBars(art, padded)
           : art
               .split("\n")
               .filter((l) => !/^[\s│|]*$/.test(l))
               .join("\n")
-      ).replaceAll(PAD, "");
+        ).replaceAll(PAD, ""),
+      );
     } catch {
       return null;
     }
@@ -267,20 +310,21 @@ const barStart = (row: string[], c: number): number => {
 };
 
 const diagramPalette = (t: Theme): string[] =>
-  [...new Set([t.link, t.number, t.heading, t.emphasis, t.path, t.codeFlag, t.accent])].filter((c) => c !== undefined);
+  [...new Set([t.link, t.number, t.heading, t.emphasis, t.path, t.codeFlag, t.accent])].filter(
+    (c): c is string => c !== undefined,
+  );
 
 export type Painted = { grid: string[][]; colors: (string | undefined)[][] };
 
 type Rect = { r: number; c: number; r2: number; c2: number };
 
-const paint = (art: string, style: Style, series: number[][] | undefined): Painted => {
-  const t = style.theme;
+const paint = (art: string, t: Theme, series?: number[][]): Painted => {
   const grid = art.split("\n").map(cells);
   const cell = (r: number, c: number) => grid[r]?.[c] ?? "";
   const color: (string | undefined)[][] = grid.map((row) => row.map(() => undefined));
   const palette = diagramPalette(t);
   const next = (i: number) => palette[i % palette.length];
-  const labels = new Map<string, string>();
+  const labels = new Map<string, string | undefined>();
 
   const rects: Rect[] = [];
   for (let r = 0; r < grid.length; r++) {
@@ -305,50 +349,56 @@ const paint = (art: string, style: Style, series: number[][] | undefined): Paint
       .trim();
     if (!labels.has(label)) labels.set(label, next(labels.size));
     const hue = labels.get(label);
-    for (let y = r; y <= r2; y++) for (let x = c; x <= c2; x++) if (cell(y, x).trim()) color[y][x] = hue;
+    for (let y = r; y <= r2; y++) for (let x = c; x <= c2; x++) if (cell(y, x).trim()) color[y]![x] = hue;
   }
 
   const bars = [
     ...new Set(grid.flatMap((row) => row.flatMap((ch, c) => (BLOCK.test(ch) && row[c - 1] !== ch ? [c] : [])))),
   ].sort((a, b) => a - b);
   const ends = bars.map((x) => {
-    const row = grid.find((row) => BLOCK.test(row[x] ?? "")) as string[];
+    const row = grid.find((row) => BLOCK.test(row[x] ?? ""))!;
     let end = x;
     while (row[end + 1] === row[x]) end++;
     return end;
   });
   const tops = bars.map((x) => {
     const r = grid.findIndex((row) => BLOCK.test(row[x] ?? ""));
-    return r * 2 + (grid[r][x] === "▄" ? 1 : 0);
+    return r * 2 + (grid[r]![x] === "▄" ? 1 : 0);
   });
-  const single = bars.length > 1 && bars.every((x, i) => i === 0 || x - ends[i - 1] > 2);
+  const single = bars.length > 1 && bars.every((x, i) => i === 0 || x - ends[i - 1]! > 2);
   const barColor = (i: number) =>
     single ? (tops[i] === Math.min(...tops) ? (t.emphasis ?? t.accent) : t.quote) : next(i);
   series?.forEach((row, r) => {
     row.forEach((owner, c) => {
-      if (owner >= 0 && grid[r]?.[c]?.trim()) color[r][c] = next(owner);
+      if (owner >= 0 && grid[r]?.[c]?.trim()) color[r]![c] = next(owner);
     });
   });
   grid.forEach((row, r) => {
     row.forEach((ch, c) => {
-      if (color[r][c] !== undefined) return;
+      if (color[r]![c] !== undefined) return;
       const start = barStart(row, c);
-      if (start >= 0) color[r][c] = barColor(bars.indexOf(start));
-      else if (ch === "·") color[r][c] = t.rule;
-      else if (ARROW.test(ch)) color[r][c] = t.accent;
-      else if (LINE.test(ch)) color[r][c] = t.diagram;
-      else if (/^\d+[┤┼]/.test(row.slice(c).join(""))) color[r][c] = t.number;
-      else color[r][c] = t.diagramText;
+      if (start >= 0) color[r]![c] = barColor(bars.indexOf(start));
+      else if (ch === "·") color[r]![c] = t.rule;
+      else if (ARROW.test(ch)) color[r]![c] = t.accent;
+      else if (LINE.test(ch)) color[r]![c] = t.diagram;
+      else if (/^\d+[┤┼]/.test(row.slice(c).join(""))) color[r]![c] = t.number;
+      else color[r]![c] = t.diagramText;
     });
   });
   return { grid, colors: color };
 };
 
-const paintPie = (art: string, slices: number[][], style: Style): Painted => {
-  const t = style.theme;
+const paintPie = (art: string, slices: number[][], t: Theme): Painted => {
   const palette = diagramPalette(t);
   const grid = art.split("\n").map(cells);
-  const hue = (slice: number) => (slice < 0 ? t.diagramText : palette[slice % palette.length]);
+  const named: Record<number, string | undefined> = {
+    [LINE_HUE]: t.diagram,
+    [ARROW_HUE]: t.accent,
+    [GOOD_HUE]: t.diffAdded,
+    [BAD_HUE]: t.diffRemoved,
+  };
+  const hue = (slice: number) =>
+    slice in named ? named[slice] : slice < 0 ? t.diagramText : palette[slice % palette.length];
   return { grid, colors: grid.map((row, r) => row.map((_, c) => hue(slices[r]?.[c] ?? -1))) };
 };
 
@@ -356,23 +406,23 @@ const painted = new WeakMap<Theme, Map<string, Painted>>();
 
 const piePainted = new WeakMap<Theme, WeakMap<number[][], Painted>>();
 
-const painting = (
-  style: Style,
-  art: string,
-  slices: number[][] | undefined,
-  series: number[][] | undefined,
-): Painted => {
+const painting = (theme: Theme, art: string, slices?: number[][], series?: number[][]): Painted => {
   if (!slices) {
-    const cache = painted.get(style.theme) ?? new Map();
-    painted.set(style.theme, cache);
-    return remember(cache, art, () => paint(art, style, series));
+    const cache = painted.get(theme) ?? new Map<string, Painted>();
+    painted.set(theme, cache);
+    return remember(cache, art, () => paint(art, theme, series));
   }
-  const cache = piePainted.get(style.theme) ?? new WeakMap();
-  piePainted.set(style.theme, cache);
-  const done = cache.get(slices) ?? paintPie(art, slices, style);
+  const cache = piePainted.get(theme) ?? new WeakMap<number[][], Painted>();
+  piePainted.set(theme, cache);
+  const done = cache.get(slices) ?? paintPie(art, slices, theme);
   cache.set(slices, done);
   return done;
 };
+
+const chartHues = ({ grid, colors }: Painted): Ink[][] =>
+  colors.map((row, r) =>
+    row.map((color, c): Ink => (color !== undefined ? { color } : grid[r]?.[c] === "·" ? { dim: true } : {})),
+  );
 
 const boxArt = (
   { Box, Text }: ElementTable,
@@ -383,7 +433,7 @@ const boxArt = (
   slices?: number[][],
   series?: number[][],
 ): RenderElement => {
-  const { grid, colors } = painting(style, art, slices, series);
+  const { grid, colors } = painting(style.theme, art, slices, series);
   const visual = style.reorder && style.shape === "visual" && hasRtl(art);
   return h(
     Box,
@@ -400,8 +450,8 @@ const boxArt = (
       for (const [phrase, mark] of marks)
         for (let c = 0; c + phrase.length <= row.length; c++)
           if (phrase.every((ch, k) => row[c + k] === ch)) for (let k = 0; k < phrase.length; k++) marked[c + k] = mark;
-      const hueAt = (p: number) => colors[i]?.[from[p]];
-      const markAt = (p: number) => marked[from[p]];
+      const hueAt = (p: number) => colors[i]?.[from[p]!];
+      const markAt = (p: number) => marked[from[p]!];
       const parts: RenderElement[] = [];
       let at = 0;
       while (at < chars.length) {
@@ -420,10 +470,7 @@ const boxArt = (
 const EDGE_LABEL = /(-[-.=]+\s*)"([^"\n]+)"(\s*[-.=]+>)|\|([^|\n]+)\|/g;
 
 const cap = (label: string, max: number): string => {
-  const flat = label
-    .replace(/<br\s*\/?>/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const flat = oneLine(label);
   const chars = graphemes(flat);
   return chars.length > max
     ? `${chars
@@ -519,7 +566,7 @@ type TextVerdict =
   | { fits: true; art: ChartArt }
   | { fits: false; why: "unsupported"; word: string }
   | { fits: false; why: "too-wide"; narrowest: number; columns: number }
-  | { fits: false; why: "no-art" };
+  | { fits: false; why: "no-art"; lines?: number; chars?: number };
 
 type GaveUp = Extract<TextVerdict, { fits: false }>;
 
@@ -538,15 +585,28 @@ const textVerdict = (source: string, style: Style, columns: number, pieColors: n
   }
   const word = unsupportedKind(source);
   if (word) return { fits: false, why: "unsupported", word };
-  return narrowest === Infinity ? { fits: false, why: "no-art" } : { fits: false, why: "too-wide", narrowest, columns };
+  if (narrowest !== Infinity) return { fits: false, why: "too-wide", narrowest, columns };
+  const lines = source.split("\n").length;
+  if (lines > MAX_LINES) return { fits: false, why: "no-art", lines };
+  const chars = source.replace(INLINE_TAG, "").length;
+  if (chars > MAX_CHARS) return { fits: false, why: "no-art", chars };
+  return { fits: false, why: "no-art" };
 };
 
-const textNote = (verdict: GaveUp): string =>
-  verdict.why === "unsupported"
-    ? `${verdict.word} diagrams draw as source for now`
-    : verdict.why === "no-art"
-      ? "diagram failed to render"
-      : `diagram is ${verdict.narrowest} cols, terminal is ${verdict.columns}`;
+const textNote = (verdict: GaveUp): string => {
+  switch (verdict.why) {
+    case "unsupported":
+      return `${verdict.word} diagrams draw as source for now`;
+    case "too-wide":
+      return `diagram too wide to render (${verdict.narrowest} cols, ${verdict.columns - 2} fit)`;
+    case "no-art":
+      return verdict.lines !== undefined && verdict.lines > MAX_LINES
+        ? `diagram too long to render (${verdict.lines} lines, max ${MAX_LINES})`
+        : verdict.chars !== undefined && verdict.chars > MAX_CHARS
+          ? `diagram too long to render (${verdict.chars} characters, max ${MAX_CHARS})`
+          : "diagram failed to render";
+  }
+};
 
 const PENDING_NOTE = "drawing with pele…";
 
@@ -577,7 +637,11 @@ const mermaidBlock = (
   const verdict = textVerdict(source, style, columns, pieColors);
   if (verdict.fits) {
     const { art } = verdict;
-    return { element: chartElement(el, style, art, block, source, `b${i}`), art: art.text };
+    return {
+      element: chartElement(el, style, art, block, source, `b${i}`),
+      art: art.text,
+      hues: () => chartHues(painting(style.theme, art.text, art.slices, art.series)),
+    };
   }
   if (block.isOpen) return undefined;
   const pixels = style.pictureFill ? fillColumns(columns) * style.cellWidthPx : null;

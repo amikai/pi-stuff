@@ -34,15 +34,10 @@ export const peleJobs = background<Entry>({ limit: 100, concurrency: 1, crashed:
 
 export const PELE_KINDS = [
   "timeline",
-  "mindmap",
-  "gitGraph",
-  "journey",
-  "quadrantChart",
   "sankey-beta",
   "C4Context",
   "architecture-beta",
   "block-beta",
-  "kanban",
   "packet-beta",
   "radar-beta",
   "treemap-beta",
