@@ -2,6 +2,18 @@ import { tableHtml, tableText } from "./html.ts";
 import type { ElementTable, RenderElement, RenderNode, TextHoverProps } from "./jsx.ts";
 import { h } from "./jsx.ts";
 import { mathOf } from "./latex.ts";
+import {
+  cells,
+  columnWidths,
+  graphemes,
+  longestWord,
+  mostLines,
+  type Span,
+  textRows,
+  widestLine,
+  width,
+  wrapRanges,
+} from "./layout.ts";
 import type { AlertLevel, Block, Inline, ListItem } from "./markdown.ts";
 import { displayText, inlineText, isWebLink, nestedBlocks, texText } from "./markdown.ts";
 import type { Flow } from "./rtl.ts";
@@ -21,7 +33,7 @@ import {
   terminalLine,
   WALL,
 } from "./rtl.ts";
-import type { Style, Theme } from "./theme.ts";
+import type { Ink, Style, Theme } from "./theme.ts";
 
 export type TerminalEnv = Partial<
   Record<
@@ -44,9 +56,9 @@ export type CopyButton = (
 ) => RenderElement | null;
 /** `art` and `png` exclude each other: a drawing is text art or a picture of a known PNG (base64). */
 export type DrawnBlock =
-  | { note: string; element?: never; art?: never; png?: never }
-  | { element: RenderElement; art?: string; png?: never; note?: never }
-  | { element: RenderElement; png: string; art?: never; note?: never };
+  | { note: string; element?: never; art?: never; hues?: never; png?: never }
+  | { element: RenderElement; art?: string; hues?: () => Ink[][]; png?: never; note?: never }
+  | { element: RenderElement; png: string; art?: never; hues?: never; note?: never };
 export type Drawn = Map<number, DrawnBlock>;
 /** Buttons that act on a drawn picture, in display order. Empty when they are off or cannot reach the user's machine. */
 export type PictureButtons = (png: string, b: number) => RenderElement[];
@@ -54,7 +66,6 @@ export type Fold = (id: string, hidden: number, key: string) => { folded: boolea
 export type Tip = (note: number) => (() => void) | undefined;
 export type BlockOf<K extends Block["kind"]> = Extract<Block, { kind: K }>;
 export type InlineOf<K extends Inline["kind"]> = Extract<Inline, { kind: K }>;
-export type Span = [number, number];
 export type Reach = Pick<Style, "httpLinks" | "editorLinks" | "fileLinks" | "pathLinks" | "found" | "home" | "cwd">;
 export type Probe = { key: string; href: string };
 export type Segment = { text: string; color?: string; italic?: boolean };
@@ -78,79 +89,6 @@ export type Look = {
 const _extends = Object.assign;
 
 import { languages, tokenize } from "./vendor/prism.js";
-
-const WIDE =
-  // biome-ignore lint/suspicious/noMisleadingCharacterClass: U+20E3 is listed on purpose, as one wide code point
-  /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}\u20E3]|\p{Emoji_Presentation}|\p{Extended_Pictographic}\uFE0F/u;
-const segmenter = new Intl.Segmenter();
-
-const graphemes = (s: string): string[] => [...segmenter.segment(s)].map((g) => g.segment);
-
-const cells = (s: string): string[] =>
-  /^[ -~]*$/.test(s) ? [...s] : graphemes(s).flatMap((g) => (WIDE.test(g) ? [g, ""] : [g]));
-
-const ZERO = /^[\p{M}\p{Default_Ignorable_Code_Point}]+$/u;
-
-const width = (s: string): number =>
-  /^[ -~]*$/.test(s)
-    ? s.length
-    : s.length === 1
-      ? ZERO.test(s)
-        ? 0
-        : WIDE.test(s)
-          ? 2
-          : 1
-      : graphemes(s).reduce((w, g) => (ZERO.test(g) ? w : w + (WIDE.test(g) ? 2 : 1)), 0);
-
-const widestLine = (text: string): number => Math.max(...text.split("\n").map(width));
-
-const wrapRanges = (text: string, w: number): Span[] => {
-  const br = text.indexOf("\n");
-  if (br >= 0)
-    return [
-      ...wrapRanges(text.slice(0, br), w),
-      ...wrapRanges(text.slice(br + 1), w).map(([a, b]): Span => [a + br + 1, b + br + 1]),
-    ];
-  if (width(text) <= w) return [[0, text.length]];
-  const out: Span[] = [];
-  let line: Span | undefined;
-  let used = 0;
-  for (const word of text.matchAll(/\S+/g)) {
-    let start = word.index;
-    const end = start + word[0].length;
-    let size = width(word[0]);
-    if (size > w) {
-      if (line) out.push(line);
-      line = undefined;
-      let cut = start;
-      let taken = 0;
-      for (const g of graphemes(text.slice(start, end))) {
-        const step = width(g);
-        if (cut > start && taken + step > w) {
-          out.push([start, cut]);
-          start = cut;
-          size -= taken;
-          taken = 0;
-          if (size <= w) break;
-        }
-        cut += g.length;
-        taken += step;
-      }
-    }
-    if (start === end) continue;
-    const joined = line ? used + width(text.slice(line[1], start)) + size : Infinity;
-    if (line && joined <= w) {
-      line = [line[0], end];
-      used = joined;
-    } else {
-      if (line) out.push(line);
-      line = [start, end];
-      used = size;
-    }
-  }
-  if (line) out.push(line);
-  return out.length ? out : [[0, 0]];
-};
 
 const sliceInline = (nodes: Inline[], from: number, to: number): Inline[] => {
   const out: Inline[] = [];
@@ -536,11 +474,6 @@ const drawable = (block: Block, reach: Reach): Block => {
   cached[key] ??= hyperlinkBlock(block, reach);
   return cached[key];
 };
-
-const mostLines = (text: string, w: number): number => (text.match(/\S+/g)?.length ?? 0) + Math.ceil(width(text) / w);
-
-const textRows = (text: string, w: number): number =>
-  text.split("\n").reduce((sum, line) => sum + (width(line) <= w ? 1 : mostLines(line, Math.max(1, w))), 0);
 
 const heightOf = (blocks: Block[], w: number): number =>
   blocks.reduce((sum, block, b) => sum + (b ? 1 : 0) + blockHeight(block, w), 0);
@@ -1119,40 +1052,6 @@ const shellSegments = (style: Style, line: string, room?: number): Segment[] => 
     .split(/("[^"]*"|'[^']*'|\s+)/)
     .filter((p) => p !== "")
     .map((text) => ({ text, color: colorOf(text), italic: false }));
-};
-
-const longestWord = (text: string): number => Math.max(0, ...text.split(/\s+/).map(width));
-
-const columnWidths = (natural: number[], available: number, gap: number, words: number[] = []): number[] => {
-  const room = Math.max(natural.length, available - gap * (natural.length - 1));
-  const total = natural.reduce((a, b) => a + b, 0);
-  if (total <= room) return natural;
-  const minimum = natural.map((w, c) => Math.min(w, Math.max(1, words[c] ?? 1)));
-  const widths = natural.map(() => 0);
-  let open = natural.map((_, c) => c);
-  let left = room;
-  for (let fixed = [-1]; fixed.length; ) {
-    const share = Math.floor(left / open.length);
-    const claim = (c: number) => (natural[c] <= share ? natural[c] : minimum[c]);
-    const minimumsFit = open.reduce((a, c) => a + minimum[c], 0) <= left;
-    const needed = open.reduce((a, c) => a + claim(c), 0);
-    fixed = open.filter((c) => natural[c] <= share);
-    if (minimumsFit && (!fixed.length || needed > left)) fixed = open.filter((c) => minimum[c] > share);
-    fixed.forEach((c) => {
-      widths[c] = claim(c);
-      left -= widths[c];
-    });
-    open = open.filter((c) => !fixed.includes(c));
-  }
-  open.forEach((c, i) => {
-    widths[c] = Math.max(1, Math.floor(left / open.length) + (i < left % open.length ? 1 : 0));
-  });
-  while (widths.reduce((a, b) => a + b, 0) > room) {
-    const widest = widths.indexOf(Math.max(...widths));
-    if (widths[widest] <= 1) break;
-    widths[widest]--;
-  }
-  return widths;
 };
 
 const tableCells = (block: BlockOf<"table">): Inline[][] => [...block.header, ...block.rows.flat()];
@@ -2193,5 +2092,7 @@ export {
   renderBlocks,
   renderTurnDuration,
   renderUserPrompt,
+  type Span,
   width,
+  wrapRanges,
 };

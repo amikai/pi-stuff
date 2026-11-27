@@ -26,7 +26,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-`core/vendor/prism.js` is vendored from [Prism](https://github.com/PrismJS/prism) 1.30.0 (core and 24 language definitions).
+`core/vendor/prism.js` is vendored from [Prism](https://github.com/PrismJS/prism) 1.30.0 (core and 27 language definitions).
 
 ```
 MIT LICENSE

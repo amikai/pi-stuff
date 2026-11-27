@@ -26,7 +26,24 @@ export const TOKENS = [
   "diagramText",
 ] as const;
 
-export type Theme = Partial<Record<(typeof TOKENS)[number], string>>;
+export type Theme = Partial<Record<(typeof TOKENS)[number] | "diffAdded" | "diffRemoved", string>>;
+
+export type Ink = { color?: string; bold?: boolean; italic?: boolean; dim?: boolean };
+
+export type CellLook = { color?: string; bold?: boolean };
+
+export type TableLayout = "classic" | "auto" | "compact" | "stacked";
+export type StatusMatrix = "off" | "color" | "summary" | "group";
+export type TestMatrix = "off" | "report";
+export type BenchTable = "off" | "color" | "trend";
+export type SchemaTable = "off" | "types" | "keys" | "full";
+export type CompareTable = "off" | "rank" | "pick" | "full";
+export type ApiTable = "off" | "verbs" | "auth" | "full";
+export type KvTable = "off" | "sources" | "overrides" | "full";
+export type GroupTable = "off" | "merge" | "count" | "full";
+export type HeatTable = "off" | "color" | "bars";
+export type TreeTable = "off" | "branch" | "full";
+export type PivotTable = "off" | "transpose";
 
 export const DEFAULT_THEME: Theme = {
   accent: "#cba6f7",
@@ -49,6 +66,8 @@ export const DEFAULT_THEME: Theme = {
   bullet: "#cba6f7",
   diagram: "#89b4fa",
   diagramText: "#cdd6f4",
+  diffAdded: "#a6e3a1",
+  diffRemoved: "#f38ba8",
 };
 
 export type Style = {
@@ -56,6 +75,18 @@ export type Style = {
   background?: string;
   headingStyle: "bold" | "underline" | "uppercase" | "banner";
   tableStyle: "box" | "rules" | "grid" | "minimal";
+  tableLayout: TableLayout;
+  statusMatrix: StatusMatrix;
+  testMatrix: TestMatrix;
+  benchTable: BenchTable;
+  schemaTable: SchemaTable;
+  compareTable: CompareTable;
+  apiTable: ApiTable;
+  kvTable: KvTable;
+  groupTable: GroupTable;
+  heatTable: HeatTable;
+  treeTable: TreeTable;
+  pivotTable: PivotTable;
   taskStyle: "checks" | "ticks" | "box" | "progress";
   promptStyle: "bubble" | "wide" | "bar" | "chevron" | "off";
   inside?: "quote" | "alert";
@@ -74,8 +105,10 @@ export type Style = {
   cellWidthPx: number;
   httpLinks: boolean;
   editorLinks: boolean;
+  obsidianLinks: boolean;
   fileLinks: string | null;
   pathLinks: boolean;
+  hyperlinks: boolean;
   found?: ReadonlySet<string>;
   diagramHints: boolean;
   rtl: "auto" | Terminal | "off";
@@ -94,12 +127,14 @@ const COLOR =
 
 export const isColor = (value: unknown): value is string => typeof value === "string" && COLOR.test(value.trim());
 
+export const longHex = (color: string): string => color.replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
+
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
   allowed.includes(value as T) ? (value as T) : fallback;
 
 export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_THEME): Style => {
   const fromFields = Object.fromEntries(
-    TOKENS.filter((k) => isColor(options[`${k}Color`])).map((k) => [k, String(options[`${k}Color`]).trim()]),
+    TOKENS.filter((k) => isColor(options[`${k}Color`])).map((k) => [k, longHex(String(options[`${k}Color`]).trim())]),
   );
 
   const rtl = pick(options.rtl, ["auto", "off", ...(Object.keys(TERMINALS) as Terminal[])], "auto");
@@ -108,6 +143,18 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
     theme: { ...baseTheme, ...fromFields },
     headingStyle: pick(options.headingStyle, ["bold", "underline", "uppercase", "banner"] as const, "banner"),
     tableStyle: pick(options.tableStyle, ["box", "rules", "grid", "minimal"] as const, "box"),
+    tableLayout: pick(options.tableLayout, ["classic", "auto", "compact", "stacked"] as const, "classic"),
+    statusMatrix: pick(options.statusMatrix, ["off", "color", "summary", "group"] as const, "off"),
+    testMatrix: pick(options.testMatrix, ["off", "report"] as const, "off"),
+    benchTable: pick(options.benchTable, ["trend", "color", "off"] as const, "off"),
+    schemaTable: pick(options.schemaTable, ["full", "types", "keys", "off"] as const, "off"),
+    compareTable: pick(options.compareTable, ["full", "rank", "pick", "off"] as const, "off"),
+    apiTable: pick(options.apiTable, ["full", "verbs", "auth", "off"] as const, "off"),
+    kvTable: pick(options.kvTable, ["full", "sources", "overrides", "off"] as const, "off"),
+    groupTable: pick(options.groupTable, ["full", "count", "merge", "off"] as const, "off"),
+    heatTable: pick(options.heatTable, ["color", "bars", "off"] as const, "off"),
+    treeTable: pick(options.treeTable, ["full", "branch", "off"] as const, "off"),
+    pivotTable: pick(options.pivotTable, ["transpose", "off"] as const, "off"),
     taskStyle: pick(options.taskStyle, ["checks", "ticks", "box", "progress"] as const, "checks"),
     promptStyle: pick(options.promptStyle, ["bubble", "wide", "bar", "chevron", "off"] as const, "bubble"),
     pieStyle: pick(options.pieStyle, ["round", "bars"] as const, "round"),
@@ -124,8 +171,10 @@ export const resolveStyle = (options: PluginOptions, baseTheme: Theme = DEFAULT_
     cellWidthPx: 10,
     httpLinks: false,
     editorLinks: false,
+    obsidianLinks: false,
     fileLinks: null,
     pathLinks: false,
+    hyperlinks: false,
     diagramHints: options.diagramHints !== false && options.mermaid !== false,
     rtl,
     reorder: rtl !== "auto" && rtl !== "off",

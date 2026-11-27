@@ -2,10 +2,11 @@ export function renderMermaidAscii(
   text: string,
   options?: {
     useAscii?: boolean;
-    colorMode?: "none" | "auto" | "truecolor";
-    theme?: Record<string, string>;
     paddingX?: number;
     paddingY?: number;
+    boxBorderPadding?: number;
+    colorMode?: "none" | "truecolor";
+    theme?: Record<string, string>;
   },
 ): string;
 export function setChartSize(width: number, height: number): void;
