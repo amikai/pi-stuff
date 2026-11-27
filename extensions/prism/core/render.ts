@@ -2646,10 +2646,9 @@ const renderBlocks = (
           element,
         );
   });
-  const cut = budgetCut(copied);
-  const isFigure = (b: number) => b < cut && (blocks[b]?.kind === "table" || drawn.get(b)?.art !== undefined);
+  const isFigure = (b: number) => b < copied.length && (blocks[b]?.kind === "table" || drawn.get(b)?.art !== undefined);
   const out: RenderElement[] = [];
-  for (let b = 0; b < cut; b++) {
+  for (let b = 0; b < copied.length; b++) {
     if (!isFigure(b) || !isFigure(b + 1)) {
       out.push(copied[b]);
       continue;
@@ -2664,67 +2663,7 @@ const renderBlocks = (
       ),
     );
   }
-  return [...out, ...restSource(el, blocks.slice(cut), REST_ROOM - textIn(out))];
-};
-
-const NODE_BUDGET = 19800;
-
-const nodesIn = (n: unknown): number => {
-  if (Array.isArray(n)) return n.reduce<number>((sum, c) => sum + nodesIn(c), 0);
-  if (n !== null && typeof n === "object") return 1 + ("children" in n ? nodesIn(n.children) : 0);
-  return typeof n === "string" ? 1 : 0;
-};
-
-const REST_ROOM = 59000;
-
-const TEXT_BUDGET = 90000;
-
-const textIn = (n: unknown): number => {
-  if (Array.isArray(n)) return n.reduce<number>((sum, c) => sum + textIn(c), 0);
-  if (typeof n === "string") return n.length;
-  return n !== null && typeof n === "object" && "children" in n ? textIn(n.children) : 0;
-};
-
-const budgetCut = (elements: RenderElement[]): number => {
-  let left = NODE_BUDGET;
-  let room = TEXT_BUDGET;
-  const cut = elements.findIndex((element) => {
-    left -= nodesIn(element);
-    room -= textIn(element);
-    return left < 0 || room < 0;
-  });
-  return cut < 0 ? elements.length : cut;
-};
-
-const REST_CHUNK = 8000;
-
-const chunks = (text: string): string[] =>
-  text.split("\n").reduce<string[]>((out, line) => {
-    for (let at = 0; at < Math.max(line.length, 1); at += REST_CHUNK) {
-      const piece = line.slice(at, at + REST_CHUNK);
-      const last = out.length - 1;
-      if (at === 0 && last >= 0 && out[last].length + piece.length + 1 <= REST_CHUNK) out[last] += `\n${piece}`;
-      else out.push(piece);
-    }
-    return out;
-  }, []);
-
-const restSource = ({ Text }: ElementTable, rest: Block[], room: number): RenderElement[] => {
-  if (!rest.length) return [];
-  let left = room;
-  const lines = rest
-    .map((block) => block.raw)
-    .join("\n\n")
-    .split("\n");
-  const fit = lines.findIndex((line) => {
-    left -= line.length + 1;
-    return left < 0;
-  });
-  const kept = fit < 0 ? lines : lines.slice(0, fit);
-  const text = kept.length
-    ? chunks(kept.join("\n").trimEnd()).map((chunk, i) => h(Text, { key: `rest${i}`, dimColor: true }, chunk))
-    : [];
-  return fit < 0 ? text : [...text, h(Text, { key: "restMore", dimColor: true }, `… +${lines.length - fit} lines`)];
+  return out;
 };
 
 const formatDuration = (ms: number): string => {
