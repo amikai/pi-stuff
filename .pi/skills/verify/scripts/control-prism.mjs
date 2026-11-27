@@ -435,7 +435,10 @@ if (cmd === "drive") {
     const moreOverlay = rt.getOverlay();
     assert.ok(moreOverlay, "setup more overlay opened");
     const morePlain = moreOverlay.render(width).map(stripAnsi).join("\n");
-    assert.ok(morePlain.includes("More 1/12: Table layout"), "setup more opens at Table layout (More 1/12)");
+    assert.ok(
+      morePlain.includes("More styles 1/12: Table layout"),
+      "setup more opens at Table layout (More styles 1/12)",
+    );
     moreOverlay.handleInput("\x1b[B");
     moreOverlay.handleInput("\r");
     moreOverlay.handleInput("\x1b");
