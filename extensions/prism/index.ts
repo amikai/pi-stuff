@@ -244,13 +244,17 @@ const ENUM_OPTIONS: Record<string, readonly string[]> = {
   rtl: ["auto", "off", ...(Object.keys(TERMINALS) as Terminal[])],
 };
 
+const enumChoicesFor = (key: string): readonly string[] | undefined =>
+  Object.hasOwn(ENUM_OPTIONS, key) ? ENUM_OPTIONS[key] : undefined;
+
 function sanitizeOptions(raw: Record<string, unknown>): PrismOptions {
   const out: PrismOptions = { ...DEFAULT_OPTIONS };
   for (const [key, value] of Object.entries(stripLegacyKeys(raw))) {
+    const choices = enumChoicesFor(key);
     if (BOOLEAN_OPTIONS.has(key)) {
       if (typeof value === "boolean") out[key] = value;
-    } else if (key in ENUM_OPTIONS) {
-      if (typeof value === "string" && ENUM_OPTIONS[key]?.includes(value)) out[key] = value;
+    } else if (choices !== undefined) {
+      if (typeof value === "string" && choices.includes(value)) out[key] = value;
     } else {
       out[key] = value;
     }
@@ -1487,11 +1491,7 @@ export default function prismExtension(
         const choices =
           stepIdx >= 0
             ? SETUP_STEPS[stepIdx]?.options
-            : first in ENUM_OPTIONS
-              ? ENUM_OPTIONS[first]
-              : BOOLEAN_OPTIONS.has(first)
-                ? ["true", "false"]
-                : undefined;
+            : (enumChoicesFor(first) ?? (BOOLEAN_OPTIONS.has(first) ? ["true", "false"] : undefined));
         if (!choices) return null;
         return choices.filter((o) => o.startsWith(second)).map((o) => ({ value: `${first} ${o}`, label: o }));
       }
@@ -1609,7 +1609,7 @@ export default function prismExtension(
         return;
       }
 
-      const enumChoices = sub ? ENUM_OPTIONS[sub] : undefined;
+      const enumChoices = sub ? enumChoicesFor(sub) : undefined;
       if (sub && (enumChoices !== undefined || BOOLEAN_OPTIONS.has(sub))) {
         if (enumChoices !== undefined) {
           if (!name || !enumChoices.includes(name)) {

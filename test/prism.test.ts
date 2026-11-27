@@ -4950,6 +4950,15 @@ test("111. theme diffAdded/diffRemoved & longHex, setup 6/6 + setup more 1/12, d
     'Unknown statusMatrix pick "bad". Pick 1-4 or one of: color, summary, group, off',
   );
 
+  await cmd.handler("toString bad", h.ctx);
+  assert.ok(h.appendedEntries.at(-1)?.data.text.includes("## Commands"), "prototype keys fall back to help text");
+  assert.equal(cmd.getArgumentCompletions?.("toString "), null, "prototype keys return null completions");
+
+  writeFileSync(join(h.dir, "prism.json"), JSON.stringify({ tableLayout: "compact", toString: "bad" }));
+  await cmd.handler("statusMatrix group", h.ctx);
+  assert.equal(h.readConfig().tableLayout, "compact", "prototype key in prism.json does not discard valid options");
+  assert.equal(h.readConfig().statusMatrix, "group");
+
   chmodSync(join(h.dir, "prism.json"), 0o444);
   await cmd.handler("tableLayout stacked", h.ctx);
   assert.ok(
