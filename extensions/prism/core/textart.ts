@@ -1,0 +1,65 @@
+import { cells, graphemes, width, wrapRanges } from "./layout.ts";
+
+export type Line = { text: string; hue: number[] };
+export type Canvas = { grid: string[][]; hues: number[][] };
+
+export const LINE_HUE = -2;
+export const ARROW_HUE = -3;
+export const GOOD_HUE = -4;
+export const BAD_HUE = -5;
+
+export const fit = (label: string, max: number): string => {
+  if (width(label) <= max) return label;
+  let out = "";
+  for (const g of graphemes(label)) {
+    if (width(out + g) > max - 1) break;
+    out += g;
+  }
+  return `${out.trimEnd()}…`;
+};
+
+export const oneLine = (label: string): string =>
+  label
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export const unquote = (text: string): string => text.trim().replace(/^"(.*)"$/, "$1");
+
+export const line = (...parts: [string, number][]): Line => ({
+  text: parts.map(([t]) => t).join(""),
+  hue: parts.flatMap(([t, h]) => cells(t).map(() => h)),
+});
+
+export const blank = (rows: number, cols: number): Canvas => ({
+  grid: Array.from({ length: rows }, () => Array<string>(cols).fill(" ")),
+  hues: Array.from({ length: rows }, () => Array<number>(cols).fill(-1)),
+});
+
+export const paint = (c: Canvas, row: number, col: number, text: string, hue: number): void =>
+  cells(text).forEach((ch, k) => {
+    c.grid[row]![col + k] = ch;
+    c.hues[row]![col + k] = hue;
+  });
+
+export const rows = (c: Canvas): Line[] => c.grid.map((row, r) => ({ text: row.join(""), hue: c.hues[r]! }));
+
+export const art = (lines: Line[]): { text: string; slices: number[][] } => ({
+  text: lines.map((l) => l.text.trimEnd()).join("\n"),
+  slices: lines.map((l) => l.hue),
+});
+
+export const wrap = (text: string, w: number, most: number): string[] => {
+  const lines = wrapRanges(text, w).map(([a, b]) => text.slice(a, b).trim());
+  return lines.length > most ? [...lines.slice(0, most - 1), fit(lines.slice(most - 1).join(" "), w)] : lines;
+};
+
+export const withoutBlocks = (lines: string[]): string[] => {
+  let open = false;
+  return lines.filter((l) => {
+    const starts = /^accDescr\s*\{/i.test(l);
+    const keep = !open && !starts;
+    if (starts || open) open = !l.includes("}");
+    return keep;
+  });
+};

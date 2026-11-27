@@ -1,8 +1,9 @@
 import { type ElementTable, h, type RenderElement } from "./jsx.ts";
+import { cells, graphemes, width } from "./layout.ts";
 import { type Block, FIGURE_ROLES } from "./markdown.ts";
-import { cells, type DrawnBlock, graphemes, heldLtr, mirrored, remember, width } from "./render.ts";
+import { type DrawnBlock, heldLtr, mirrored, remember } from "./render.ts";
 import { asIs, hasRtl, holdEngine, holdText, holdVisual, led } from "./rtl.ts";
-import type { Style, Theme } from "./theme.ts";
+import type { Ink, Style, Theme } from "./theme.ts";
 
 export type FigureRole = (typeof FIGURE_ROLES)[number];
 export type FigureRun = { text: string; role?: FigureRole };
@@ -34,11 +35,11 @@ const FIGURE_HINT = [
   "A fenced block whose opening line is exactly ```figure is drawn as a text picture, as written.",
   "Prefer one over mermaid when position carries meaning: durations racing on a time axis, a screen layout, phases, before/after; mermaid stays for plain flows and charts; none for short answers, code changes or reports. The prose never retells the picture.",
   "When asked to explain, compare or plan something and pictures would help, build the reply around them, with the core on the first screen as a picture or a sentence.",
-  "Figures only: color with {role:text}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.",
+  "Figures only: color as {warn:disk full}, not nested: accent for lines, warn for risk, ok for healthy, note for time, dim for asides, strong for emphasis.",
   `At most ${FIGURE_SAFE_COLUMNS} columns, glyphs one column wide such as ${FIGURE_GLYPHS}, no emoji or tabs; markup takes no columns, so align on the drawn text and pad box rows to the top border. CJK letters take two columns, count them twice. Draw a time axis with edge ticks like ▏───▏───▏, not ├┼┤: █ fills its cell, ├┼┤ sit mid-cell.`,
 ].join(" ");
 
-const MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join("|")}):([^{}]*)\\}`, "g");
+const MARKUP = new RegExp(`\\{(${FIGURE_ROLES.join("|")})(?::([^{}]*)\\}|\\}([^{}]*)\\{\\/\\1\\})`, "g");
 const MARKER = /\{([A-Za-z][\w-]*):/g;
 const TEXT_FORMS: Record<string, string> = { "▶": "►", "◀": "◄" };
 const ROLE_TOKENS: Record<FigureRole, ThemeToken> = {
@@ -53,7 +54,7 @@ const EMOJI_CAPABLE = /\p{Extended_Pictographic}|\p{Emoji_Presentation}|\u20e3/u
 const CONTROL = /[\0-\x08\x0b-\x1f\x7f-\x9f]/;
 const DIRECTION_MARK = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 const INVISIBLE = /[\u00ad\u200b-\u200d\u2028\u2029\ufeff]/;
-const isRole = (name: string): name is FigureRole => FIGURE_ROLES.some((role) => role === name);
+const isRole = (name: string | undefined): name is FigureRole => FIGURE_ROLES.some((role) => role === name);
 
 const isFigureLang = (lang: string) => lang.toLowerCase() === "figure";
 
@@ -63,7 +64,8 @@ const figureRuns = (line: string): FigureRun[] => {
   const runs: FigureRun[] = [];
   let at = 0;
   for (const match of line.matchAll(MARKUP)) {
-    const [whole, role, text = ""] = match;
+    const [whole, role, colonText, tagText] = match;
+    const text = colonText ?? tagText ?? "";
     if (match.index > at) runs.push({ text: textForm(line.slice(at, match.index)) });
     if (text && isRole(role)) runs.push({ text: textForm(text), role });
     at = match.index + whole.length;
@@ -224,6 +226,12 @@ const runColor = (style: Style, role?: FigureRole): string | undefined => {
 };
 
 const isBold = (style: Style, role?: FigureRole) => role === "strong" || (role === "warn" && !runColor(style, "warn"));
+
+const runInk = (style: Style, role: FigureRole | undefined): Ink => ({
+  color: runColor(style, role),
+  ...(isBold(style, role) ? { bold: true } : {}),
+  ...(role === "dim" && !style.theme.codeComment ? { dim: true } : {}),
+});
 
 const heldRuns = (style: Style, runs: FigureRun[]): FigureRun[] => {
   const hold = !hasRtl(runs.map((run) => run.text).join(""))
@@ -439,8 +447,10 @@ const drawFigure = (
   const decision: Decision = remember(decisions, block.lines.join("\n"), () => decide(block.lines));
   if ("note" in decision) return decision;
   if (decision.rows.length === 0) return null;
-  if (decision.widest > columns - 2) return { note: `figure is ${decision.widest} cols, terminal is ${columns}` };
-  return { element: figureElement(el, style, decision.rows, key), art: decision.texts.join("\n") };
+  if (decision.widest > columns - 2) return { note: `figure is ${decision.widest} cols, ${columns - 2} fit` };
+  const hues = () =>
+    decision.rows.map((row) => row.flatMap((run) => cells(run.text).map(() => runInk(style, run.role))));
+  return { element: figureElement(el, style, decision.rows, key), art: decision.texts.join("\n"), hues };
 };
 
 export {
