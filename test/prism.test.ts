@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { registerHooks, syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -51,10 +51,13 @@ const { default: prismExtension, themeFromPiTheme } = await import("../extension
 const { EL, h } = await import("../extensions/prism/core/jsx.ts");
 const { PrismComponent } = await import("../extensions/prism/renderer.ts");
 const { clearHover, settlePointerMove } = await import("../extensions/lib/pointer-hover.ts");
-const { tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
-const { parse } = await import("../extensions/prism/core/markdown.ts");
+const { escapeHtml, tableHtml, tableText } = await import("../extensions/prism/core/html.ts");
+const { decodeEntities, parse, texParses, texText } = await import("../extensions/prism/core/markdown.ts");
 const { background } = await import("../extensions/prism/core/background.ts");
-const { fallback, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
+const { pieText } = await import("../extensions/prism/core/charts.ts");
+const { checkFigure, FIGURE_HINT, figureText } = await import("../extensions/prism/core/figure.ts");
+const { CACHE_BYTES, keepFormulas, oldestOver } = await import("../extensions/prism/core/latex.ts");
+const { fallback, mermaidText, textNote, textVerdict } = await import("../extensions/prism/core/mermaid.ts");
 const { headerWord, PELE_HINT, PELE_KINDS, peleJobs, pelePicture, peleTimeout, pictureOf } = await import(
   "../extensions/prism/core/pele.ts"
 );
@@ -62,10 +65,15 @@ const { flatten } = await import("../extensions/prism/core/vendor/pele/svg.js");
 const { allowedWidth, BUDGET, widthFor } = await import("../extensions/prism/core/vendor/pele/budget.js");
 const { fontsFor, SOURCES: PELE_FONTS } = await import("../extensions/prism/core/vendor/pele/fonts.js");
 const { plantumlJobs, plantumlTimeout } = await import("../extensions/prism/core/plantuml.ts");
+const { renderBlocks } = await import("../extensions/prism/core/render.ts");
 const { resolveStyle } = await import("../extensions/prism/core/theme.ts");
-const { holdEngine, holdRow } = await import("../extensions/prism/core/rtl.ts");
-const { imageCommand, MAC_IMAGE_COPY, WIN_IMAGE_COPY } = await import("../extensions/prism/core/clipboard.ts");
-const { helpText, showcaseText } = await import("../extensions/prism/core/help.ts");
+const { engineProse, flow, holdEngine, holdRow, TERMINALS } = await import("../extensions/prism/core/rtl.ts");
+const { artColors, artPicture, blockFill, imageCommand, MAC_IMAGE_COPY, WIN_IMAGE_COPY } = await import(
+  "../extensions/prism/core/clipboard.ts"
+);
+const { ESSENTIAL_STEPS, helpText, SETUP_ESSENTIALS_DONE, SETUP_STEPS, showcaseText } = await import(
+  "../extensions/prism/core/help.ts"
+);
 
 const stripAnsi = (s: string) =>
   s
@@ -1721,9 +1729,13 @@ function peleFixture(options: { images?: "kitty" | "iterm2" | null } = {}) {
 }
 
 const mermaidFence = (source: string) => ["```mermaid", source, "```"].join("\n");
-const fanOut = (id: (n: number) => string = (n) => `c${n}`) =>
+const fanOut = (id: (n: number) => string = (n) => `c${n}`, count = 4) =>
   mermaidFence(
-    ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n"),
+    [
+      "flowchart TD",
+      "  root[Root]",
+      ...Array.from({ length: count }, (_, n) => `  root --> ${id(n)}[Child number ${n}]`),
+    ].join("\n"),
   );
 const plainText = (comp: any, width = 100) => stripAnsi(comp.render(width).join("\n"));
 const drawnImages = (comp: any, width = 100) =>
@@ -1822,7 +1834,7 @@ test("29. pele never runs for art that fits, an open fence, a terminal without i
   assert.equal(peleJobs.cache.size, 0, "no render started without images");
 });
 
-test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from one render", async () => {
+test("30. a 4-child fan-out squeezes to box art at 80 columns, and a 5-child fan-out is a picture at 80 and box art at 130, from one render", async () => {
   const restoreHost = clipboardHost("linux");
   const fake = peleFixture();
   const h = createHarness();
@@ -1833,15 +1845,21 @@ test("30. a too-wide fan-out is a picture at 80 columns and box art at 130, from
   };
   await h.emit("session_start");
 
-  const comp = reply(fanOut());
+  const squeezed = reply(fanOut());
+  const squeezedPlain = plainText(squeezed, fittedAt(80));
+  assert.ok(squeezedPlain.includes("Child number 3"), "81-column fan-out squeezes natively into 80 columns");
+  assert.equal(drawnImages(squeezed, fittedAt(80)), 0, "no pele image needed for squeezed fan-out");
+  assert.equal(peleJobs.pending.size, 0);
+
+  const comp = reply(fanOut(undefined, 5));
   assert.ok(
     plainText(comp, fittedAt(80)).includes("drawing with pele…"),
-    "80 columns are too few for the 81-column art",
+    "80 columns are too few even after squeezing the 5-child fan-out",
   );
   await peleJobs.idle();
   assert.equal(drawnImages(comp, fittedAt(80)), 1, "80 columns show the picture");
 
-  assert.ok(plainText(comp, fittedAt(130)).includes("Child number 3"), "130 columns show the text art");
+  assert.ok(plainText(comp, fittedAt(130)).includes("Child number 4"), "130 columns show the text art");
   assert.deepEqual(shownLabels(comp, fittedAt(130), false), ["⧉ source", "⧉ art"], "the art has its own buttons");
   assert.equal(drawnImages(comp, fittedAt(130)), 0);
 
@@ -1977,7 +1995,7 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
   ] as const;
   const notes = [
     "timeline diagrams draw as source for now",
-    "diagram is 95 cols, terminal is 78",
+    "diagram too wide to render (95 cols, 76 fit)",
     "diagram failed to render",
   ];
   assert.deepEqual(verdicts.map(textNote), notes, "textNote keeps main's strings");
@@ -1990,15 +2008,19 @@ test("36. fallback shows the picture, the pending note, or today's note, for eve
   const style = resolveStyle({});
   const fits = textVerdict("flowchart TD\n  A --> B", style, 80, 0);
   assert.ok(fits.fits, "textVerdict returns the art when it fits");
+  assert.ok(
+    textVerdict(fanOut().split("\n").slice(1, -1).join("\n"), style, 80, 0).fits,
+    "4-child fanOut squeezes into 80 cols",
+  );
   assert.deepEqual(textVerdict("timeline\n  2020 : a", style, 80, 0), {
     fits: false,
     why: "unsupported",
     word: "timeline",
   });
-  assert.deepEqual(textVerdict(fanOut().split("\n").slice(1, -1).join("\n"), style, 80, 0), {
+  assert.deepEqual(textVerdict(fanOut(undefined, 5).split("\n").slice(1, -1).join("\n"), style, 80, 0), {
     fits: false,
     why: "too-wide",
-    narrowest: 81,
+    narrowest: 94,
     columns: 80,
   });
   assert.deepEqual(
@@ -2079,10 +2101,13 @@ test("39. pele:false or an SSH session keeps every block the text renderer canno
     const h = createHarness(config);
     try {
       await h.emit("session_start");
-      const comp = reply([mermaidFence("timeline\n  2020 : off"), fanOut((n) => `c${n}`)].join("\n\n"));
+      const comp = reply([mermaidFence("timeline\n  2020 : off"), fanOut((n) => `c${n}`, 5)].join("\n\n"));
       const plain = plainText(comp, fittedAt(80));
       assert.ok(plain.includes("timeline diagrams draw as source for now"), `${name}: the timeline keeps main's note`);
-      assert.ok(plain.includes("diagram is 81 cols, terminal is 80"), `${name}: the wide flowchart keeps main's note`);
+      assert.ok(
+        plain.includes("diagram too wide to render (94 cols, 78 fit)"),
+        `${name}: the wide flowchart keeps main's note`,
+      );
       assert.ok(!plain.includes("pele"), `${name}: nothing mentions pele`);
       await sleep(100);
       assert.equal(peleJobs.pending.size, 0, name);
@@ -2198,7 +2223,7 @@ test("44. pele draws every /prism checkhealth sample at twice the width it repor
 
 test("45. pele draws a hyphenated flowchart the text renderer cannot fit, and flowcharts and C4 grow beyond 4096 pixels without shrinking", async () => {
   peleJobs.clear();
-  const hyphenated = fanOut((n) => `child-${n}`)
+  const hyphenated = fanOut((n) => `child-${n}`, 5)
     .split("\n")
     .slice(1, -1)
     .join("\n");
@@ -2632,12 +2657,18 @@ test("55. editor file links are terminal hyperlinks, and the editors' other link
   assert.ok(plain.includes("settings (zed://settings)"), "a zed settings link shows its target");
 });
 
-test("56. the image helper gets each glyph at its terminal column, and the theme colors as RGB, on stdin", () => {
+const parseMacImagePayload = (stdin: string) => {
+  assert.ok(stdin.startsWith("var payload = "), "macOS image helper defines var payload on stdin");
+  assert.ok(stdin.endsWith(`\n${MAC_IMAGE_COPY}`), "macOS image helper appends MAC_IMAGE_COPY script");
+  return JSON.parse(stdin.slice("var payload = ".length, -`\n${MAC_IMAGE_COPY}`.length));
+};
+
+test("56. the image helper gets each glyph at its terminal column, theme colors, hues, and block fills on stdin", () => {
   const text = "┌──┬──┐\n│苹│ab│\n└──┴──┘";
   const mac = imageCommand("macos", text, { foreground: "#cdd6f4", background: "#1e1e2e" });
-  assert.deepEqual(mac.argv, ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_IMAGE_COPY]);
+  assert.deepEqual(mac.argv, ["/usr/bin/osascript", "-l", "JavaScript"]);
   const row = (line: string) => [...line].map((glyph, at) => ({ at, text: glyph }));
-  assert.deepEqual(JSON.parse(mac.stdin), {
+  assert.deepEqual(parseMacImagePayload(mac.stdin), {
     lines: [
       row("┌──┬──┐"),
       [
@@ -2665,12 +2696,12 @@ test("56. the image helper gets each glyph at its terminal column, and the theme
   ]);
   assert.match(win.stdin, /^[\x00-\x7e]*$/, "PowerShell reads ASCII only");
   assert.deepEqual(JSON.parse(win.stdin), {
-    ...JSON.parse(mac.stdin),
+    ...parseMacImagePayload(mac.stdin),
     foreground: [0, 0, 0],
     background: [255, 255, 255],
   });
   const colors = (colorSet: { foreground?: string; background?: string }) =>
-    JSON.parse(imageCommand("macos", "x", colorSet).stdin);
+    parseMacImagePayload(imageCommand("macos", "x", colorSet).stdin);
   assert.deepEqual(
     [colors({ foreground: "cyan" }).foreground, colors({ foreground: "cyan" }).background],
     [
@@ -2689,10 +2720,21 @@ test("56. the image helper gets each glyph at its terminal column, and the theme
     [255, 255, 255],
     "dark text on a dark background turns white",
   );
+
+  const styledColors = artColors(resolveStyle({ diagramTextColor: "#abc" }, {}));
+  assert.deepEqual(styledColors, { foreground: "#aabbcc", themeBackground: undefined });
+  const styled = artPicture("─a▄", { foreground: "#111111", themeBackground: "#ffffff" }, [
+    [{ color: "#e5e5e5" }, { color: "#0066cc", bold: true, italic: true }, { dim: true }],
+  ]);
+  assert.deepEqual(styled.lines[0], [
+    { at: 0, text: "─", color: [229, 229, 229] },
+    { at: 1, text: "a", color: [0, 102, 204], bold: true, italic: true },
+    { at: 2, text: "▄", color: [136, 136, 136], fill: blockFill("▄") },
+  ]);
 });
 
 test("57. the image helper gets right-to-left cell text in drawn order, each letter in its own column, borders kept in place", () => {
-  const lines = JSON.parse(imageCommand("macos", "│ שלום │ 3 │\n│ Pears אגסים │", {}).stdin).lines;
+  const lines = parseMacImagePayload(imageCommand("macos", "│ שלום │ 3 │\n│ Pears אגסים │", {}).stdin).lines;
   assert.deepEqual(lines[0], [
     { at: 0, text: "│" },
     { at: 2, text: "ם" },
@@ -2789,7 +2831,7 @@ test("59. a block drawn as a picture keeps ⧉ image and gets no ▣ png", { ski
   assert.deepEqual(shownLabels(comp, 100, false), ["⧉ source", "⧉ image", "⧉ preview"]);
 });
 
-test("60. ▣ png hands the helper the drawn art without fences, in the pi theme's background, and says it copied an image", {
+test("60. ▣ png hands the helper colored art without fences, in the pi theme's background, and says it copied an image", {
   skip: !hasOsascript,
 }, async () => {
   const restoreHost = clipboardHost("macos");
@@ -2809,21 +2851,33 @@ test("60. ▣ png hands the helper the drawn art without fences, in the pi theme
   assert.equal(helper.calls.length, 0, "the plain art button starts no helper");
   press(comp, 100, "▣ png", false);
   const [call] = helper.calls;
-  assert.deepEqual([call!.bin, ...call!.args], ["/usr/bin/osascript", "-l", "JavaScript", "-e", MAC_IMAGE_COPY]);
-  assert.equal(call!.timeout, 5000);
-  const drawnRows = JSON.parse(call!.input).lines.map((glyphs: { text: string }[]) =>
-    glyphs.map((g) => g.text).join(""),
-  );
+  assert.deepEqual([call!.bin, ...call!.args], ["/usr/bin/osascript", "-l", "JavaScript"]);
+  assert.equal(call!.timeout, Math.min(30000, 5000 + Math.ceil(call!.input.length / 100)));
+  const payload = parseMacImagePayload(call!.input);
+  const drawnRows = payload.lines.map((glyphs: { text: string }[]) => glyphs.map((g) => g.text).join(""));
   assert.ok(copiedTexts[0]!.startsWith("```"), "the art button copies the fenced art");
   assert.deepEqual(
     drawnRows,
     copiedTexts[0]!
       .split("\n")
       .slice(1, -1)
-      .map((row) => row.replace(/ /g, "")),
+      .map((row, i) =>
+        (i === 2 ? row.replace(/[├┼┤─]/g, (c) => ({ "├": "╞", "┼": "╪", "┤": "╡", "─": "═" })[c] ?? c) : row).replace(
+          / /g,
+          "",
+        ),
+      ),
     "the image draws the art without its fences",
   );
-  assert.deepEqual(JSON.parse(call!.input).background, [0, 0, 0], "a dark pi theme draws on black");
+  const headerGlyph = payload.lines[1].find((g: { text: string }) => g.text === "I");
+  assert.equal(headerGlyph?.bold, true, "table header glyphs are bold in PNG payload");
+  assert.ok(Array.isArray(headerGlyph?.color) && headerGlyph.color.length === 3, "table header glyphs carry RGB color");
+  const numberGlyph = payload.lines[3].find((g: { text: string }) => g.text === "3");
+  assert.ok(
+    Array.isArray(numberGlyph?.color) && numberGlyph.color.length === 3,
+    "table numeric glyphs carry RGB color",
+  );
+  assert.deepEqual(payload.background, [0, 0, 0], "a dark pi theme draws on black");
   assert.ok(
     h.notifications.some((n) => n.text === "Copied as image"),
     JSON.stringify(h.notifications),
@@ -2831,10 +2885,14 @@ test("60. ▣ png hands the helper the drawn art without fences, in the pi theme
 
   setTheme("light");
   press(reply(TABLE_SOURCE), 100, "▣ png", false);
-  assert.deepEqual(JSON.parse(helper.calls[1]!.input).background, [255, 255, 255], "a light pi theme draws on white");
+  assert.deepEqual(
+    parseMacImagePayload(helper.calls[1]!.input).background,
+    [255, 255, 255],
+    "a light pi theme draws on white",
+  );
 });
 
-test("61. ▣ png on a figure and a diagram draws their art, and a cold PowerShell gets 15 s", async () => {
+test("61. ▣ png on a figure and a diagram draws their art, and Windows helper timeout scales with stdin length up to 30 s", async () => {
   const restoreHost = clipboardHost("windows");
   const helper = recordHelpers();
   const h = createHarness();
@@ -2847,7 +2905,13 @@ test("61. ▣ png on a figure and a diagram draws their art, and a cold PowerShe
 
   press(reply(FLOWCHART_SOURCE), 100, "▣ png", false);
   press(reply(FIGURE_SOURCE), 100, "▣ png", false);
-  const drawn = helper.calls.map((call) =>
+  const hugeTable = [
+    "| Key | Value |",
+    "|---|---|",
+    ...Array.from({ length: 500 }, (_, i) => `| item-${i}-${"x".repeat(40)} | ${i} |`),
+  ].join("\n");
+  press(reply(hugeTable), 100, "▣ png", false);
+  const drawn = helper.calls.slice(0, 2).map((call) =>
     JSON.parse(call.input)
       .lines.flat()
       .map((g: { text: string }) => g.text)
@@ -2857,8 +2921,11 @@ test("61. ▣ png on a figure and a diagram draws their art, and a cold PowerShe
   assert.ok(drawn[1]!.includes("ok") && drawn[1]!.includes("┌─box─┐"), drawn[1]);
   for (const call of helper.calls) {
     assert.equal(call.bin, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    assert.equal(call.timeout, 15000);
+    assert.equal(call.timeout, Math.min(30000, 15000 + Math.ceil(call.input.length / 100)));
   }
+  const hugeCall = helper.calls[2]!;
+  assert.ok(hugeCall.timeout > helper.calls[0]!.timeout, "large stdin increases helper timeout");
+  assert.equal(hugeCall.timeout, 30000, "large stdin caps helper timeout at 30 s");
 });
 
 test("62. a failed image copy falls back to the drawn text and says why", async () => {
@@ -4028,4 +4095,880 @@ test("99. a wide diagram is not cut, and the budget rule keeps twice the natural
       `${w} x ${h} gives ${width} x ${height}`,
     );
   }
+});
+
+test("100. the 5 newly native Mermaid kinds draw natively without pele, while PELE_KINDS keeps 9 kinds and wide/broken fall back", async () => {
+  assert.deepEqual(PELE_KINDS, [
+    "timeline",
+    "sankey-beta",
+    "C4Context",
+    "architecture-beta",
+    "block-beta",
+    "packet-beta",
+    "radar-beta",
+    "treemap-beta",
+    "requirementDiagram",
+  ]);
+
+  const nativeKinds = [
+    {
+      kind: "quadrantChart",
+      source: "quadrantChart\n  title Reach vs Cost\n  x-axis Low --> High\n  y-axis Low --> High\n  Alpha: [0.3, 0.8]",
+      broken: "quadrantChart",
+      expectText: "Reach vs Cost",
+    },
+    {
+      kind: "mindmap",
+      source: "mindmap\n  root((Plan))\n    Build\n    Ship",
+      broken: "mindmap",
+      expectText: "Build",
+    },
+    {
+      kind: "journey",
+      source: "journey\n  title Checkout\n  section Pay\n    Confirm: 5: User",
+      broken: "journey\n  title Empty",
+      expectText: "Confirm",
+    },
+    {
+      kind: "kanban",
+      source: "kanban\n  Todo\n    k1[Write tests]",
+      broken: "kanban",
+      expectText: "Write tests",
+    },
+    {
+      kind: "gitGraph",
+      source: "gitGraph\n  commit\n  branch dev\n  commit\n  checkout main\n  merge dev",
+      broken: "gitGraph\n  bogusCommand",
+      expectText: "dev",
+    },
+  ] as const;
+
+  const restoreHost = clipboardHost("linux");
+  const style = resolveStyle({});
+  const fake = peleFixture();
+  const h = createHarness();
+  cleanupFn = () => {
+    fake.restore();
+    h.cleanup();
+    restoreHost();
+  };
+  await h.emit("session_start");
+
+  for (const item of nativeKinds) {
+    assert.ok(!PELE_KINDS.includes(item.kind as never), `${item.kind} is no longer in PELE_KINDS`);
+    const comp = reply(mermaidFence(item.source));
+    const plain = plainText(comp, fittedAt(120));
+    assert.ok(plain.includes(item.expectText), `${item.kind} renders its native text art`);
+    assert.deepEqual(shownLabels(comp, fittedAt(120), false), ["⧉ source", "⧉ art"], `${item.kind} shows art buttons`);
+    assert.equal(peleJobs.pending.size, 0, `${item.kind} starts no pele job`);
+    assert.equal(peleJobs.cache.size, 0, `${item.kind} caches no pele image`);
+    assert.deepEqual(
+      textVerdict(item.broken, style, 100, 0),
+      { fits: false, why: "no-art" },
+      `${item.kind} broken -> no-art`,
+    );
+  }
+
+  const wideQuadrant = [
+    "quadrantChart",
+    "  title Strategic Portfolio Quadrant Assessment",
+    "  x-axis Extremely Low Operational Readiness --> Extremely High Operational Readiness",
+    "  y-axis Low Impact --> High Impact",
+    "  Item: [0.5, 0.5]",
+  ].join("\n");
+  const narrowVerdict = textVerdict(wideQuadrant, style, 25, 0);
+  assert.equal(narrowVerdict.fits, false);
+  assert.equal(narrowVerdict.why, "too-wide");
+  const hNoPele = createHarness({ pele: false });
+  const prevCleanup = cleanupFn;
+  cleanupFn = () => {
+    prevCleanup();
+    hNoPele.cleanup();
+  };
+  await hNoPele.emit("session_start");
+  const tooWideComp = reply(mermaidFence(wideQuadrant));
+  assert.ok(
+    plainText(tooWideComp, fittedAt(25)).replace(/\s+/g, " ").includes("diagram too wide to render (24 cols, 23 fit)"),
+  );
+  const brokenComp = reply(mermaidFence("kanban"));
+  assert.ok(plainText(brokenComp, fittedAt(80)).includes("diagram failed to render"));
+});
+
+test("101. Mermaid fixes: flowchart edge order, labeled TD spacing, entity escaping, gantt ISO/bracket formats, pie titles/aspect, and 8000-char limit", () => {
+  const ordered = mermaidText("flowchart TD\n  C --> D\n  A --> C\n  B --> C", false, 80);
+  assert.ok(ordered, "flowchart renders regardless of edge order");
+  const rows = ordered.split("\n");
+  const rowOf = (label: string) => rows.findIndex((r) => r.includes(label));
+  assert.ok(rowOf("A") === rowOf("B") && rowOf("A") < rowOf("C") && rowOf("C") < rowOf("D"), ordered);
+
+  const labeled = mermaidText("flowchart TD\n  A[Start] -->|ok| B[Done]", false, 80)!;
+  const lRows = labeled.split("\n");
+  const okRow = lRows.findIndex((r) => r.includes("ok"));
+  assert.ok(okRow > 0 && lRows[okRow - 1]!.includes("┬") && lRows[okRow + 1]!.includes("▼"), labeled);
+
+  const entities = mermaidText(
+    'flowchart LR\n  A["#quot;hi#quot; #91;x#93; #35;1 #amp; #bogus;"]\n  style A fill:#123',
+    false,
+    80,
+  )!;
+  assert.ok(entities.includes('"hi" [x] #1 & #bogus;'), entities);
+
+  const isoGantt = mermaidText(
+    "gantt\n  dateFormat YYYY-MM-DDTHH:mm:ss\n  section S\n  Task A :a, 2026-01-01T09:00:00, 2h\n  Task B :after a, 1h",
+    false,
+    80,
+  )!;
+  assert.ok(isoGantt.includes("09:00") && isoGantt.includes("Task A") && isoGantt.includes("Task B"), isoGantt);
+
+  const bracketGantt = mermaidText(
+    "gantt\n  dateFormat YYYY-MM-DD[ at ]HH:mmZ\n  section S\n  Task A :2026-01-01 at 09:00Z, 2h",
+    false,
+    80,
+  )!;
+  assert.ok(bracketGantt.includes("09:00") && bracketGantt.includes("Task A"), bracketGantt);
+
+  const inlinePie = pieText('pie title "Quoted: A & B"\n  "A" : 3\n  "B" : 1', false, 80, 2, 1)!;
+  const linePie = pieText('pie\n  title "Line Title"\n  "A" : 3\n  "B" : 1', false, 80, 2, 2)!;
+  assert.equal(inlinePie.pie?.title, "Quoted: A & B");
+  assert.equal(linePie.pie?.title, "Line Title");
+  const maxWidth = (text: string) => Math.max(...text.split("\n").map((l) => l.length));
+  assert.ok(maxWidth(linePie.text) > maxWidth(inlinePie.text), "aspect = 2 widens pie chart");
+
+  const style = resolveStyle({});
+  const longDiagram =
+    "flowchart LR\n  " + Array.from({ length: 40 }, (_, i) => `n${i}[${"x".repeat(200)}] --> n${i + 1}`).join("\n  ");
+  assert.ok(longDiagram.length > 8000);
+  const longVerdict = textVerdict(longDiagram, style, 80, 0);
+  assert.equal(longVerdict.fits, false);
+  assert.match(textNote(longVerdict), /^diagram too long to render \(\d+ characters, max 8000\)$/);
+
+  const tallDiagram = ["flowchart TD", ...Array.from({ length: 82 }, (_, i) => `  n${i} --> n${i + 1}`)].join("\n");
+  const tallVerdict = textVerdict(tallDiagram, style, 80, 0);
+  assert.equal(tallVerdict.fits, false);
+  assert.match(textNote(tallVerdict), /^diagram too long to render \(\d+ lines, max 80\)$/);
+});
+
+test("102. tableLayout (classic, auto, compact, stacked) handles long unbreakable paths and checksums", async () => {
+  const tableMd = [
+    "| File | Digest |",
+    "|:-----|:-------|",
+    "| packages/core/src/authentication/token-validator.ts | sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 |",
+    "| src/a.ts | ok |",
+  ].join("\n");
+
+  const h = createHarness();
+  cleanupFn = h.cleanup;
+  await h.emit("session_start");
+
+  for (const layout of ["classic", "auto", "compact", "stacked"] as const) {
+    h.writeConfig({ tableLayout: layout, tableStyle: "rules" });
+    await h.emit("session_start");
+    const comp = reply(tableMd);
+    const narrowLines = comp.render(56);
+    const narrowPlain = narrowLines.map(stripAnsi).join("\n");
+    const widePlain = comp.render(150).map(stripAnsi).join("\n");
+
+    if (layout === "classic") {
+      assert.ok(narrowPlain.includes("────────"), "classic draws horizontal table border even at narrow width");
+      assert.ok(widePlain.includes("────────"), "classic draws table at wide width");
+    } else if (layout === "auto") {
+      assert.ok(
+        !narrowPlain.includes("  Digest  ") && narrowPlain.includes("File"),
+        "auto stacks narrow unbreakable table into cards",
+      );
+      for (const line of narrowLines) assert.ok(visibleWidth(line) <= 56, `auto stacked stays <= 56 cols: ${line}`);
+      assert.ok(
+        widePlain.includes("token-validator.ts") && widePlain.includes("sha256:9f86"),
+        "auto keeps table grid when wide",
+      );
+    } else if (layout === "compact") {
+      assert.ok(widePlain.includes("Digest"), "compact draws table");
+      const ruleWidth = widePlain.split("\n").find((l) => l.includes("────"))?.length ?? 0;
+      assert.ok(ruleWidth < 146, `compact keeps columns snug (${ruleWidth} cols)`);
+    } else {
+      assert.ok(widePlain.includes("────────────────"), "stacked renders cards even at 150 cols");
+      assert.ok(widePlain.includes("File   packages/core/src/authentication/token-validator.ts"));
+    }
+  }
+
+  h.writeConfig({ tableLayout: "stacked", tableStyle: "minimal" });
+  await h.emit("session_start");
+  const minimalStacked = plainText(reply(tableMd), 120);
+  assert.ok(!minimalStacked.includes("────────────────"), "minimal stacked omits card separators");
+});
+
+const collectTextProps = (node: any, out: { text: string; color?: string; bold?: boolean }[] = []) => {
+  if (!node || typeof node !== "object") return out;
+  if (node.type === "Text") {
+    const own = { color: node.props?.color, bold: node.props?.bold };
+    const collectChildren = (children: any[], inherited: { color?: string; bold?: boolean }) => {
+      for (const ch of children) {
+        if (typeof ch === "string" || typeof ch === "number") {
+          out.push({ text: String(ch), ...inherited });
+        } else if (ch && typeof ch === "object" && ch.type === "Text") {
+          collectChildren(ch.children ?? [], {
+            color: ch.props?.color ?? inherited.color,
+            bold: ch.props?.bold ?? inherited.bold,
+          });
+        } else {
+          collectTextProps(ch, out);
+        }
+      }
+    };
+    collectChildren(node.children ?? [], own);
+    return out;
+  }
+  for (const ch of node.children ?? []) collectTextProps(ch, out);
+  return out;
+};
+
+test("103. all 11 semantic table modes work and RTL pivotTable maintains alignment", async () => {
+  const baseTheme = themeFromPiTheme(activePiGlobalTheme);
+  const allOff = {
+    statusMatrix: "off",
+    testMatrix: "off",
+    benchTable: "off",
+    schemaTable: "off",
+    compareTable: "off",
+    apiTable: "off",
+    kvTable: "off",
+    groupTable: "off",
+    heatTable: "off",
+    treeTable: "off",
+    pivotTable: "off",
+  };
+
+  const renderSpans = (md: string, opts: Record<string, unknown>, columns = 120) => {
+    const style = resolveStyle({ ...allOff, ...opts }, baseTheme);
+    const elements = renderBlocks(EL, style, parse(md, { numbers: true, paths: true }), columns);
+    return elements.flatMap((el) => collectTextProps(el));
+  };
+
+  // 1. statusMatrix (summary & group)
+  const statusMd = [
+    "| Suite | Status |",
+    "|---|---|",
+    "| unit | pass |",
+    "| e2e | fail |",
+    "| lint | warn |",
+    "| deploy | queued |",
+    "| smoke | ok |",
+  ].join("\n");
+  const summaryText = renderSpans(statusMd, { statusMatrix: "summary" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(summaryText.includes("✓ 2 · ✗ 1 · ⚠ 1 · ● 1"), summaryText);
+  const groupText = renderSpans(statusMd, { statusMatrix: "group" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(
+    groupText.indexOf("unit") < groupText.indexOf("e2e") && groupText.indexOf("e2e") < groupText.indexOf("lint"),
+  );
+
+  // 2. testMatrix
+  const testMd = "| Spec | Result | Time |\n|---|---|---|\n| auth | pass | 110ms |\n| db | fail | 300ms |";
+  const testOut = renderSpans(testMd, { testMatrix: "report" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(testOut.includes("✓ 1 of 2 (50%) · ✗ 1 · 410ms total"), testOut);
+  assert.ok(
+    !renderSpans(testMd, {})
+      .map((s) => s.text)
+      .join("")
+      .includes("total"),
+  );
+
+  // 3. benchTable
+  const benchMd =
+    "| Build | Latency | Delta |\n|---|---|---|\n| v1 | 100ms | +0% |\n| v2 | 50ms | -50% |\n| v3 | 25ms | -50% |";
+  const benchSpans = renderSpans(benchMd, { benchTable: "trend" });
+  const benchStr = benchSpans.map((s) => s.text).join("");
+  assert.ok(/[▁-█]{3}/.test(benchStr), "benchTable trend renders sparkline");
+  assert.equal(
+    benchSpans.find((s) => s.text.includes("-50%"))?.color,
+    baseTheme.diffAdded,
+    "negative latency delta is diffAdded",
+  );
+
+  // 4. schemaTable
+  const schemaMd =
+    "| Column | Type | Key |\n|---|---|---|\n| id | bigint | PK |\n| email | varchar | UNIQUE |\n| org_id | uuid | FK |\n| active | boolean | |";
+  const schemaSpans = renderSpans(schemaMd, { schemaTable: "full" });
+  assert.equal(schemaSpans.find((s) => s.text.includes("bigint"))?.color, baseTheme.number);
+  assert.equal(schemaSpans.find((s) => s.text.includes("varchar"))?.color, baseTheme.codeString);
+  assert.equal(schemaSpans.find((s) => s.text.includes("PK"))?.color, baseTheme.accent);
+  assert.equal(schemaSpans.find((s) => s.text.includes("FK"))?.color, baseTheme.link);
+
+  // 5. compareTable
+  const compareMd = "| Model | Rank | Score |\n|---|---|---|\n| A | 1st | 98.5 |\n| B | 2nd | 82.0 |";
+  const compareSpans = renderSpans(compareMd, { compareTable: "full" });
+  assert.equal(compareSpans.find((s) => s.text.includes("1st"))?.color, baseTheme.accent);
+  assert.equal(compareSpans.find((s) => s.text.includes("98.5"))?.bold, true);
+  assert.equal(compareSpans.find((s) => s.text.includes("98.5"))?.color, baseTheme.diffAdded);
+
+  // 6. apiTable
+  const apiMd =
+    "| Method | Path | Auth |\n|---|---|---|\n| GET | /v1 | Bearer |\n| POST | /v1 | OAuth2 |\n| DELETE | /v1 | None |";
+  const apiSpans = renderSpans(apiMd, { apiTable: "full" });
+  assert.equal(apiSpans.find((s) => s.text.includes("GET"))?.color, baseTheme.link);
+  assert.equal(apiSpans.find((s) => s.text.includes("DELETE"))?.color, baseTheme.diffRemoved);
+  assert.equal(apiSpans.find((s) => s.text.includes("Bearer"))?.color, baseTheme.accent);
+
+  // 7. kvTable
+  const kvMd =
+    "| Option | Source | Value | Default |\n|---|---|---|---|\n| port | env | 9000 | 3000 |\n| mode | config | strict | strict |";
+  const kvSpans = renderSpans(kvMd, { kvTable: "full" });
+  assert.equal(kvSpans.find((s) => s.text.includes("env"))?.color, baseTheme.link);
+  assert.equal(kvSpans.find((s) => s.text.includes("9000"))?.color, baseTheme.accent);
+
+  // 8. groupTable
+  const groupMd =
+    "| Team | App | Port |\n|---|---|---|\n| Core | auth | 8001 |\n| Core | pay | 8002 |\n| Edge | cdn | 8080 |\n| Edge | dns | 53 |";
+  const groupOut = renderSpans(groupMd, { groupTable: "count" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(groupOut.includes("Core (2)") && groupOut.includes("Edge (2)"), groupOut);
+
+  // 9. heatTable
+  const heatMd = "| Node | Cpu | Mem |\n|---|---|---|\n| n1 | 10% | 20MB |\n| n2 | 90% | 80MB |";
+  const heatOut = renderSpans(heatMd, { heatTable: "bars" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(heatOut.includes("10%▁") && heatOut.includes("90%█"), heatOut);
+
+  // 10. treeTable
+  const treeMd =
+    "| Area | Sub | Leaf |\n|---|---|---|\n| app | web | home |\n| app | web | login |\n| app | api | health |\n| ops | db | backup |";
+  const treeOut = renderSpans(treeMd, { treeTable: "full" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(treeOut.includes("├─ web") && treeOut.includes("└─ login") && treeOut.includes("└─ api"), treeOut);
+
+  // 11. pivotTable (LTR & RTL alignment)
+  const pivotMd =
+    "| Metric | Jan | Feb | Mar |\n|---|---|---|---|\n| Latency | 12ms | 18ms | 9ms |\n| Errors | 1 | 3 | 0 |";
+  const pivotOut = renderSpans(pivotMd, { pivotTable: "transpose" })
+    .map((s) => s.text)
+    .join("");
+  assert.ok(pivotOut.indexOf("Latency") < pivotOut.indexOf("Jan") && pivotOut.includes("12ms"), pivotOut);
+
+  const rtlPivotMd =
+    "| מדד | א | ב | ג |\n|---|---|---|---|\n| חביון | 12 שנ | 18 שנ | 9 שנ |\n| שגיאות | 1 שנ | 3 שנ | 0 שנ |";
+  const h = createHarness({ ...allOff, pivotTable: "transpose", rtl: "warp" });
+  cleanupFn = h.cleanup;
+  await h.emit("session_start");
+  const rtlLines = reply(rtlPivotMd).render(80);
+  const rtlPlain = rtlLines.map(stripAnsi).join("\n");
+  for (const line of rtlLines) assert.ok(visibleWidth(line) <= 80, `RTL pivot stays within 80 cols: ${line}`);
+  const headerLine = rtlPlain.split("\n").find((l) => l.includes("דדמ") && l.includes("ןויבח"))!;
+  assert.ok(headerLine, rtlPlain);
+  assert.ok(
+    headerLine.indexOf("תואיגש") < headerLine.indexOf("ןויבח") &&
+      headerLine.indexOf("ןויבח") < headerLine.indexOf("דדמ"),
+    `RTL pivot reverses column order to right-to-left: ${headerLine}`,
+  );
+  assert.ok(rtlPlain.includes("נש 12") && rtlPlain.includes("│   א │"), `RTL pivot keeps alignment: ${rtlPlain}`);
+});
+
+test("104. escapeHtml, tableHtml dir=rtl, and colored PNG hues on figure and semantic tables", {
+  skip: !hasOsascript,
+}, async () => {
+  assert.equal(escapeHtml(`<script attr="a'b">&`), "&lt;script attr=&quot;a&#39;b&quot;&gt;&amp;");
+  const table = parse("| שם | סכום |\n|---|---:|\n| <A&B> | 42 |", { numbers: true, paths: true })[0] as any;
+  const rtlHtml = tableHtml(table, true);
+  const ltrHtml = tableHtml(table, false);
+  assert.ok(rtlHtml.startsWith('<table dir="rtl">'), rtlHtml);
+  assert.ok(!ltrHtml.includes('dir="rtl"'), ltrHtml);
+  assert.ok(
+    rtlHtml.includes("&lt;A&amp;B&gt;") &&
+      rtlHtml.includes('<th style="text-align: right">סכום</th>') &&
+      rtlHtml.includes('<td style="text-align: right">42</td>'),
+    rtlHtml,
+  );
+
+  const restoreHost = clipboardHost("macos");
+  const helper = recordHelpers();
+  const h = createHarness();
+  cleanupFn = () => {
+    helper.restore();
+    h.cleanup();
+    restoreHost();
+  };
+  await h.emit("session_start");
+
+  press(reply("```figure\n{warn}alert{/warn} {ok}ready{/ok}\n```"), 100, "▣ png", false);
+  press(reply("| Name | Count |\n|---|---:|\n| **alpha** | 42 |"), 100, "▣ png", false);
+  assert.equal(helper.calls.length, 2);
+
+  const figLines = parseMacImagePayload(helper.calls[0]!.input).lines.flat();
+  const alertColor = figLines.find((g: any) => g.text === "a")?.color;
+  const readyColor = figLines.find((g: any) => g.text === "y")?.color;
+  assert.ok(Array.isArray(alertColor) && Array.isArray(readyColor), "figure PNG carries role colors");
+  assert.notDeepEqual(alertColor, readyColor, "warn and ok figure roles map to distinct RGB hues");
+
+  const tblLines = parseMacImagePayload(helper.calls[1]!.input).lines.flat();
+  const boldCell = tblLines.find((g: any) => g.text === "a" && g.bold);
+  const numCell = tblLines.find((g: any) => g.text === "4");
+  assert.ok(boldCell?.color && numCell?.color, "table PNG carries bold strong and number RGB hues");
+});
+
+test("105. security & path linking: obsidian, directories, bare words, non-ASCII/drive paths, text fences, host spoofing, and control stripping", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-sec-"));
+  const subDir = join(dir, "docs");
+  mkdirSync(subDir);
+  writeFileSync(join(subDir, "guide.md"), "# Guide\n");
+  mkdirSync(join(dir, "bin"));
+  writeFileSync(join(dir, "bin", "tool"), "#!/bin/sh\n");
+  const nonAsciiRel = "專案/第1章/v4_第1段.md";
+  mkdirSync(join(dir, "專案", "第1章"), { recursive: true });
+  writeFileSync(join(dir, nonAsciiRel), "# Note\n");
+
+  const h = createHarness();
+  h.ctx.cwd = dir;
+  setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+  cleanupFn = () => {
+    resetCapabilitiesCache();
+    h.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  };
+  await h.emit("session_start");
+
+  const rawReply = [
+    "[open note](obsidian://open?vault=notes&file=todo)",
+    "[new note](obsidian://new?vault=notes&name=x)",
+    "[append note](obsidian://open?vault=notes&file=todo&append=yes)",
+    "[exec note](obsidian://open?vault=notes&file=evil.command)",
+    "[msdt](ms-msdt:/id)",
+    "Check `./docs` and `docs/` and `bin/tool` and Makefile and `" + nonAsciiRel + "`.",
+    "Spoof [http://good.com](https://evil.com) and [good.com](https://good.com@evil.com) and [http://good\u3002com](https://evil.com) and [goo\u200bd\u202e.com](https://good.com).",
+    "Clean\x1b[31mtext\x07here.",
+    "",
+    "```text",
+    "docs/guide.md",
+    "```",
+  ].join("\n\n");
+
+  const rendered = reply(rawReply).render(120).join("\n");
+  const linked = [...rendered.matchAll(/\x1b\]8;;([^\x07\x1b]+)/g)].map((m) => m[1]);
+  assert.ok(linked.includes("obsidian://open?vault=notes&file=todo"), `allowed obsidian://open links: ${linked}`);
+  for (const blocked of [
+    "obsidian://new",
+    "append=yes",
+    "evil.command",
+    "ms-msdt:",
+    "evil.com",
+    "goo\u200bd",
+    "bin/tool",
+    "Makefile",
+  ]) {
+    assert.ok(!linked.some((href) => href.includes(blocked)), `${blocked} is blocked`);
+  }
+  assert.ok(linked.includes(`file://${dir}/docs`), `directory ./docs links: ${linked}`);
+  assert.ok(linked.includes(`file://${dir}/docs/`), `directory docs/ links: ${linked}`);
+  assert.ok(
+    linked.some((href) => href.includes(encodeURI(nonAsciiRel))),
+    "non-ASCII + digit path links",
+  );
+  assert.ok(linked.includes(`file://${dir}/docs/guide.md`), "plain text code fence path links");
+  const plainReply = stripAnsi(rendered);
+  assert.ok(plainReply.includes("Cleantexthere."), "terminal control sequences stripped from reply");
+  assert.ok(
+    plainReply.includes("good.com (https://good.com)") && !rendered.includes("\u200b") && !rendered.includes("\u202e"),
+    "zero-width and bidi controls stripped from spoofed link in reply",
+  );
+
+  const promptComp = new UserMessageComponent("Check [goo\u200bd\u202e.com](https://good.com)!");
+  const promptRendered = promptComp.render(80).join("\n");
+  const promptOut = stripAnsi(promptRendered);
+  assert.ok(
+    promptOut.includes("good.com (https://good.com)") &&
+      !promptRendered.includes("\u200b") &&
+      !promptRendered.includes("\u202e"),
+    `zero-width and bidi controls stripped in prompt: ${promptOut}`,
+  );
+
+  // Drive path linking via renderBlocks
+  const winStyle = {
+    ...resolveStyle({ hyperlinks: true, pathLinks: true, fileLinks: "file://", found: new Set(["C:/work/plan.md"]) }),
+    found: new Set(["C:/work/plan.md"]),
+    fileLinks: "file://",
+    pathLinks: true,
+    hyperlinks: true,
+  };
+  const winOut = JSON.stringify(
+    renderBlocks(EL, winStyle, parse("Edit `C:\\work\\plan.md` now.", { numbers: true, paths: true }), 80),
+  );
+  assert.ok(winOut.includes("file:///C:/work/plan.md"), winOut);
+});
+
+test("106. forgetMisses keeps misses on read, forgets targeted path + ancestors on write/edit, and clears misses on non-read tool_execution_end", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "prism-misses-"));
+  const h = createHarness();
+  h.ctx.cwd = dir;
+  setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+  cleanupFn = () => {
+    resetCapabilitiesCache();
+    h.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  };
+  await h.emit("session_start");
+
+  const hasLink = (md: string, rel: string) => reply(md).render(120).join("\n").includes(`file://${dir}/${rel}`);
+  assert.equal(hasLink("See `later.ts` and `docs/` and `docs/nested.md` and `edited.ts`.", "later.ts"), false);
+
+  mkdirSync(join(dir, "docs"));
+  writeFileSync(join(dir, "later.ts"), "export const a = 1;\n");
+  writeFileSync(join(dir, "docs", "nested.md"), "# N\n");
+  writeFileSync(join(dir, "edited.ts"), "export const b = 2;\n");
+
+  await h.emit("tool_result", { toolCallId: "r1", toolName: "read", input: { path: "later.ts" } });
+  assert.equal(hasLink("See `later.ts`.", "later.ts"), false, "read preserves misses in asked");
+
+  await h.emit("tool_result", { toolCallId: "w1", toolName: "write", input: { path: "docs/nested.md" } });
+  assert.equal(hasLink("See `docs/nested.md` and `docs/`.", "docs/nested.md"), true, "write forgets written file");
+  assert.equal(hasLink("See `docs/`.", "docs/"), true, "write forgets ancestor dir");
+  assert.equal(hasLink("See `./docs`.", "docs"), true, "write forgets ancestor dir without trailing slash");
+  assert.equal(hasLink("See `later.ts`.", "later.ts"), false, "write keeps unrelated misses");
+
+  await h.emit("tool_result", { toolCallId: "e1", toolName: "edit", input: { path: "edited.ts" } });
+  assert.equal(hasLink("See `edited.ts`.", "edited.ts"), true, "edit forgets targeted path");
+
+  await h.emit("tool_execution_end", { toolCallId: "r1", toolName: "bash" });
+  assert.equal(
+    hasLink("See `later.ts`.", "later.ts"),
+    false,
+    "already-handled toolCallId is ignored by tool_execution_end",
+  );
+
+  await h.emit("tool_execution_end", { toolCallId: "b1", toolName: "bash" });
+  assert.equal(hasLink("See `later.ts`.", "later.ts"), true, "unhandled non-read tool_execution_end clears misses");
+});
+
+test("107. parsers: entities, escapes, setext, code-span pipes, decimals/units, PHP highlighting, folded/LONG_WORD safety, and texParses", async () => {
+  assert.equal(
+    decodeEntities("&amp; &lt; &copy; &mdash; &#65; &#x42; &unknown; &#27; &#0;"),
+    "& < © — A B &unknown;  \uFFFD",
+  );
+
+  const blocks = parse(
+    [
+      "Main Heading",
+      "===",
+      "",
+      "Sub Heading",
+      "---",
+      "",
+      "",
+      "---",
+      "",
+      "\\*not em\\* and `\\*code\\*` and $3.28/hr and 6 h/day.",
+      "",
+      "| Col |",
+      "|---|",
+      "| `a|b` and c\\|d |",
+    ].join("\n"),
+    { numbers: true, paths: true },
+  );
+  assert.deepEqual(
+    blocks.slice(0, 3).map((b) => [b.kind, "level" in b ? b.level : undefined]),
+    [
+      ["heading", 1],
+      ["heading", 2],
+      ["rule", undefined],
+    ],
+  );
+  const para = (blocks[3] as any).inline;
+  assert.ok(
+    para.some((n: any) => n.kind === "text" && n.text.includes("*not em*")),
+    "backslash escapes prevent emphasis",
+  );
+  assert.ok(
+    para.some((n: any) => n.kind === "code" && n.text === "\\*code\\*"),
+    "backslash escapes stay literal in code",
+  );
+  assert.ok(
+    !para.some((n: any) => n.kind === "number" && (n.text === "3.28" || n.text === "28")),
+    "$3.28/hr stays plain text",
+  );
+  assert.ok(
+    para.some((n: any) => n.kind === "number" && n.text === "6"),
+    "6 before h/day is a number",
+  );
+  const tbl = blocks[4] as any;
+  assert.equal(tbl.header.length, 1);
+  assert.equal(tbl.rows[0]![0]![0]!.text, "a|b");
+
+  const style = resolveStyle({}, themeFromPiTheme(activePiGlobalTheme));
+  const phpSpans = renderBlocks(
+    EL,
+    style,
+    parse("```php\n<?php\n$v = $obj->prop;\n// note\n```", { numbers: true, paths: true }),
+    80,
+  ).flatMap((el) => collectTextProps(el));
+  assert.ok(
+    phpSpans.some((s) => s.text === "$v" && s.color !== style.theme.codeText),
+    "PHP highlights variables",
+  );
+  assert.ok(
+    phpSpans.some((s) => s.text === "prop" && s.color !== style.theme.codeText),
+    "PHP highlights properties",
+  );
+
+  const h = createHarness();
+  cleanupFn = h.cleanup;
+  await h.emit("session_start");
+  const jwt = `const tok = "${"eyJ".repeat(450)}";`;
+  const longStart = Date.now();
+  const longLines = reply(["```ts", jwt, "```"].join("\n")).render(80);
+  assert.ok(Date.now() - longStart < 250, "LONG_WORD skips regex tokenization without hanging");
+  for (const line of longLines) assert.ok(visibleWidth(line) <= 80, "long unbreakable token wraps safely");
+
+  const closedFold = reply(["```ts", ...Array.from({ length: 35 }, (_, i) => `const k${i} = ${i};`), "```"].join("\n"));
+  const closedPlain = plainText(closedFold, 80);
+  assert.ok(
+    closedPlain.includes("[ +15 more lines ]") &&
+      closedPlain.includes("const k19 = 19;") &&
+      !closedPlain.includes("const k25 = 25;"),
+    "closed 35-line block folds at 20 visible lines",
+  );
+  const openOverMax = collectTextProps(
+    renderBlocks(
+      EL,
+      style,
+      parse(["```ts", ...Array.from({ length: 410 }, (_, i) => `const k${i} = ${i};`)].join("\n"), {
+        numbers: true,
+        paths: true,
+      }),
+      80,
+    )[0],
+  )
+    .map((s) => s.text)
+    .join("");
+  assert.ok(
+    openOverMax.includes("k399") && !openOverMax.includes("k405"),
+    "open streaming block highlights only up to CODE_MAX visible lines",
+  );
+
+  assert.equal(texParses("\\frac{1}{2}"), true);
+  assert.equal(texParses("\\frac{1}{"), false);
+  assert.equal(texParses(`${"{".repeat(33)}x${"}".repeat(33)}`), false);
+  assert.equal(texText("\\frac{1}{"), "\\frac{1}{");
+});
+
+test("108. figure closing tags, FIGURE_HINT, and {columns - 2} fit framing", async () => {
+  assert.ok(FIGURE_HINT.includes("{warn:disk full}"), FIGURE_HINT);
+  assert.deepEqual(checkFigure(["{warn}low disk{/warn}", "{ok}ok{/ok}"]), []);
+  assert.equal(figureText("{warn}low{/warn} {ok}bad{/warn}"), "low {ok}bad{/warn}");
+
+  const h = createHarness();
+  cleanupFn = h.cleanup;
+  await h.emit("session_start");
+  const wide = `┌${"─".repeat(68)}┐\n│${"x".repeat(68)}│\n└${"─".repeat(68)}┘`;
+  const rendered = plainText(reply(`\`\`\`figure\n${wide}\n\`\`\``), fittedAt(60)).replace(/\s+/g, " ");
+  assert.ok(rendered.includes("figure is 70 cols, 58 fit"), rendered);
+});
+
+test("109. RTL apple-terminal=inverse, breakLines in flow, and engineProse", async () => {
+  assert.equal(TERMINALS["apple-terminal"], "inverse");
+  const rtlFlow = flow([{ kind: "text", text: "שלום\nעולם" }], 40, visibleWidth, "inverse");
+  assert.equal(rtlFlow?.lines.length, 2, "breakLines keeps explicit newlines inside flow");
+
+  assert.equal(engineProse("שלום עולם"), "שלום עולם");
+  assert.equal(engineProse('const x = "שלום";'), null);
+
+  const engineStyle = resolveStyle({ rtl: "windows-terminal" });
+  const engineOut = JSON.stringify(
+    renderBlocks(EL, engineStyle, parse("```notes\nשלום עולם\n```", { numbers: true, paths: true }), 60),
+  );
+  assert.ok(
+    !engineOut.includes("\u2800") && engineOut.includes("שלום עולם"),
+    "windows-terminal engineProse avoids LTR_BLANK",
+  );
+});
+
+test("110. CACHE_BYTES eviction in latex/pictureCache and statSync file/size guard in typesetFormulasSync", async () => {
+  assert.equal(CACHE_BYTES, 32 * 1024 * 1024);
+  const items = new Map([
+    ["a", { bytes: 15 * 1024 * 1024 }],
+    ["b", { bytes: 12 * 1024 * 1024 }],
+    ["c", { bytes: 10 * 1024 * 1024 }],
+  ]);
+  assert.deepEqual([...oldestOver(items, (_, v) => v.bytes)], ["a"], "evicts oldest entries above 32 MiB");
+
+  const kept = keepFormulas(
+    {
+      old1: { png: "A".repeat(16 * 1024 * 1024), width: 1, height: 1 },
+      keepMe: { png: "B".repeat(16 * 1024 * 1024), width: 1, height: 1 },
+    },
+    [["fresh", { png: "C".repeat(16 * 1024 * 1024), width: 1, height: 1 }]],
+    new Set(["keepMe", "fresh"]),
+  );
+  assert.ok("keepMe" in kept && "fresh" in kept && !("old1" in kept));
+
+  // Real PNG (1x1 IHDR + tEXt padding) for pictureCache eviction & >2MB rejection
+  const makeLargePng = (targetBytes: number) => {
+    const chunk = (type: string, data: Buffer) => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(data.length, 0);
+      head.write(type, 4, 4, "ascii");
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(Buffer.concat([Buffer.from(type, "ascii"), data])), 0);
+      return Buffer.concat([head, data, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(1, 0);
+    ihdr.writeUInt32BE(1, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    const idat = chunk("IDAT", deflateSync(Buffer.from([0, 255, 0, 0, 255])));
+    const padLen = Math.max(0, targetBytes - 8 - 25 - idat.length - 12 - 12);
+    const textChunk = padLen > 0 ? chunk("tEXt", Buffer.alloc(padLen, 0x61)) : Buffer.alloc(0);
+    return Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      chunk("IHDR", ihdr),
+      idat,
+      textChunk,
+      chunk("IEND", Buffer.alloc(0)),
+    ]);
+  };
+
+  const workDir = mkdtempSync(join(tmpdir(), "prism-cache-"));
+  const binDir = join(workDir, "bin");
+  mkdirSync(binDir);
+  const prevPath = process.env.PATH ?? "";
+  process.env.PATH = `${binDir}:${prevPath}`;
+
+  const bigOkPng = makeLargePng(2_000_000);
+  const imgPaths: string[] = [];
+  for (let i = 0; i < 18; i++) {
+    const p = join(workDir, `pic-${i}.png`);
+    writeFileSync(p, bigOkPng);
+    imgPaths.push(p);
+  }
+  const overLimitPath = join(workDir, "over-2mb.png");
+  writeFileSync(overLimitPath, makeLargePng(2 * 1024 * 1024 + 512));
+
+  // Mock ratex-render executable to test statSync file & size guard in typesetFormulasSync
+  const validRatexPng = join(workDir, "valid-ratex.png");
+  writeFileSync(validRatexPng, makeLargePng(120));
+  const ratexBin = join(binDir, "ratex-render");
+  writeFileSync(
+    ratexBin,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const outDir = process.argv[process.argv.indexOf("--output-dir") + 1];
+const stdin = fs.readFileSync(0, "utf8");
+const target = path.join(outDir, "0001.png");
+fs.rmSync(target, { recursive: true, force: true });
+if (stdin.includes("AS_DIR")) fs.mkdirSync(target, { recursive: true });
+else if (stdin.includes("TOO_BIG")) fs.writeFileSync(target, Buffer.alloc(2 * 1024 * 1024 + 64));
+else fs.copyFileSync(${JSON.stringify(validRatexPng)}, target);
+process.stdout.write("OK 1 20 10\\n");
+`,
+  );
+  chmodSync(ratexBin, 0o755);
+
+  const h = createHarness({ latex: true });
+  h.ctx.cwd = workDir;
+  setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
+  cleanupFn = () => {
+    process.env.PATH = prevPath;
+    resetCapabilitiesCache();
+    h.cleanup();
+    rmSync(workDir, { recursive: true, force: true });
+  };
+  await h.emit("session_start");
+
+  for (const p of imgPaths) {
+    assert.ok(reply(`![p](${p})`).render(80).join("\n").includes(KITTY_IMAGE), `renders ${basename(p)}`);
+  }
+  // pic-0 (oldest) was evicted past 32MB while pic-17 stayed cached: unlink both and verify
+  rmSync(imgPaths[0]!);
+  rmSync(imgPaths[17]!);
+  assert.ok(
+    !reply(`![p](${imgPaths[0]})`).render(80).join("\n").includes(KITTY_IMAGE),
+    "evicted pic-0 is re-stat'd and gone",
+  );
+  assert.ok(
+    reply(`![p](${imgPaths[17]})`).render(80).join("\n").includes(KITTY_IMAGE),
+    "cached pic-17 stays available",
+  );
+  assert.ok(!reply(`![p](${overLimitPath})`).render(80).join("\n").includes(KITTY_IMAGE), ">2MiB picture is rejected");
+
+  assert.ok(
+    !reply("$$AS_DIR$$").render(80).join("\n").includes(KITTY_IMAGE),
+    "statSync rejects directory ratex output",
+  );
+  assert.ok(!reply("$$TOO_BIG$$").render(80).join("\n").includes(KITTY_IMAGE), "statSync rejects >2MiB ratex output");
+  assert.ok(reply("$$x + 1$$").render(80).join("\n").includes(KITTY_IMAGE), "valid ratex output renders Kitty image");
+});
+
+test("111. theme diffAdded/diffRemoved & longHex, setup 6/6 + setup more 1/12, direct commands, and read-only config error", async () => {
+  const withDiff = themeFromPiTheme({
+    name: "custom-diff",
+    colors: {
+      toolDiffAdded: { kind: "rgb", r: 18, g: 171, b: 52 },
+      toolDiffRemoved: { kind: "rgb", r: 254, g: 67, b: 33 },
+      success: { kind: "rgb", r: 0, g: 255, b: 0 },
+      error: { kind: "rgb", r: 255, g: 0, b: 0 },
+    },
+  } as any);
+  assert.deepEqual([withDiff.diffAdded, withDiff.diffRemoved], ["#12ab34", "#fe4321"]);
+  const fallbackDiff = themeFromPiTheme({
+    name: "custom-fallback",
+    colors: {
+      success: { kind: "rgb", r: 0, g: 255, b: 0 },
+      error: { kind: "rgb", r: 255, g: 0, b: 0 },
+    },
+  } as any);
+  assert.deepEqual([fallbackDiff.diffAdded, fallbackDiff.diffRemoved], ["#00ff00", "#ff0000"]);
+
+  const shortStyle = resolveStyle({ headingColor: "#abc", numberColor: "#0f8" }, {});
+  assert.deepEqual([shortStyle.theme.heading, shortStyle.theme.number], ["#aabbcc", "#00ff88"]);
+
+  const h = createHarness();
+  cleanupFn = () => {
+    chmodSync(join(h.dir, "prism.json"), 0o644);
+    h.cleanup();
+  };
+  await h.emit("session_start");
+  const cmd = h.commands.get("prism")!;
+
+  void cmd.handler("setup", h.ctx);
+  const overlay = h.getOverlay()!;
+  assert.ok(stripAnsi(overlay.render(100).join("\n")).includes("Setup 1/6: Tables"));
+  for (let i = 0; i < ESSENTIAL_STEPS; i++) overlay.handleInput("\r");
+  assert.equal(h.getOverlay(), null, "setup overlay closes after step 6/6");
+  assert.ok(
+    h.notifications.some((n) => n.text.includes(SETUP_ESSENTIALS_DONE)),
+    "notifies essentials completion",
+  );
+
+  void cmd.handler("setup more", h.ctx);
+  const moreOverlay = h.getOverlay()!;
+  const moreRender = stripAnsi(moreOverlay.render(100).join("\n"));
+  assert.ok(moreRender.includes("More 1/12") && moreRender.includes("Table layout"), moreRender);
+  moreOverlay.handleInput("\x1b");
+  assert.equal(h.getOverlay(), null);
+
+  h.ctx.mode = "print";
+  await cmd.handler("setup more", h.ctx);
+  assert.ok(h.appendedEntries.at(-1)?.data.text.includes(`More styles 1/${SETUP_STEPS.length - ESSENTIAL_STEPS}`));
+
+  await cmd.handler("tableLayout auto", h.ctx);
+  assert.equal(h.readConfig().tableLayout, "auto");
+
+  await cmd.handler("statusMatrix bad", h.ctx);
+  assert.equal(
+    h.appendedEntries.at(-1)?.data.text,
+    'Unknown statusMatrix pick "bad". Pick 1-4 or one of: color, summary, group, off',
+  );
+
+  chmodSync(join(h.dir, "prism.json"), 0o444);
+  await cmd.handler("tableLayout stacked", h.ctx);
+  assert.ok(
+    h.appendedEntries.at(-1)?.data.text.startsWith("Could not save "),
+    "read-only config warns with Could not save",
+  );
 });

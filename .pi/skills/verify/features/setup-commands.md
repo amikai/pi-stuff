@@ -28,4 +28,3 @@ Preconditions:
 - Never use `pi.sendMessage` for command output; `CustomMessageEntry` participates in LLM context and steers active turns.
 - Closing the overlay also clears its TUI handle, so later redraws go to the screen TUI. The `setup-commands` drive cannot observe this. `test/prism.test.ts` test 17 covers it with a PlantUML render.
 - The drive renders a synthetic turn entry (125000 ms, shown as `2m 5s`). It does not fire `agent_end`, so the 1 s threshold is not exercised.
-- `control-prism.mjs` still asserts the older `Setup 1/7: Tables`, `Setup 2/7: Tasks`, and `✻ prismantis rendering for 2m 5s` strings until the verify script is updated to match `test/prism.test.ts` Test 4.
