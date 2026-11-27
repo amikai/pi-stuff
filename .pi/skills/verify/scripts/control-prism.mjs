@@ -347,6 +347,43 @@ if (cmd === "drive") {
       "    Test  :after a, 2d",
       "```",
       "",
+      "```mermaid",
+      "quadrantChart",
+      "    title Priority",
+      "    x-axis Low --> High",
+      "    y-axis Low --> High",
+      "    Auth: [0.8, 0.9]",
+      "```",
+      "",
+      "```mermaid",
+      "mindmap",
+      "  root((Core))",
+      "    Parse",
+      "    Draw",
+      "```",
+      "",
+      "```mermaid",
+      "journey",
+      "    title Deploy",
+      "    section Release",
+      "      Verify: 5: Team",
+      "```",
+      "",
+      "```mermaid",
+      "kanban",
+      "  Ready",
+      "    task1[Ship release]",
+      "```",
+      "",
+      "```mermaid",
+      "gitGraph",
+      "    commit",
+      "    branch feat",
+      "    commit",
+      "    checkout main",
+      "    merge feat",
+      "```",
+      "",
       "```figure",
       "{accent:┌─ pipeline ─┐}",
       "{accent:│} {ok:✓ ready}  {accent:│}",
@@ -365,6 +402,11 @@ if (cmd === "drive") {
     assert.ok(plain.includes("Throughput") && plain.includes("east"), "xychart rendered");
     assert.ok(plain.includes("Share") && plain.includes("70%"), "pie chart rendered");
     assert.ok(plain.includes("Sprint") && plain.includes("Build"), "gantt chart rendered");
+    assert.ok(plain.includes("Priority") && plain.includes("Auth"), "quadrantChart rendered natively");
+    assert.ok(plain.includes("Core") && plain.includes("Draw"), "mindmap rendered natively");
+    assert.ok(plain.includes("Deploy") && plain.includes("Verify"), "journey rendered natively");
+    assert.ok(plain.includes("Ready") && plain.includes("Ship release"), "kanban rendered natively");
+    assert.ok(plain.includes("feat") && plain.includes("main"), "gitGraph rendered natively");
     assert.ok(plain.includes("┌─ pipeline ─┐") && plain.includes("✓ ready"), "figure rendered and aligned");
 
     writeArtifacts(outDir, "diagrams-figures", lines, { feature, width, lineCount: lines.length });
@@ -379,21 +421,54 @@ if (cmd === "drive") {
     assert.ok(overlay, "setup overlay opened");
     const step1Lines = overlay.render(width);
     const step1Plain = step1Lines.map(stripAnsi).join("\n");
-    assert.ok(step1Plain.includes("Setup 1/7: Tables"), "step 1 is Tables (7 core steps)");
+    assert.ok(step1Plain.includes("Setup 1/6: Tables"), "step 1 is Tables (6 core steps)");
 
     overlay.handleInput("\x1b[B");
     overlay.handleInput("\r");
     const step2Lines = overlay.render(width);
     const step2Plain = step2Lines.map(stripAnsi).join("\n");
-    assert.ok(step2Plain.includes("Setup 2/7: Tasks"), "advanced to step 2 Tasks");
+    assert.ok(step2Plain.includes("Setup 2/6: Tasks"), "advanced to step 2 Tasks");
     overlay.handleInput("\x1b");
     assert.equal(rt.getOverlay(), null, "overlay closed on Escape");
 
+    void cmdHandler.handler("setup more", rt.ctx);
+    const moreOverlay = rt.getOverlay();
+    assert.ok(moreOverlay, "setup more overlay opened");
+    const morePlain = moreOverlay.render(width).map(stripAnsi).join("\n");
+    assert.ok(morePlain.includes("More 1/12: Table layout"), "setup more opens at Table layout (More 1/12)");
+    moreOverlay.handleInput("\x1b[B");
+    moreOverlay.handleInput("\r");
+    moreOverlay.handleInput("\x1b");
+    assert.equal(rt.getOverlay(), null, "more overlay closed on Escape");
+
+    await cmdHandler.handler("statusMatrix summary", rt.ctx);
+
     const savedConfig = JSON.parse(readFileSync(join(runDir, "prism.json"), "utf8"));
     assert.equal(savedConfig.tableStyle, "rules", "tableStyle saved to prism.json");
+    assert.equal(savedConfig.tableLayout, "auto", "tableLayout saved via /prism setup more");
+    assert.equal(savedConfig.statusMatrix, "summary", "statusMatrix saved via direct command");
     assert.equal(savedConfig.theme, undefined, "no theme key written to prism.json");
     assert.equal(savedConfig.syncPiTheme, undefined, "no syncPiTheme key written to prism.json");
     assert.equal(savedConfig.toolRows, undefined, "no toolRows key written to prism.json");
+
+    const tableMd = [
+      "| Service | Status | Hash |",
+      "|:--------|:-------|:-----|",
+      "| api | pass | sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 |",
+      "| worker | fail | sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 |",
+    ].join("\n");
+    const semanticComp = new AssistantMessageComponent({
+      role: "assistant",
+      content: [{ type: "text", text: tableMd }],
+      timestamp: 1500,
+    });
+    const semanticNarrowPlain = semanticComp.render(56).map(stripAnsi).join("\n");
+    assert.ok(!semanticNarrowPlain.includes("├──"), "tableLayout auto stacks narrow tables");
+    const semanticWidePlain = semanticComp.render(110).map(stripAnsi).join("\n");
+    assert.ok(
+      semanticWidePlain.includes("✓ 1") && semanticWidePlain.includes("✗ 1"),
+      "statusMatrix summary footer rendered",
+    );
 
     await cmdHandler.handler("", rt.ctx);
     assert.equal(rt.sentCustomMessages.length, 0, "/prism never calls pi.sendMessage");
@@ -410,10 +485,7 @@ if (cmd === "drive") {
       activePiGlobalTheme,
     ).render(width);
     const turnPlain = turnLines.map(stripAnsi).join("\n");
-    assert.ok(
-      turnPlain.includes("✻ prismantis rendering for 2m 5s"),
-      "turn duration renders prismantis rendering for ...",
-    );
+    assert.ok(turnPlain.includes("✻ prism rendering for 2m 5s"), "turn duration renders prism rendering for ...");
 
     writeArtifacts(outDir, "setup-step1", step1Lines, { feature, step: 1, savedConfig });
     writeArtifacts(outDir, "setup-step2", step2Lines, { feature, step: 2, savedConfig });
@@ -603,7 +675,9 @@ if (cmd === "drive") {
     );
     const fence = (source) => ["```mermaid", source, "```"].join("\n");
     const fan = (id) =>
-      ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join("\n");
+      ["flowchart TD", "  root[Root]", ...[0, 1, 2, 3, 4].map((n) => `  root --> ${id(n)}[Child number ${n}]`)].join(
+        "\n",
+      );
     const timeline = "timeline\n  title Releases\n  2024 : alpha\n  2025 : beta : stable";
     const text = [
       fence(timeline),
@@ -664,7 +738,7 @@ if (cmd === "drive") {
     );
 
     const widePlain = comp.render(wide).map(stripAnsi).join("\n");
-    assert.equal(count(widePlain, "Child number 3"), 2, "at 140 columns both fan-outs are box art");
+    assert.equal(count(widePlain, "Child number 4"), 2, "at 140 columns both fan-outs are box art");
     assert.ok(
       widePlain.includes("notADiagram diagrams draw as source for now"),
       "the rejected header still keeps its note",
@@ -672,15 +746,10 @@ if (cmd === "drive") {
 
     const minimal = {
       timeline: "timeline\n  2024 : alpha",
-      mindmap: "mindmap\n  root((Plan))\n    Build\n    Ship",
-      gitGraph: "gitGraph\n  commit\n  branch dev\n  commit\n  checkout main\n  merge dev",
-      journey: "journey\n  title Day\n  section Work\n    Code: 5: Me",
-      quadrantChart: "quadrantChart\n  title Reach\n  x-axis Low --> High\n  y-axis Low --> High\n  A: [0.3, 0.6]",
       "sankey-beta": "sankey-beta\n  A,B,10",
       C4Context: 'C4Context\n  Person(u, "User")\n  System(s, "App")\n  Rel(u, s, "Uses")',
       "architecture-beta": "architecture-beta\n  service api(server)[API]",
       "block-beta": "block-beta\n  a b c",
-      kanban: "kanban\n  Todo\n    t1[Write docs]",
       "packet-beta": 'packet-beta\n  0-15: "Source Port"\n  16-31: "Destination Port"',
       "radar-beta": 'radar-beta\n  axis a["A"], b["B"], c["C"]\n  curve x["X"]{1, 2, 3}',
       "treemap-beta": 'treemap-beta\n  "Root"\n    "Leaf": 5',
@@ -716,7 +785,10 @@ if (cmd === "drive") {
       textPlain.includes("timeline diagrams draw as source for now"),
       "without images the timeline keeps main's note",
     );
-    assert.ok(textPlain.includes("diagram is 81 cols, terminal is 80"), "without images the fan-out keeps main's note");
+    assert.ok(
+      textPlain.includes("diagram too wide to render (94 cols, 78 fit)"),
+      "without images the fan-out keeps main's note",
+    );
     assert.ok(!textPlain.includes("pele"), "without images nothing mentions pele");
     resetCapabilitiesCache();
 
