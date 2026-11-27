@@ -4344,7 +4344,6 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
     return elements.flatMap((el) => collectTextProps(el));
   };
 
-  // 1. statusMatrix (summary & group)
   const statusMd = [
     "| Suite | Status |",
     "|---|---|",
@@ -4365,7 +4364,6 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
     groupText.indexOf("unit") < groupText.indexOf("e2e") && groupText.indexOf("e2e") < groupText.indexOf("lint"),
   );
 
-  // 2. testMatrix
   const testMd = "| Spec | Result | Time |\n|---|---|---|\n| auth | pass | 110ms |\n| db | fail | 300ms |";
   const testOut = renderSpans(testMd, { testMatrix: "report" })
     .map((s) => s.text)
@@ -4378,7 +4376,6 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
       .includes("total"),
   );
 
-  // 3. benchTable
   const benchMd =
     "| Build | Latency | Delta |\n|---|---|---|\n| v1 | 100ms | +0% |\n| v2 | 50ms | -50% |\n| v3 | 25ms | -50% |";
   const benchSpans = renderSpans(benchMd, { benchTable: "trend" });
@@ -4390,7 +4387,6 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
     "negative latency delta is diffAdded",
   );
 
-  // 4. schemaTable
   const schemaMd =
     "| Column | Type | Key |\n|---|---|---|\n| id | bigint | PK |\n| email | varchar | UNIQUE |\n| org_id | uuid | FK |\n| active | boolean | |";
   const schemaSpans = renderSpans(schemaMd, { schemaTable: "full" });
@@ -4399,14 +4395,12 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
   assert.equal(schemaSpans.find((s) => s.text.includes("PK"))?.color, baseTheme.accent);
   assert.equal(schemaSpans.find((s) => s.text.includes("FK"))?.color, baseTheme.link);
 
-  // 5. compareTable
   const compareMd = "| Model | Rank | Score |\n|---|---|---|\n| A | 1st | 98.5 |\n| B | 2nd | 82.0 |";
   const compareSpans = renderSpans(compareMd, { compareTable: "full" });
   assert.equal(compareSpans.find((s) => s.text.includes("1st"))?.color, baseTheme.accent);
   assert.equal(compareSpans.find((s) => s.text.includes("98.5"))?.bold, true);
   assert.equal(compareSpans.find((s) => s.text.includes("98.5"))?.color, baseTheme.diffAdded);
 
-  // 6. apiTable
   const apiMd =
     "| Method | Path | Auth |\n|---|---|---|\n| GET | /v1 | Bearer |\n| POST | /v1 | OAuth2 |\n| DELETE | /v1 | None |";
   const apiSpans = renderSpans(apiMd, { apiTable: "full" });
@@ -4414,14 +4408,12 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
   assert.equal(apiSpans.find((s) => s.text.includes("DELETE"))?.color, baseTheme.diffRemoved);
   assert.equal(apiSpans.find((s) => s.text.includes("Bearer"))?.color, baseTheme.accent);
 
-  // 7. kvTable
   const kvMd =
     "| Option | Source | Value | Default |\n|---|---|---|---|\n| port | env | 9000 | 3000 |\n| mode | config | strict | strict |";
   const kvSpans = renderSpans(kvMd, { kvTable: "full" });
   assert.equal(kvSpans.find((s) => s.text.includes("env"))?.color, baseTheme.link);
   assert.equal(kvSpans.find((s) => s.text.includes("9000"))?.color, baseTheme.accent);
 
-  // 8. groupTable
   const groupMd =
     "| Team | App | Port |\n|---|---|---|\n| Core | auth | 8001 |\n| Core | pay | 8002 |\n| Edge | cdn | 8080 |\n| Edge | dns | 53 |";
   const groupOut = renderSpans(groupMd, { groupTable: "count" })
@@ -4429,14 +4421,12 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
     .join("");
   assert.ok(groupOut.includes("Core (2)") && groupOut.includes("Edge (2)"), groupOut);
 
-  // 9. heatTable
   const heatMd = "| Node | Cpu | Mem |\n|---|---|---|\n| n1 | 10% | 20MB |\n| n2 | 90% | 80MB |";
   const heatOut = renderSpans(heatMd, { heatTable: "bars" })
     .map((s) => s.text)
     .join("");
   assert.ok(heatOut.includes("10%▁") && heatOut.includes("90%█"), heatOut);
 
-  // 10. treeTable
   const treeMd =
     "| Area | Sub | Leaf |\n|---|---|---|\n| app | web | home |\n| app | web | login |\n| app | api | health |\n| ops | db | backup |";
   const treeOut = renderSpans(treeMd, { treeTable: "full" })
@@ -4444,7 +4434,6 @@ test("103. all 11 semantic table modes work and RTL pivotTable maintains alignme
     .join("");
   assert.ok(treeOut.includes("├─ web") && treeOut.includes("└─ login") && treeOut.includes("└─ api"), treeOut);
 
-  // 11. pivotTable (LTR & RTL alignment)
   const pivotMd =
     "| Metric | Jan | Feb | Mar |\n|---|---|---|---|\n| Latency | 12ms | 18ms | 9ms |\n| Errors | 1 | 3 | 0 |";
   const pivotOut = renderSpans(pivotMd, { pivotTable: "transpose" })
@@ -4587,7 +4576,6 @@ test("105. security & path linking: obsidian, directories, bare words, non-ASCII
     `zero-width and bidi controls stripped in prompt: ${promptOut}`,
   );
 
-  // Drive path linking via renderBlocks
   const winStyle = {
     ...resolveStyle({ hyperlinks: true, pathLinks: true, fileLinks: "file://", found: new Set(["C:/work/plan.md"]) }),
     found: new Set(["C:/work/plan.md"]),
@@ -4805,7 +4793,6 @@ test("110. CACHE_BYTES eviction in latex/pictureCache and statSync file/size gua
   );
   assert.ok("keepMe" in kept && "fresh" in kept && !("old1" in kept));
 
-  // Real PNG (1x1 IHDR + tEXt padding) for pictureCache eviction & >2MB rejection
   const makeLargePng = (targetBytes: number) => {
     const chunk = (type: string, data: Buffer) => {
       const head = Buffer.alloc(8);
@@ -4848,7 +4835,6 @@ test("110. CACHE_BYTES eviction in latex/pictureCache and statSync file/size gua
   const overLimitPath = join(workDir, "over-2mb.png");
   writeFileSync(overLimitPath, makeLargePng(2 * 1024 * 1024 + 512));
 
-  // Mock ratex-render executable to test statSync file & size guard in typesetFormulasSync
   const validRatexPng = join(workDir, "valid-ratex.png");
   writeFileSync(validRatexPng, makeLargePng(120));
   const ratexBin = join(binDir, "ratex-render");
@@ -4883,7 +4869,6 @@ process.stdout.write("OK 1 20 10\\n");
   for (const p of imgPaths) {
     assert.ok(reply(`![p](${p})`).render(80).join("\n").includes(KITTY_IMAGE), `renders ${basename(p)}`);
   }
-  // pic-0 (oldest) was evicted past 32MB while pic-17 stayed cached: unlink both and verify
   rmSync(imgPaths[0]!);
   rmSync(imgPaths[17]!);
   assert.ok(
